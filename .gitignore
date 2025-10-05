@@ -1,0 +1,21 @@
+# Exclude all log files
+*.log
+
+# Exclude all python cache
+**/__pycache__/
+__pycache__/.pyc
+
+**/.pytest_cache/
+.pytest_cache/
+
+# Exclude any env
+.conda/
+.venv/
+
+# Exclude Secret Key
+.env
+
+# Exclude css mapping
+*.css.map 
+
+*.db

@@ -1,21 +1,20 @@
-# Exclude all log files
-*.log
+# Python cache
+__pycache__/
+*.py[cod]
 
-# Exclude all python cache
-**/__pycache__/
-__pycache__/.pyc
-
-**/.pytest_cache/
+# Test cache
 .pytest_cache/
 
-# Exclude any env
-.conda/
+# Environments
 .venv/
-
-# Exclude Secret Key
+.conda/
 .env
 
-# Exclude css mapping
-*.css.map 
+# Logs
+*.log
 
+# Databases
 *.db
+
+# CSS maps
+*.css.map

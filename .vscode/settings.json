@@ -1,0 +1,22 @@
+{
+    // Python Settings
+    "python.defaultInterpreterPath": "${workspaceFolder}/.conda/python.exe",
+    "python.analysis.autoImportCompletions": true,
+    "python.terminal.activateEnvironment": true,
+    
+    // Test Settings
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.cwd": "${workspaceFolder}",
+    "python.testing.pytestPath": "${workspaceFolder}/.conda/bin/pytest",
+    "python.testing.autoTestDiscoverOnSaveEnabled": true,
+
+    // Watch SCSS
+    "liveSassCompile.settings.formats": [
+        {
+            "format": "expanded",
+            "extensionName": ".css",
+            "savePath": "/src/assets/css"
+        }
+    ]
+}

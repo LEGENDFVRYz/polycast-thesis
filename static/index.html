@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Dummy API Data</title>
+</head>
+<body>
+  <h1>Live Data from Dummy API (WebSocket)</h1>
+  <pre id="output"></pre>
+
+  <script>
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      document.getElementById("output").textContent =
+        `x: ${data.x}, y: ${data.y}, pressure: ${data.pressure}`;
+    };
+  </script>
+</body>
+</html>

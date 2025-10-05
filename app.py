@@ -1,40 +1,56 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-import random
 import asyncio
-import httpx
+import threading
+import xp_pen_api  # <-- your real API wrapper
 
 app = FastAPI()
 
-# Dummy API (source of truth)
-@app.get("/dummy_api")
-def dummy_api():
-    return {
-        "x": random.randint(0, 500),
-        "y": random.randint(0, 500),
-        "pressure": round(random.random(), 2)
-    }
+# Shared variable for latest datapoint
+# x: 35560, y: 22219, pressure: 8191
+latest_point = {"x": 0, "y": 0, "pressure": 0}
 
-# Mount static folder to serve HTML, JS, CSS, etc.
+# Callback for XP-Pen SDK
+def pen_callback(pkt_ptr):
+    pkt = pkt_ptr.contents
+    global latest_point
+    latest_point = {
+        "x": pkt.x,
+        "y": pkt.pressure,      # remap
+        "pressure": pkt.button  # remap
+    }
+    return 0
+
+# Start XP-Pen API in background thread
+api = xp_pen_api.XPPenAPI()
+def run_api():
+    api.start(pen_callback)
+    while True:
+        asyncio.sleep(0.1)
+
+threading.Thread(target=run_api, daemon=True).start()
+
+# REST endpoint (single read)
+@app.get("/pen_api")
+def get_pen_data():
+    return latest_point
+
+# Mount static folder
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
-# Default route loads index.html
 @app.get("/")
 async def root():
     return FileResponse("static/index.html")
 
-# WebSocket streaming dummy_api data
+# WebSocket streaming
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    async with httpx.AsyncClient() as client:
-        try:
-            while True:
-                resp = await client.get("http://127.0.0.1:8000/dummy_api")
-                data = resp.json()
-                await websocket.send_json(data)
-                await asyncio.sleep(0.5)  # adjust refresh rate
-        except Exception as e:
-            print("WebSocket error:", e)
-            await websocket.close()
+    try:
+        while True:
+            await websocket.send_json(latest_point)
+            await asyncio.sleep(0.005)  # ~20Hz update
+    except Exception as e:
+        print("WebSocket error:", e)
+        await websocket.close()

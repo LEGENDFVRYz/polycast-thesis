@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>Real-time Notes</title>
+    <style>
+        body { background: #222; color: #eee; display:flex; flex-direction:column; align-items:center; justify-content:flex-start; gap:12px; padding:16px; font-family:system-ui,Segoe UI,Roboto; }
+        .status { font-size:14px; }
+        #stream { border: 2px solid #444; box-shadow: 0 6px 18px rgba(0,0,0,0.6); }
+        #debug { font-family: monospace; background:#111; padding:8px 12px; border-radius:6px; }
+    </style>
+</head>
+<body>
+    <h2>Real-time Notes (MJPEG + WS)</h2>
+    <div class="status" id="s">Status: disconnected</div>
+    <img id="stream" src="/video_feed" width="800" height="600" alt="Live stream">
+    <div id="d" class="status">X=0 | Y=0 | Pressure=0</div>
+
+    <script>
+        // Connect to browser WS server launched by main.py
+        (function() {
+        const status = document.getElementById('s');
+        const debug = document.getElementById('d');
+        // ws_port is passed from Flask template rendering
+        const WS_PORT = {{ ws_port }};
+        const wsUrl = `ws://${location.hostname}:${WS_PORT}/`;
+        let ws;
+
+        function connectWS() {
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = (e) => {
+            console.log('[ws] open', e);
+            status.innerText = "Status: connected";
+            };
+
+            ws.onerror = (e) => {
+            console.warn('[ws] error', e);
+            status.innerText = "Status: error";
+            };
+
+            ws.onmessage = (event) => {
+            // Support both text JSON and binary ArrayBuffer
+            if (typeof event.data === 'string') {
+                try {
+                const payload = JSON.parse(event.data);
+                debug.innerText = `X=${payload.x} | Y=${payload.y} | Pressure=${payload.p}`;
+                } catch (e) {
+                // ignore non-json text
+                }
+                return;
+            }
+            // binary path: expect <int16 x><int16 y><uint16 p> little-endian like original sample
+            const dv = new DataView(event.data);
+            const x = dv.getInt16(0, true);
+            const y = dv.getInt16(2, true);
+            const p = dv.getUint16(4, true);
+            debug.innerText = `X=${x} | Y=${y} | Pressure=${p}`;
+            };
+
+            ws.onclose = (e) => {
+            console.log('[ws] closed', e);
+            status.innerText = "Status: disconnected — reconnecting...";
+            setTimeout(connectWS, 1500);
+            };
+        }
+
+        connectWS();
+        })();
+    </script>
+</body>
+</html>

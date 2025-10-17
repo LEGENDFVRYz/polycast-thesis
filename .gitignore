@@ -21,3 +21,6 @@ __pycache__/
 
 # Generated Frames or Notes
 archive/
+
+# generated logs
+logs/

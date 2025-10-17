@@ -21,6 +21,7 @@ CANVAS_WIDTH, CANVAS_HEIGHT = 35560, 22219
 MJPEG_WIDTH, MJPEG_HEIGHT = 600, 400
 
 ARCHIVE_DIR = "archive"
+LOG_DIR = "logs"
 MJPEG_FPS = 20
 BROWSER_WS_PORT = 5001
 FLASK_PORT = 5050
@@ -41,6 +42,14 @@ image_lock = threading.Lock()
 # Shared state
 ws_server = None
 last_point = None
+
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
+os.makedirs(LOG_DIR, exist_ok=True)
+
+CONN_LOG = os.path.join(LOG_DIR, "conn.logs")
+ERROR_LOG = os.path.join(LOG_DIR, "error.logs")
+
+
 
 # ================= Coordinate Mapping =================
 def logical_to_pixel(x, y):
@@ -100,14 +109,21 @@ def on_esp_message(wsapp, message):
     except Exception as e:
         print("[ESP WS] parse/draw error:", e)
 
+# Websocket Logs
+def log_message(filepath, message):
+    "Logging Purposes"
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(filepath, "a", encoding="utf-8") as f:
+        f.write(f"[{timestamp}] {message}\n")
+
 def on_esp_open(wsapp):
-    print("[ESP WS] connected")
+    log_message(CONN_LOG, "[ESP WS] connected")
 
 def on_esp_error(wsapp, err):
-    print("[ESP WS] error:", err)
+    log_message(ERROR_LOG, f"[ESP WS] error: {err}")
 
 def on_esp_close(wsapp, code, msg):
-    print("[ESP WS] closed:", code, msg)
+    log_message(CONN_LOG, f"[ESP WS] closed: {code} {msg}")
 
 def ws_client_thread():
     while True:

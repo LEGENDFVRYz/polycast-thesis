@@ -1,7 +1,9 @@
 """
-Run:
-    pip install flask pillow websocket-client websocket-server
-    python main.py
+Web Server (Either Raspberry Pi or Host):
+- Processed the prototype data points into image processing
+- Automatic Image (note) Saver for every minutes
+- Stream Latest Image (note) in a private ip websocket
+
 """
 
 import threading, time, io, os, json, struct
@@ -11,13 +13,18 @@ from PIL import Image, ImageDraw
 import websocket
 from websocket_server import WebsocketServer
 
-# ================= CONFIG =================
-ESP32_WS_URL = "ws://192.168.1.19/ws"  # Prototype endpoint
 
-# Fixed logical coordinate range
+# ===========================================================
+# SYSTEM CONFIGURATION
+# ===========================================================
+
+# Prototype endpoint
+ESP32_WS_URL = "ws://192.168.1.19/ws"  
+
+# Fixed logical coordinate range (temporay - this shoud be dynamic)
 CANVAS_WIDTH, CANVAS_HEIGHT = 35560, 22219
 
-# MJPEG stream output size (pixels)
+# MJPEG stream output size in pixels
 MJPEG_WIDTH, MJPEG_HEIGHT = 600, 400
 
 ARCHIVE_DIR = "archive"
@@ -25,42 +32,61 @@ LOG_DIR = "logs"
 MJPEG_FPS = 20
 BROWSER_WS_PORT = 5001
 FLASK_PORT = 5050
+
+# SYSTEN FLAGS
 IS_AUTO_ARCHIVING = False
-# ==========================================
 
-# --- Derived scaling factors ---
-scale_x = MJPEG_WIDTH / CANVAS_WIDTH
-scale_y = MJPEG_HEIGHT / CANVAS_HEIGHT
-AVG_SCALE = (scale_x + scale_y) / 2.0
-STROKE_FACTOR = 0.5  # adjust for visual stroke thickness
-
-# --- Canvas setup ---
-canvas = Image.new("L", (MJPEG_WIDTH, MJPEG_HEIGHT), "white")
-draw = ImageDraw.Draw(canvas)
-image_lock = threading.Lock()
-
-# Shared state
-ws_server = None
-last_point = None
-
+# System Init
 os.makedirs(ARCHIVE_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
+os.makedirs(ARCHIVE_DIR, exist_ok=True)
 
 CONN_LOG = os.path.join(LOG_DIR, "conn.logs")
 ERROR_LOG = os.path.join(LOG_DIR, "error.logs")
 
 
+# -----------------------------------------------------------
 
-# ================= Coordinate Mapping =================
+
+
+# ===========================================================
+# SYSTEM CONFIGURATION
+# ===========================================================
+
+# Derived scaling factors
+scale_x = MJPEG_WIDTH / CANVAS_WIDTH
+scale_y = MJPEG_HEIGHT / CANVAS_HEIGHT
+AVG_SCALE = (scale_x + scale_y) / 2.0
+STROKE_FACTOR = 0.5  # adjust for visual stroke thickness
+
+# Canvas setup
+canvas = Image.new("L", (MJPEG_WIDTH, MJPEG_HEIGHT), "white")
+draw = ImageDraw.Draw(canvas)
+image_lock = threading.Lock()
+
+# Shared state (globals)
+ws_server = None
+last_point = None
+
+# -----------------------------------------------------------
+
+
+
+# ===========================================================
+# COORDINATE MAPPING
+# ===========================================================
 def logical_to_pixel(x, y):
-    """Convert logical absolute coordinates to pixel space."""
+    """Convert logical absolute coordinates to set pixel space."""
     px = int((x / CANVAS_WIDTH) * MJPEG_WIDTH)
     py = int((y / CANVAS_HEIGHT) * MJPEG_HEIGHT)
     px = max(0, min(MJPEG_WIDTH - 1, px))
     py = max(0, min(MJPEG_HEIGHT - 1, py))
     return px, py
 
-# ================= Drawing =================
+
+# ===========================================================
+# Rendering Drawing (or strokes)
+# ===========================================================
 def draw_segment(x0, y0, x1, y1, p):
     """Draw a line between two absolute logical points."""
     px0, py0 = logical_to_pixel(x0, y0)
@@ -68,7 +94,10 @@ def draw_segment(x0, y0, x1, y1, p):
     width_px = max(1, int(p * AVG_SCALE * STROKE_FACTOR))
     draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
 
-# ================= ESP32 WebSocket Client =================
+
+# ===========================================================
+# ESP32 WebSocket Cient
+# ===========================================================
 def parse_esp_binary(msg: bytes):
     """Parse binary packets of absolute coordinates (type=0)."""
     points = []
@@ -142,7 +171,10 @@ def ws_client_thread():
         print("[ESP WS] reconnecting in 2s...")
         time.sleep(2)
 
-# ================= Browser WebSocket Server =================
+
+# ===========================================================
+# Browser WebSocket Server
+# ===========================================================
 def new_browser_client(c, s): print(f"[BROWSER WS] + Client {c['id']}")
 def browser_client_left(c, s): print(f"[BROWSER WS] - Client {c['id']}")
 def browser_message_received(c, s, m): pass
@@ -156,9 +188,12 @@ def start_browser_ws_server():
     print(f"[BROWSER WS] serving on {BROWSER_WS_PORT}")
     ws_server.run_forever()
 
-# ================= Archiver =================
+
+# ===========================================================
+# Archiver
+# ===========================================================
 def archiver_thread():
-    os.makedirs(ARCHIVE_DIR, exist_ok=True)
+    "Automaticaly saved the latest frame (note) in every 1 seconds"
     while True:
         time.sleep(1)
         with image_lock:
@@ -171,7 +206,11 @@ def archiver_thread():
         except Exception as e:
             print("[ARCHIVER] error:", e)
 
-# ================= Flask MJPEG =================
+
+
+# ===========================================================
+# Web Stream Setup (via Flask)
+# ===========================================================
 app = Flask(__name__, template_folder="templates")
 
 @app.route("/")
@@ -197,7 +236,9 @@ def generate_frames():
 def video_feed():
     return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
-# ================= Main =================
+
+
+# TESTING
 if __name__ == "__main__":
     threading.Thread(target=start_browser_ws_server, daemon=True).start()
     threading.Thread(target=ws_client_thread, daemon=True).start()

@@ -1,6 +1,10 @@
 <!-- templates/home.html -->
 {% extends "base.html" %}
 
+{% block extra_css %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">
+{% endblock %}
+
 {% block content %}
     <h1>Welcome to the System</h1>
     <p>Please choose a page:</p>

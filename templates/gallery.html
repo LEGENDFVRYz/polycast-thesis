@@ -1,0 +1,53 @@
+<!-- templates/gallery.html -->
+{% extends "base.html" %}
+
+{% block extra_css %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
+{% endblock %}
+
+{% block content %}
+    <div class="gallery-wrap">
+        <div>
+            <h1>Gallery</h1>
+        </div>
+
+        <p>Please choose a folder:</p>
+
+        <div class="folder-ctn">
+            <div>
+                <!-- Anything that can put here, like "Pick your folder" -->
+            </div>
+
+            <div class="folder-wrapper">
+                <!-- Render all available folder (fronend only) -->
+                <div class="folder-card">
+                    <div class="folder-icon">
+                        <i class="icon-placeholder">
+                            <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
+                        </i> 
+                    </div>
+                    
+                    <div class="folder-detail">
+                        <div class="folder-name">Dribbble Shots</div>
+                        <div class="folder-tag">Contains all files</div>
+                    </div>
+                </div>
+                
+
+                <div class="folder-card">
+                    <div class="folder-icon">
+                        <i class="icon-placeholder">
+                            <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
+                        </i> 
+                    </div>
+                    
+                    <div class="folder-detail">
+                        <div class="folder-name">Dribbble Shots</div>
+                        <div class="folder-tag">Contains all files</div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+{% endblock %}

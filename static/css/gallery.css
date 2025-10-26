@@ -1,0 +1,83 @@
+
+
+div.gallery-wrap{
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+
+    h1{
+        text-align: center;
+        font-weight: bold; 
+    }
+    
+    p{
+        margin: 1em 0em;
+
+    }
+
+    div.folder-ctn{
+        display: flex;
+        flex-direction: column;
+        flex: 1;
+
+        border: 1px solid black;
+        border-radius: 1em;
+
+        div.folder-wrapper{
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            gap: 1em;
+
+            padding: 2em 1.5em;
+
+            .folder-card {
+                display: flex;
+                align-items: flex-start; // Aligns icon and text block to the top
+                gap: 12px;               // Space between icon and text
+                
+                background-color: $card-bg;
+                border-radius: $border-radius;
+                padding: $padding;
+                
+                max-width: 280px; // Set a max-width so it looks like the image
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                cursor: pointer;
+                
+                .folder-icon {
+                    
+                    // This styles the placeholder. 
+                    // You can replace this with your own <img> styles.
+                    .icon-placeholder {
+                        display: block;
+                        width: 40px;
+                        height: 40px;
+                        border: 2px solid $icon-color;
+                        border-radius: 6px;
+                        position: relative;
+                        
+                    }
+                }
+                
+                .folder-detail {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 4px; // Vertical space between text elements
+
+                    .folder-name {
+                        font-size: 1rem; // 16px
+                        font-weight: 600;
+                        color: $primary-text;
+                        margin-top: 2px; // Small alignment fix
+                    }
+
+                    .folder-tag {
+                        font-size: 0.875rem; // 14px
+                        color: $secondary-text;
+                    }
+                }
+            }
+
+        }
+    }
+}

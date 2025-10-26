@@ -17,6 +17,11 @@ def admin_page():
 def client_page():
     return render_template("client.html", ws_port=BROWSER_WS_PORT)
 
+@app.route("/gallery")
+def gallery_page():
+    is_setup = True   # if prototype is setup properly
+    return render_template("gallery.html", is_setup=is_setup, ws_port=BROWSER_WS_PORT)
+
 @app.route("/video_feed")
 def video_feed():
     return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")

@@ -1,4 +1,10 @@
-# xp_pen_api.py
+"""
+Mock Data Source:
+- Mock Data for handstroke api (since prototype is under development)
+- Gather the endpoints of the XPPEN using their SDK
+
+"""
+
 import os
 import ctypes
 import time

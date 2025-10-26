@@ -1,5 +1,12 @@
+"""
+Mock Data Prototype:
+- Get the data from the mock data api (_xp_pen_api.py)
+- Send the data via Serial Communication to mock prototype
+  serial communication (ESPNOW comm)
+
+"""
 import serial
-import xp_pen_api
+import _xp_pen_api
 import time
 import threading
 
@@ -19,7 +26,7 @@ def pen_callback(pkt_ptr):
     return 0
 
 def run_api():
-    api = xp_pen_api.XPPenAPI()
+    api = _xp_pen_api.XPPenAPI()
     try:
         api.start(pen_callback)
         while True:

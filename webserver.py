@@ -1,5 +1,6 @@
 import os
 from flask import Flask, Response, render_template, redirect, url_for
+from werkzeug.utils import secure_filename
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT
 
@@ -40,6 +41,39 @@ def gallery_page():
         ws_port=BROWSER_WS_PORT,
         folders=folders  # <-- Pass the list of folders to the template
     )
+
+
+@app.route("/gallery/<string:foldername>")
+def gallery_folder(foldername):
+    image_extensions = {'.jpg', '.png'}
+    foldername = secure_filename(foldername)
+    
+    folder_path = os.path.join(GALLERY_PATH, foldername)
+
+    # Verify the folder exists and is a directory
+    if not os.path.isdir(folder_path):
+        print("FOLDER: Does not exist")
+        return redirect(url_for("gallery_page"))
+
+    try:
+        # Fetch all the valid images in the folder
+        with os.scandir(folder_path) as folder:
+            images = sorted(
+                (item.name for item in folder
+                 if item.is_file() and os.path.splitext(item.name)[1].lower() in image_extensions),
+                key=str.lower
+            )
+    except (FileNotFoundError, PermissionError):
+        print("FOLDER: Access Error")
+        return redirect(url_for("gallery_page"))
+
+
+    return render_template(
+        "gallery_folderview.html",
+        foldername=foldername,
+        images=images
+    )
+
 
 @app.route("/video_feed")
 def video_feed():

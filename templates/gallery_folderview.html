@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block extra_css %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery_folderview.css') }}">
+{% endblock %}
+
+{% block content %}
+    <div class="gallery-wrap">
+        
+        <a href="{{ url_for('gallery_page') }}" class="back-link">← Back to Gallery</a>
+
+        <h1>Viewing: {{ foldername }}</h1>
+
+        <div class="image-grid">
+            {% if images %}
+                {% for image in images %}
+                    <div class="image-card">
+                        <img src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}" alt="{{ image }}">
+                    </div>
+                {% endfor %}
+            {% else %}
+                <p>This folder is empty.</p>
+            {% endif %}
+        </div>
+
+    </div>
+{% endblock %}

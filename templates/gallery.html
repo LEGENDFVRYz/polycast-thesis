@@ -20,7 +20,7 @@
                 
                 {% if folders %}  
                     {% for folder in folders %}
-                        <a href="#" class="folder-link-wrapper">
+                        <a href="{{ url_for('gallery_folder', foldername=folder) }}" class="folder-link-wrapper">
                             <div class="folder-card">
                                 <div class="folder-icon">
                                     <i class="icon-placeholder">

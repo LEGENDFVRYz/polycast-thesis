@@ -1,4 +1,3 @@
-<!-- templates/gallery.html -->
 {% extends "base.html" %}
 
 {% block extra_css %}
@@ -15,37 +14,29 @@
 
         <div class="folder-ctn">
             <div>
-                <!-- Anything that can put here, like "Pick your folder" -->
-            </div>
+                </div>
 
             <div class="folder-wrapper">
-                <!-- Render all available folder (fronend only) -->
-                <div class="folder-card">
-                    <div class="folder-icon">
-                        <i class="icon-placeholder">
-                            <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
-                        </i> 
-                    </div>
-                    
-                    <div class="folder-detail">
-                        <div class="folder-name">Dribbble Shots</div>
-                        <div class="folder-tag">Contains all files</div>
-                    </div>
-                </div>
                 
-
-                <div class="folder-card">
-                    <div class="folder-icon">
-                        <i class="icon-placeholder">
-                            <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
-                        </i> 
-                    </div>
-                    
-                    <div class="folder-detail">
-                        <div class="folder-name">Dribbble Shots</div>
-                        <div class="folder-tag">Contains all files</div>
-                    </div>
-                </div>
+                {% if folders %}  
+                    {% for folder in folders %}
+                        <a href="#" class="folder-link-wrapper">
+                            <div class="folder-card">
+                                <div class="folder-icon">
+                                    <i class="icon-placeholder">
+                                        <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
+                                    </i> 
+                                </div>
+                                
+                                <div class="folder-detail">
+                                    <div class="folder-name">{{ folder }}</div> <div class="folder-tag">Contains all files</div>
+                                </div>
+                            </div>
+                        </a>
+                    {% endfor %}
+                {% else %}
+                    <p>No gallery folders found. Add some folders to 'static/gallery_images' to get started!</p>
+                {% endif %}
 
             </div>
         </div>

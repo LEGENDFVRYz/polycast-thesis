@@ -1,8 +1,11 @@
+import os
 from flask import Flask, Response, render_template, redirect, url_for
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT
 
 app = Flask(__name__, template_folder="templates")
+GALLERY_PATH = os.path.join(app.static_folder, 'gallery_images')
+
 
 @app.route("/")
 def index():
@@ -17,10 +20,26 @@ def admin_page():
 def client_page():
     return render_template("client.html", ws_port=BROWSER_WS_PORT)
 
+
 @app.route("/gallery")
 def gallery_page():
-    is_setup = True   # if prototype is setup properly
-    return render_template("gallery.html", is_setup=is_setup, ws_port=BROWSER_WS_PORT)
+    is_setup = True
+    
+    folders = []
+    try:
+        # Check the contebt of the gallery - fetch only the folder
+        with os.scandir(GALLERY_PATH) as entries:
+            folders = [entry.name for entry in entries if entry.is_dir()]
+    except FileNotFoundError:
+        print("No Gallery Folder Yet")
+        pass
+
+    return render_template(
+        "gallery.html", 
+        is_setup=is_setup, 
+        ws_port=BROWSER_WS_PORT,
+        folders=folders  # <-- Pass the list of folders to the template
+    )
 
 @app.route("/video_feed")
 def video_feed():

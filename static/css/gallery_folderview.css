@@ -36,3 +36,14 @@
 .download-all-btn:hover {
     background-color: #2980b9;
 }
+
+.lazy-image {
+    filter: blur(10px);
+    transition: filter 0.3s ease-out;
+    width: 100%;
+    height: auto;
+}
+
+.lazy-image.loaded {
+    filter: blur(0);
+}

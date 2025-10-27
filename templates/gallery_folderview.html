@@ -12,13 +12,16 @@
 
     <button id="downloadAllBtn" class="download-all-btn">⬇️ Download All</button>
 
-    <div class="image-grid">
+    <div class="image-grid" id="imageGrid">
         {% if images %}
             {% for image in images %}
                 <div class="image-card">
-                    <img src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}"
-                         alt="{{ image }}"
-                         data-filename="{{ image }}">
+                    <img 
+                        data-src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}"
+                        alt="{{ image }}"
+                        data-filename="{{ image }}"
+                        class="lazy-image"
+                        loading="lazy">
                 </div>
             {% endfor %}
         {% else %}
@@ -32,22 +35,53 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 
 <script>
+/* --- LAZY LOADING IMAGES --- */
+document.addEventListener("DOMContentLoaded", () => {
+    const lazyImages = document.querySelectorAll(".lazy-image");
+
+    const observer = new IntersectionObserver((entries, obs) => {
+        entries.forEach(entry => {
+            if (entry.isIntersecting) {
+                const img = entry.target;
+                img.src = img.dataset.src; 
+                img.classList.add("loaded");
+                obs.unobserve(img);
+            }
+        });
+    }, {
+        rootMargin: "200px", // preload slightly before visible
+        threshold: 0.1
+    });
+
+    lazyImages.forEach(img => observer.observe(img));
+});
+
+
+/* --- DOWNLOAD ALL --- */
 document.getElementById("downloadAllBtn").addEventListener("click", async () => {
     const btn = document.getElementById("downloadAllBtn");
     btn.textContent = "Preparing...";
     btn.disabled = true;
 
     const zip = new JSZip();
-    const images = document.querySelectorAll(".image-card img");
+    const images = document.querySelectorAll(".lazy-image");
+    let count = 0;
 
     for (const img of images) {
-        const url = img.src;
+        const url = img.dataset.src || img.src; // use data-src if not yet loaded
         const filename = img.dataset.filename;
 
-        // Fetch image — will use browser cache if available (304 not needed)
-        const response = await fetch(url, { cache: "force-cache" });
-        const blob = await response.blob();
-        zip.file(filename, blob);
+        try {
+            // Use cache if possible — prevents re-downloading
+            const response = await fetch(url, { cache: "force-cache" });
+            const blob = await response.blob();
+            zip.file(filename, blob);
+        } catch (err) {
+            console.error("Error fetching", url, err);
+        }
+
+        count++;
+        btn.textContent = `Preparing... (${count}/${images.length})`;
     }
 
     const content = await zip.generateAsync({ type: "blob" });

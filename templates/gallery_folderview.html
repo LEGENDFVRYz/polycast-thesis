@@ -1,27 +1,60 @@
 {% extends "base.html" %}
 
 {% block extra_css %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery_folderview.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/gallery_folderview.css') }}">
 {% endblock %}
 
 {% block content %}
-    <div class="gallery-wrap">
-        
-        <a href="{{ url_for('gallery_page') }}" class="back-link">← Back to Gallery</a>
+<div class="gallery-wrap">
+    <a href="{{ url_for('gallery_page') }}" class="back-link">← Back to Gallery</a>
 
-        <h1>Viewing: {{ foldername }}</h1>
+    <h1>Viewing: {{ foldername }}</h1>
 
-        <div class="image-grid">
-            {% if images %}
-                {% for image in images %}
-                    <div class="image-card">
-                        <img src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}" alt="{{ image }}">
-                    </div>
-                {% endfor %}
-            {% else %}
-                <p>This folder is empty.</p>
-            {% endif %}
-        </div>
+    <button id="downloadAllBtn" class="download-all-btn">⬇️ Download All</button>
 
+    <div class="image-grid">
+        {% if images %}
+            {% for image in images %}
+                <div class="image-card">
+                    <img src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}"
+                         alt="{{ image }}"
+                         data-filename="{{ image }}">
+                </div>
+            {% endfor %}
+        {% else %}
+            <p>This folder is empty.</p>
+        {% endif %}
     </div>
+</div>
+
+<!-- JSZip + FileSaver -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+<script>
+document.getElementById("downloadAllBtn").addEventListener("click", async () => {
+    const btn = document.getElementById("downloadAllBtn");
+    btn.textContent = "Preparing...";
+    btn.disabled = true;
+
+    const zip = new JSZip();
+    const images = document.querySelectorAll(".image-card img");
+
+    for (const img of images) {
+        const url = img.src;
+        const filename = img.dataset.filename;
+
+        // Fetch image — will use browser cache if available (304 not needed)
+        const response = await fetch(url, { cache: "force-cache" });
+        const blob = await response.blob();
+        zip.file(filename, blob);
+    }
+
+    const content = await zip.generateAsync({ type: "blob" });
+    saveAs(content, "{{ foldername }}.zip");
+
+    btn.textContent = "⬇️ Download All";
+    btn.disabled = false;
+});
+</script>
 {% endblock %}

@@ -22,3 +22,17 @@
     font-size: 1.1em;
     text-decoration: none;
 }
+
+.download-all-btn {
+    margin: 10px 20px;
+    padding: 10px 16px;
+    background-color: #3498db;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 1em;
+}
+.download-all-btn:hover {
+    background-color: #2980b9;
+}

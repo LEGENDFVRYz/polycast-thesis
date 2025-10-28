@@ -1,2 +1,32 @@
-<h1>Admin Dashboard</h1>
-<p>WebSocket Port: {{ ws_port }}</p>
+{% extends "base.html" %}
+
+{% block extra_css %}
+<style>
+    .admin-ctn {
+        .logout-btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background-color: #e74c3c;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+        }
+        .logout-btn:hover {
+            background-color: #c0392b;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+    <div class="admin-ctn">
+        <div class="admin-wrapper">
+            <h1>Admin Dashboard</h1>
+            <p>Welcome, {{ username }}</p>
+            <p>WebSocket Port: {{ ws_port }}</p>
+
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+
+    </div>
+{% endblock %}

@@ -1,11 +1,15 @@
 import os
-from flask import Flask, Response, render_template, redirect, url_for
+from flask import Flask, Response, render_template, redirect, url_for, request, session
+from auth import init_auth_db, register_admin, verify_admin
 from werkzeug.utils import secure_filename
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT
 
 app = Flask(__name__, template_folder="templates")
+app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
+
 GALLERY_PATH = os.path.join(app.static_folder, 'gallery_images')
+init_auth_db()
 
 
 @app.route("/")
@@ -15,11 +19,42 @@ def index():
 
 @app.route("/admin")
 def admin_page():
+    if "user" not in session:
+        return redirect(url_for("login_page"))
     return render_template("admin.html", ws_port=BROWSER_WS_PORT)
 
 @app.route("/client")
 def client_page():
     return render_template("client.html", ws_port=BROWSER_WS_PORT)
+
+@app.route("/register", methods=["GET", "POST"])
+def register_page():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+        if register_admin(username, password):
+            return redirect(url_for("login_page"))
+        else:
+            return "Username already exists!"
+    return render_template("register.html")
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    if request.method == "POST":
+        username = request.form["username"]
+        password = request.form["password"]
+        if verify_admin(username, password):
+            session["user"] = username
+            return redirect(url_for("admin_page"))
+        else:
+            return "Invalid username or password"
+    return render_template("login.html")
+
+@app.route("/logout")
+def logout_page():
+    session.pop("user", None)
+    return redirect(url_for("login_page"))
+
 
 
 @app.route("/gallery")
@@ -41,7 +76,6 @@ def gallery_page():
         ws_port=BROWSER_WS_PORT,
         folders=folders  # <-- Pass the list of folders to the template
     )
-
 
 @app.route("/gallery/<string:foldername>")
 def gallery_folder(foldername):
@@ -73,6 +107,7 @@ def gallery_folder(foldername):
         foldername=foldername,
         images=images
     )
+
 
 
 @app.route("/stream")

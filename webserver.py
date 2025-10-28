@@ -75,6 +75,10 @@ def gallery_folder(foldername):
     )
 
 
+@app.route("/stream")
+def stream_page():
+    return render_template("stream.html", ws_port=BROWSER_WS_PORT)
+
 @app.route("/video_feed")
 def video_feed():
     return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")

@@ -1,2 +1,52 @@
-<h1>Client Page</h1>
-<p>WebSocket Port: {{ ws_port }}</p>
+{% extends "base.html" %}
+
+{% block extra_css %}
+<style>
+    .client-ctn {
+        #status-box {
+            border: 2px solid #007bff;
+            padding: 40px;
+            border-radius: 10px;
+            font-size: 1.5rem;
+            text-align: center;
+        }
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+    <div class="client-ctn">
+        <div class="client-wrapper">
+            <div id="status-box">
+                <p id="status-message">Connecting to server...</p>
+                <a href="{{ url_for('stream_page') }}">Go to Stream</a>
+            </div>
+
+        </div>
+    </div>
+
+    <script>
+        // Get the element to update
+        const statusMessage = document.getElementById('status-message');
+
+        // 1. Create a new EventSource to connect to our SSE endpoint
+        const eventSource = new EventSource("{{ url_for('status_updates') }}");
+
+        // 2. Set up a listener for messages from the server
+        eventSource.onmessage = function(event) {
+            // Parse the JSON data from the server
+            const data = JSON.parse(event.data);
+            
+            // Update the text on the page
+            console.log("Received status update:", data.message);
+            statusMessage.textContent = data.message;
+        };
+
+        // 3. (Optional) Handle connection errors
+        eventSource.onerror = function(err) {
+            console.error("EventSource failed:", err);
+            statusMessage.textContent = "Error connecting to status server. Please refresh.";
+            eventSource.close();
+        };
+    </script>
+{% endblock %}

@@ -14,6 +14,19 @@
         .logout-btn:hover {
             background-color: #c0392b;
         }
+        .controls { 
+            border: 1px solid #ccc;
+            padding: 15px;
+            border-radius: 8px; }
+        .status { 
+            margin-top: 15px;
+            font-weight: bold;
+        }
+        button { 
+            font-size: 1rem;
+            padding: 10px;
+            margin-top: 10px;
+        }
     }
 </style>
 {% endblock %}
@@ -21,12 +34,40 @@
 {% block content %}
     <div class="admin-ctn">
         <div class="admin-wrapper">
-            <h1>Admin Dashboard</h1>
-            <p>Welcome, {{ username }}</p>
-            <p>WebSocket Port: {{ ws_port }}</p>
+            <h1>Admin Control Panel</h1>
+            <p>Welcome, <strong>{{ session.user }}</strong>!</p>
+            <a href="{{ url_for('logout_page') }}">Logout</a>
 
-            <a href="/logout" class="logout-btn">Logout</a>
+            <hr>
+
+            <div class="controls">
+                <h3>System Control</h3>
+                
+                <form action="{{ url_for('admin_configure') }}" method="POST">
+                    <button type="submit" 
+                            {% if current_status != 'IDLE' and current_status != 'CONFIGURED' %} 
+                                disabled 
+                            {% endif %}>
+                        1. Configure Setup
+                    </button>
+                    <span>(Takes 3 seconds)</span>
+                </form>
+
+                <form action="{{ url_for('admin_start_host') }}" method="POST">
+                    <button type="submit" 
+                            {% if current_status != 'CONFIGURED' %} 
+                                disabled 
+                            {% endif %}>
+                        2. Start Hosting
+                    </button>
+                    <span>(Takes 3 seconds)</span>
+                </form>
+
+                <div class="status">
+                    Current Status: <span id="status-text">{{ current_status }}</span>
+                </div>
+            </div>
+
         </div>
-
     </div>
 {% endblock %}

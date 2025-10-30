@@ -1,4 +1,9 @@
 import os
+import threading
+
+# --- 2. Define the shared event here ---
+config_done_event = threading.Event()
+
 
 # Prototype endpoint
 ESP32_WS_URL = "ws://192.168.1.8/ws"

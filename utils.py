@@ -1,4 +1,5 @@
 import socket
+import websocket
 from datetime import datetime
 
 
@@ -42,3 +43,39 @@ def find_esp_ip(timeout=10):
         sock.close()
         
     return PROTOTYPE_IP
+
+
+def check_esp_ws_connection(ws_url):
+    """
+    Attempts a one-time, synchronous connection to a WebSocket URL.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        # Create a connection with a short timeout
+        print(f"[ADMIN CHECK] Attempting to connect to {ws_url}...")
+        ws = websocket.create_connection(ws_url, timeout=3)
+        
+        # If we got this far, the handshake was successful.
+        print(f"[ADMIN CHECK] Connection to {ws_url} SUCCEEDED.")
+        ws.close()
+        return True
+
+    # This catches "Connection refused"
+    except (ConnectionRefusedError, socket.error):
+        print(f"[ADMIN CHECK] Connection to {ws_url} FAILED (Connection Refused).")
+        return False
+        
+    # This catches "Operation timed out"
+    except websocket.WebSocketTimeoutException:
+        print(f"[ADMIN CHECK] Connection to {ws_url} FAILED (Timeout).")
+        return False
+        
+    # This catches DNS errors (e.g., "invalid.hostname")
+    except socket.gaierror:
+        print(f"[ADMIN CHECK] Connection to {ws_url} FAILED (Invalid IP/Hostname).")
+        return False
+        
+    # Catch any other WebSocket or general exceptions
+    except Exception as e:
+        print(f"[ADMIN CHECK] Connection to {ws_url} FAILED (Error: {e}).")
+        return False

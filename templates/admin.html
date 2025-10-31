@@ -27,6 +27,30 @@
             padding: 10px;
             margin-top: 10px;
         }
+
+        /* --- ADD THESE STYLES FOR FLASH MESSAGES --- */
+        .flash-messages {
+            padding: 0;
+            margin: 15px 0;
+            list-style: none;
+        }
+        .flash {
+            padding: 12px;
+            margin-bottom: 10px;
+            border-radius: 5px;
+            font-weight: 500;
+            border: 1px solid transparent;
+        }
+        .flash.success {
+            background-color: #d4edda;
+            color: #155724;
+            border-color: #c3e6cb;
+        }
+        .flash.error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border-color: #f5c6cb;
+        }
     }
 </style>
 {% endblock %}
@@ -37,6 +61,16 @@
             <h1>Admin Control Panel</h1>
             <p>Welcome, <strong>{{ session.user }}</strong>!</p>
             <a href="{{ url_for('logout_page') }}">Logout</a>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
 
             <hr>
 

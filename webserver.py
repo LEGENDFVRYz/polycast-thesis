@@ -2,13 +2,13 @@ import os
 import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
-from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request
+from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request, flash
 from auth import init_auth_db, register_admin, verify_admin
 from werkzeug.utils import secure_filename
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
 from config import prototype_config
-from utils import find_esp_ip
+from utils import find_esp_ip, check_esp_ws_connection
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
@@ -53,26 +53,47 @@ def admin_configure():
 
     admin_name = session["user"]
     esp_ip = request.form.get('esp_ip')
-    
-    prototype_config.PROTOTYPE_IP = esp_ip 
-    
-    # 1. Set status to "Configuring..."
+
+    if not esp_ip:
+        flash("No IP address was provided.", "error")
+        return redirect(url_for("admin_page"))
+
+    # 1. Construct the full WebSocket URL.
+    ws_url_to_test = f"ws://{esp_ip}/ws"
+
+    # 2. Set status to "Configuring..."
     admin_status["admin_name"] = admin_name
     admin_status["status"] = "CONFIGURING"
+    print(f"[ADMIN] {admin_name} is configuring with IP: {esp_ip}...")
     
-    # 2. Simulate work
-    print(f"[ADMIN] {admin_name} is configuring...")
-    time.sleep(3) # Simulate 3-second configuration
+    # 3. Perform the actual WebSocket connection check
+    is_connected = check_esp_ws_connection(ws_url_to_test)
     
-    # 3. Set status to "Configured"
-    admin_status["status"] = "CONFIGURED"
-    print(f"[ADMIN] {admin_name} finished configuration.")
+    if is_connected:
+        
+        # Save the IP (like you had before)
+        prototype_config.PROTOTYPE_IP = esp_ip 
+        
+        admin_status["status"] = "CONFIGURED"
+        print(f"[ADMIN] {admin_name} finished configuration. Connection SUCCESS.")
+        
+        flash(f"Successfully connected to PolyCast at {esp_ip}!", "success")
+        
+        # Set the event to unblock any threads waiting on it
+        config_done_event.set()
     
-    # Set the event to unblock any threads waiting on it
-    config_done_event.set()
+    else:
+        # 4. FAILURE: Set status back to "IDLE"
+        admin_status["status"] = "IDLE"
+        print(f"[ADMIN] {admin_name} configuration FAILED. Could not connect.")
+        
+        flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
+        
+        prototype_config.PROTOTYPE_IP = None
+        # You might want to set this to None or a default, non-working URL
     
+    # 5. Redirect back to the admin page
     return redirect(url_for("admin_page"))
-
 
 # Admin Configurantion Helper: API for scanning IP
 @app.route('/scan-for-ip')

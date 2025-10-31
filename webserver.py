@@ -2,11 +2,13 @@ import os
 import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
-from flask import Flask, Response, render_template, redirect, url_for, request, session
+from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request
 from auth import init_auth_db, register_admin, verify_admin
 from werkzeug.utils import secure_filename
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
+from config import prototype_config
+from utils import find_esp_ip
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
@@ -36,22 +38,25 @@ def index():
 def admin_page():
     if "user" not in session:
         return redirect(url_for("login_page"))
-    # --- MODIFIED: Pass the current status to the template ---
+    
     return render_template(
         "admin.html", 
         ws_port=BROWSER_WS_PORT,
         current_status=admin_status["status"] # Pass status to template
     )
 
-# --- NEW: Admin action route to start configuration ---
+# Admin Configurantion:
 @app.route("/admin/configure", methods=["POST"])
 def admin_configure():
     if "user" not in session:
         return redirect(url_for("login_page"))
 
     admin_name = session["user"]
+    esp_ip = request.form.get('esp_ip')
     
-    # 1. Set status to "Configuring"
+    prototype_config.PROTOTYPE_IP = esp_ip 
+    
+    # 1. Set status to "Configuring..."
     admin_status["admin_name"] = admin_name
     admin_status["status"] = "CONFIGURING"
     
@@ -67,6 +72,22 @@ def admin_configure():
     config_done_event.set()
     
     return redirect(url_for("admin_page"))
+
+
+# Admin Configurantion Helper: API for scanning IP
+@app.route('/scan-for-ip')
+def scan_for_ip_route():
+    if 'user' not in session:
+        # If not logged in, return a JSON error, NOT a redirect
+        return jsonify({'success': False, 'message': 'User not authenticated'}), 401
+    
+    ip = find_esp_ip(timeout=10) 
+    
+    if ip:
+        return jsonify({'success': True, 'ip': ip})
+    else:
+        return jsonify({'success': False, 'message': 'Scan timed out. No device found.'}), 404
+
 
 # --- NEW: Admin action route to start hosting ---
 @app.route("/admin/start_host", methods=["POST"])
@@ -102,8 +123,7 @@ def client_page():
     return render_template("client.html", ws_port=BROWSER_WS_PORT)
 
 
-# --- NEW: Server-Sent Events (SSE) route for status updates ---
-# --- NEW: Server-Sent Events (SSE) route for status updates ---
+# --- Server-Sent Events (SSE) route for status updates ---
 @app.route("/status_updates")
 def status_updates():
     def generate_status():
@@ -183,6 +203,10 @@ def status_updates():
     return Response(generate_status(), mimetype="text/event-stream")
 
 
+
+
+
+
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
     if request.method == "POST":
@@ -227,6 +251,8 @@ def logout_page():
     admin_status["hosting_active"] = False
     print("[ADMIN] Admin logged out, status reset.")
     return redirect(url_for("login_page"))
+
+
 
 
 @app.route("/gallery")

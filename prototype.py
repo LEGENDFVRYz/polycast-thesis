@@ -1,5 +1,5 @@
 import time, json, struct, websocket
-from config import ESP32_WS_URL, CONN_LOG, ERROR_LOG
+from config import prototype_config, CONN_LOG, ERROR_LOG
 from utils import log_message
 from image_processing import draw_segment, image_lock
 from websocket_server import WebsocketServer
@@ -58,9 +58,9 @@ def on_esp_close(wsapp, code, msg):
 def ws_client_thread():
     while True:
         try:
-            print(f"[ESP WS] connecting to {ESP32_WS_URL}")
+            print(f"[ESP WS] connecting to {prototype_config.ESP32_WS_URL}")
             wsapp = websocket.WebSocketApp(
-                ESP32_WS_URL,
+                prototype_config.ESP32_WS_URL,
                 on_open=on_esp_open,
                 on_message=on_esp_message,
                 on_error=on_esp_error,

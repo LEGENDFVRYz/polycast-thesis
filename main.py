@@ -1,8 +1,9 @@
 import threading
+import socket
 from config import *
 from prototype import ws_client_thread, start_browser_ws_server
 from image_processing import archiver_thread
-from webserver import run_webserver, config_done_event
+from webserver import run_webserver
 
 
 def prototype_manager_thread():
@@ -17,6 +18,8 @@ def prototype_manager_thread():
     
     print("[MANAGER] Admin configured. Starting ESP32 client thread...")
     threading.Thread(target=ws_client_thread, daemon=True).start()
+
+
 
 
 if __name__ == "__main__":

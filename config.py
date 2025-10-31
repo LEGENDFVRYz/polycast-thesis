@@ -1,12 +1,10 @@
 import os
 import threading
+import socket
 
 # --- 2. Define the shared event here ---
 config_done_event = threading.Event()
 
-
-# Prototype endpoint
-ESP32_WS_URL = "ws://192.168.1.8/ws"
 
 # Canvas dimensions
 CANVAS_WIDTH, CANVAS_HEIGHT = 35560, 22219
@@ -31,3 +29,17 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # Log paths
 CONN_LOG = os.path.join(LOG_DIR, "conn.logs")
 ERROR_LOG = os.path.join(LOG_DIR, "error.logs")
+
+
+# Prototype endpoint
+class _Config:
+    UDP_PORT = 12345
+    PROTOTYPE_IP = None     # will be set by the listener in admin/configure
+
+    @property
+    def ESP32_WS_URL(self):
+        if self.PROTOTYPE_IP is None:
+            return None
+        return f"ws://{self.PROTOTYPE_IP}/ws"
+
+prototype_config = _Config()

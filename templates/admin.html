@@ -44,6 +44,11 @@
                 <h3>System Control</h3>
                 
                 <form action="{{ url_for('admin_configure') }}" method="POST">
+                    <label for="esp_ip">PolyCast IP:</label>
+                    <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find..." value="" required>
+                    
+                    <button type="button" id="scanBtn">Scan for ESP32</button>
+
                     <button type="submit" 
                             {% if current_status != 'IDLE' and current_status != 'CONFIGURED' %} 
                                 disabled 
@@ -70,4 +75,46 @@
 
         </div>
     </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            
+            const scanButton = document.getElementById('scanBtn');
+            const ipInput = document.getElementById('esp_ip');
+
+            scanButton.addEventListener('click', function() {
+                
+                // Initial Feedback
+                scanButton.disabled = true;
+                scanButton.textContent = 'Scanning...';
+                ipInput.placeholder = 'Scanning for broadcast...';
+                ipInput.value = ''; // Clear any old value
+
+                // API Call: Prototype Scanner
+                fetch("{{ url_for('scan_for_ip_route') }}")
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(err => {
+                                throw new Error(err.message || 'Scan failed');
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        if (data.success) {
+                            ipInput.value = data.ip; 
+                            ipInput.placeholder = 'IP Found!';
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Fetch error:', error);
+                        ipInput.placeholder = error.message;
+                    })
+                    .finally(() => {
+                        scanButton.disabled = false;
+                        scanButton.textContent = 'Scan for ESP32';
+                    });
+            });
+        });
+    </script>
 {% endblock %}

@@ -16,3 +16,14 @@ class Gallery(db.Model):
     
     # Relationships
     sessions = db.relationship('Session', backref='gallery', lazy=True, cascade="all, delete-orphan")
+    
+    
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "name": self.name,
+            "admin_id": self.admin_id
+        }
+        
+    def get_gallery_name(self):
+        return self.name

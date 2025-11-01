@@ -7,6 +7,7 @@ from werkzeug.utils import secure_filename
 
 from app import create_app, db
 from app.models.admin import Admin
+from app.models.gallery import Gallery
 from app.services.auth_service import register_admin, verify_admin
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
@@ -48,13 +49,20 @@ def admin_page():
     if "user" not in session:
         return redirect(url_for("login_page"))
     
+    # FETCH GALLERY DATA
     current_admin = Admin.query.get(session["id"])
-    print(current_admin.id, current_admin.username)
+    admin_galleries = current_admin.gallery
+    
+    # gallery_data = [g.to_dict() for g in admin_galleries]   # ORM -> List(Dict())
+    # gallery_json = json.dumps(gallery_data)
+    
+    gallery_list = [g.get_gallery_name() for g in admin_galleries]
     
     return render_template(
         "admin.html", 
         ws_port=BROWSER_WS_PORT,
-        current_status=admin_status["status"] # Pass status to template
+        current_status=admin_status["status"],      # Pass status to template
+        gallery_data=gallery_list
     )
 
 # Admin Configurantion:
@@ -132,15 +140,24 @@ def admin_start_host():
         # Handle error (e.g., flash a message)
         return redirect(url_for("admin_page"))
 
+    # CREATE GALLERY DATA
     admin_name = session["user"]
+    admin_id = session["id"]
+    gallery_name = request.form.get('gallery_name')
     
     # 1. Set status to "Starting"
     admin_status["admin_name"] = admin_name
     admin_status["status"] = "STARTING"
     
-    # 2. Simulate work
+    # 2. Create a new gallery
     print(f"[ADMIN] {admin_name} is starting host...")
-    time.sleep(3) # Simulate 3-second startup
+    
+    new_gallery = Gallery(
+        name=gallery_name,
+        admin_id=admin_id
+    )
+    db.session.add(new_gallery)
+    db.session.commit()
     
     # 3. Set status to "Hosting"
     admin_status["status"] = "HOSTING"

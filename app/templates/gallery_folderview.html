@@ -30,9 +30,12 @@
     </div>
 </div>
 
-<!-- JSZip + FileSaver -->
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+
+<!-- Uses JSZip (MIT License) - https://stuk.github.io/jszip/ -->
+<script src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
+
+<!-- Uses FileSaver.js (MIT License) - https://github.com/eligrey/FileSaver.js/ -->
+<script src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
 
 <script>
 /* --- LAZY LOADING IMAGES --- */

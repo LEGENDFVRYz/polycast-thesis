@@ -14,7 +14,7 @@ def create_app():
     # --- Configuration ---
     app.config.from_mapping(
         SECRET_KEY="polycast-creator_BatsiKuruSyaniOmit",
-        SQLALCHEMY_DATABASE_URI="sqlite:///../app.db",
+        SQLALCHEMY_DATABASE_URI="sqlite:///../instance/app.db",
         SQLALCHEMY_TRACK_MODIFICATIONS=False
     )
 

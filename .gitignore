@@ -21,6 +21,7 @@ __pycache__/
 
 # Generated Frames or Notes
 archive/
+instance/
 app/static/gallery_images/
 
 # generated logs

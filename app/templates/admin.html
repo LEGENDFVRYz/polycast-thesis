@@ -53,6 +53,8 @@
         }
     }
 </style>
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 {% endblock %}
 
 {% block content %}
@@ -73,7 +75,7 @@
             {% endwith %}
 
             <hr>
-
+            
             <div class="controls">
                 <h3>System Control</h3>
                 
@@ -92,7 +94,30 @@
                     <span>(Takes 3 seconds)</span>
                 </form>
 
+
                 <form action="{{ url_for('admin_start_host') }}" method="POST">
+
+                    <div class="combo-container" 
+                        role="combobox" 
+                        aria-haspopup="listbox" 
+                        aria-expanded="false">
+                        
+                        <label id="gallery-label" for="gallery-input">Choose a Gallery:</label>
+                        
+                        <input type="text" 
+                            id="gallery-input"
+                            name="gallery_name"
+                            role="textbox"
+                            aria-autocomplete="list"
+                            aria-controls="gallery-listbox" />
+                        
+                        <ul id="gallery-listbox" 
+                            role="listbox" 
+                            aria-labelledby="gallery-label" 
+                            class="hidden">
+                            </ul>
+                    </div>
+
                     <button type="submit" 
                             {% if current_status != 'CONFIGURED' %} 
                                 disabled 
@@ -110,6 +135,7 @@
         </div>
     </div>
 
+    <!-- ESP SCANNER SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', (event) => {
             
@@ -149,6 +175,170 @@
                         scanButton.textContent = 'Scan for ESP32';
                     });
             });
+        });
+    </script>
+
+    <!-- COMBO BOX SCRIPT -->
+    <script>
+        // Data that would come from your Flask backend
+        const ALL_OPTIONS = {{ gallery_data | safe }};
+
+        // --- 1. Get DOM Elements ---
+        const comboContainer = document.querySelector('.combo-container');
+        const input = document.getElementById('gallery-input');
+        const listbox = document.getElementById('gallery-listbox');
+
+        let highlightedIndex = -1; // No option highlighted by default
+
+        // --- 2. Core Functions ---
+
+        /**
+        * Filters and displays the options list based on the input value.
+        */
+        function filterAndShowOptions() {
+            const filter = input.value.toLowerCase();
+            
+            // Get matching options
+            const filteredOptions = ALL_OPTIONS.filter(option => 
+                option.toLowerCase().includes(filter)
+            );
+
+            listbox.innerHTML = ''; // Clear old options
+            
+            if (filteredOptions.length === 0) {
+                hideListbox();
+                return;
+            }
+
+            // Create and add new option elements
+            filteredOptions.forEach((option, index) => {
+                const li = document.createElement('li');
+                li.className = 'combo-option';
+                li.role = 'option';
+                li.id = `option-${index}`; // Unique ID for aria-activedescendant
+                li.textContent = option;
+                
+                // Mouse click event
+                li.addEventListener('mousedown', (e) => {
+                    // 'mousedown' fires before 'blur' on the input
+                    e.preventDefault(); 
+                    selectOption(option);
+                });
+                
+                listbox.appendChild(li);
+            });
+            
+            showListbox();
+        }
+
+        /**
+        * Selects an option, sets the input value, and closes the list.
+        */
+        function selectOption(option) {
+            input.value = option;
+            hideListbox();
+        }
+
+        /**
+        * Shows the listbox and updates ARIA attributes.
+        */
+        function showListbox() {
+            listbox.classList.remove('hidden');
+            comboContainer.setAttribute('aria-expanded', 'true');
+        }
+
+        /**
+        * Hides the listbox and resets ARIA/highlighting.
+        */
+        function hideListbox() {
+            listbox.classList.add('hidden');
+            comboContainer.setAttribute('aria-expanded', 'false');
+            highlightedIndex = -1;
+            input.removeAttribute('aria-activedescendant');
+        }
+
+        /**
+        * Highlights an option in the list using the keyboard.
+        */
+        function highlightOption(index) {
+            const options = listbox.querySelectorAll('.combo-option');
+            
+            // Remove previous highlight
+            const prevOption = listbox.querySelector('.highlighted');
+            if (prevOption) prevOption.classList.remove('highlighted');
+            
+            // Set new highlight
+            const newOption = options[index];
+            if (newOption) {
+                newOption.classList.add('highlighted');
+                
+                // Tell screen reader which option is active
+                input.setAttribute('aria-activedescendant', newOption.id);
+                
+                // Scroll the list to make the option visible
+                newOption.scrollIntoView({ block: 'nearest' });
+                
+                highlightedIndex = index;
+            }
+        }
+
+
+        // --- 3. Event Listeners ---
+
+        // Show all options on click/focus
+        input.addEventListener('focus', filterAndShowOptions);
+        input.addEventListener('click', filterAndShowOptions);
+
+        // Filter as user types
+        input.addEventListener('input', filterAndShowOptions);
+
+        // Hide on click outside
+        document.addEventListener('click', (e) => {
+            if (!comboContainer.contains(e.target)) {
+                hideListbox();
+            }
+        });
+
+        // CRITICAL: Keyboard Navigation
+        input.addEventListener('keydown', (e) => {
+            const options = listbox.querySelectorAll('.combo-option');
+            if (listbox.classList.contains('hidden')) {
+                // If list is hidden and user presses Down, show it
+                if (e.key === 'ArrowDown' && options.length > 0) {
+                    e.preventDefault();
+                    showListbox();
+                    highlightOption(0);
+                }
+                return;
+            }
+
+            switch (e.key) {
+                case 'ArrowDown':
+                    e.preventDefault(); // Stop cursor from moving in input
+                    if (highlightedIndex < options.length - 1) {
+                        highlightOption(highlightedIndex + 1);
+                    }
+                    break;
+                    
+                case 'ArrowUp':
+                    e.preventDefault(); // Stop cursor from moving in input
+                    if (highlightedIndex > 0) {
+                        highlightOption(highlightedIndex - 1);
+                    }
+                    break;
+                    
+                case 'Enter':
+                    e.preventDefault();
+                    if (highlightedIndex > -1) {
+                        selectOption(options[highlightedIndex].textContent);
+                    }
+                    break;
+                    
+                case 'Escape':
+                    e.preventDefault();
+                    hideListbox();
+                    break;
+            }
         });
     </script>
 {% endblock %}

@@ -1,0 +1,70 @@
+/* Global styles for the demo */
+
+
+/* --- Combo Box Styles --- */
+.admin-ctn {
+    .admin-wrapper {
+
+
+        /* Stylings for combo-box */
+        .combo-container {
+            position: relative; /* Anchor for the listbox */
+            width: 300px;
+        
+            #gallery-label {
+                display: block;
+                font-weight: 500;
+                margin-bottom: 4px;
+            }
+        
+            #gallery-input {
+                width: 100%;
+                padding: 8px 12px;
+                font-size: 16px;
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                box-sizing: border-box; /* Important for 100% width */
+            }
+        
+            #gallery-listbox {
+                /* Positioning */
+                position: absolute;
+                top: 100%; /* Place it right below the input */
+                left: 0;
+                right: 0;
+                
+                /* Sizing and appearance */
+                max-height: 200px;
+                overflow-y: auto;
+                margin: 4px 0 0 0;
+                padding: 0;
+                list-style-type: none;
+                
+                /* Looks */
+                border: 1px solid #ccc;
+                border-radius: 4px;
+                background-color: #fff;
+                box-shadow: 0 4px 10px rgba(0,0,0,0.1);
+                z-index: 1000;
+        
+                /* State modifier */
+                &.hidden {
+                    display: none;
+                }
+        
+                /* Option styles */
+                .combo-option {
+                    padding: 8px 12px;
+                    cursor: pointer;
+        
+                    /* Highlighted state for keyboard/mouse */
+                    &.highlighted {
+                        background-color: #007bff;
+                        color: #fff;
+                    }
+                }
+            }
+        }
+    }
+}
+

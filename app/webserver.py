@@ -3,28 +3,36 @@ import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
 from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request, flash
-from auth import init_auth_db, register_admin, verify_admin
 from werkzeug.utils import secure_filename
+
+from app import create_app, db
+from app.services.auth_service import register_admin, verify_admin
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
 from config import prototype_config
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-app = Flask(__name__, template_folder="templates")
+
+# ---------------------------------------------------------------------
+# Flask app initialization
+# ---------------------------------------------------------------------
+app = create_app()
 app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
 
-GALLERY_PATH = os.path.join(app.static_folder, 'gallery_images')
-init_auth_db()
+# # Initialize database (ensures tables exist)
+# with app.app_context():
+#     init_auth_db(app)
 
-# --- NEW: Global variable to track admin status ---
-# This dictionary will be shared across all requests and threads
+# Directory for gallery images
+GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
+
+# --- Shared state for admin status ---
 admin_status = {
     "admin_name": None,
-    # Possible statuses: IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
-    "status": "IDLE", 
+    "status": "IDLE",          # IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
     "hosting_active": False
 }
-# --------------------------------------------------
+# ---------------------------------------------------------------------
 
 
 @app.route("/")

@@ -152,12 +152,14 @@ def admin_start_host():
     # 2. Create a new gallery
     print(f"[ADMIN] {admin_name} is starting host...")
     
-    new_gallery = Gallery(
-        name=gallery_name,
-        admin_id=admin_id
-    )
-    db.session.add(new_gallery)
-    db.session.commit()
+    existing_gallery = Gallery.query.filter_by(name=gallery_name).first()
+    if not existing_gallery:
+        new_gallery = Gallery(
+            name=gallery_name,
+            admin_id=admin_id
+        )
+        db.session.add(new_gallery)
+        db.session.commit()
     
     # 3. Set status to "Hosting"
     admin_status["status"] = "HOSTING"

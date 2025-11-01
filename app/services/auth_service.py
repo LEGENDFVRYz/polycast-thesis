@@ -14,9 +14,9 @@ def register_admin(username: str, password: str) -> bool:
     db.session.commit()
     return True
 
-def verify_admin(username: str, password: str) -> bool:
-    """Verify credentials."""
+def verify_admin(username: str, password: str):
+    """Verify credentials and return user object if valid."""
     user = Admin.query.filter_by(username=username).first()
-    if not user:
-        return False
-    return user.check_password(password)
+    if user and user.check_password(password):
+        return user  # return the user object
+    return None

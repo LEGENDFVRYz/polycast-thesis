@@ -6,6 +6,7 @@ from flask import Flask, Response, render_template, redirect, url_for, request, 
 from werkzeug.utils import secure_filename
 
 from app import create_app, db
+from app.models.admin import Admin
 from app.services.auth_service import register_admin, verify_admin
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
@@ -46,6 +47,9 @@ def index():
 def admin_page():
     if "user" not in session:
         return redirect(url_for("login_page"))
+    
+    current_admin = Admin.query.get(session["id"])
+    print(current_admin.id, current_admin.username)
     
     return render_template(
         "admin.html", 
@@ -116,7 +120,6 @@ def scan_for_ip_route():
         return jsonify({'success': True, 'ip': ip})
     else:
         return jsonify({'success': False, 'message': 'Scan timed out. No device found.'}), 404
-
 
 # --- NEW: Admin action route to start hosting ---
 @app.route("/admin/start_host", methods=["POST"])
@@ -253,10 +256,13 @@ def login_page():
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        if verify_admin(username, password):
-            session["user"] = username
-            # --- MODIFIED: Set status on login ---
-            # (In case server restarted while admin was logged in)
+        
+        user = verify_admin(username, password)
+        if user:
+            session["id"] = user.id
+            session["user"] = user.username
+
+            # In case server restarted while admin was logged in
             if admin_status["status"] == "HOSTING":
                 admin_status["admin_name"] = username
             else:
@@ -268,6 +274,7 @@ def login_page():
             return redirect(url_for("admin_page"))
         else:
             return "Invalid username or password"
+        
     return render_template("login.html")
 
 

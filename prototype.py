@@ -1,6 +1,6 @@
 import time, json, struct, websocket
 from config import prototype_config, CONN_LOG, ERROR_LOG
-from utils import log_message
+from app.utils.utils import log_message
 from image_processing import draw_segment, image_lock
 from websocket_server import WebsocketServer
 

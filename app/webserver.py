@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
 from config import prototype_config
-from utils import find_esp_ip, check_esp_ws_connection
+from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
 app = Flask(__name__, template_folder="templates")
 app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"

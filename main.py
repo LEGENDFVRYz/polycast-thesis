@@ -1,9 +1,8 @@
 import threading
-import socket
-from config import *
+from app.webserver import run_webserver
 from prototype import ws_client_thread, start_browser_ws_server
 from image_processing import archiver_thread
-from webserver import run_webserver
+from config import IS_AUTO_ARCHIVING, FLASK_PORT, BROWSER_WS_PORT, config_done_event
 
 
 def prototype_manager_thread():
@@ -20,12 +19,13 @@ def prototype_manager_thread():
     threading.Thread(target=ws_client_thread, daemon=True).start()
 
 
-
-
 if __name__ == "__main__":
     threading.Thread(target=start_browser_ws_server, args=(BROWSER_WS_PORT,), daemon=True).start()
-    threading.Thread(target=prototype_manager_thread, daemon=True).start() # prototype thread
 
+    # Wait for admin config before starting prototype communication
+    threading.Thread(target=prototype_manager_thread, daemon=True).start()
+
+    # Flags
     if IS_AUTO_ARCHIVING:
         threading.Thread(target=archiver_thread, daemon=True).start()
         print("[ARCHIVER] auto-archiving enabled")

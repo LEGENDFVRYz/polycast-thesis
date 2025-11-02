@@ -1,70 +1,147 @@
-/* Global styles for the demo */
 
-
-/* --- Combo Box Styles --- */
+/* === ADMIN CONTROL PANEL STYLES === */
 .admin-ctn {
+    font-family: system-ui, sans-serif;
+    display: flex;
+    justify-content: center;
+    margin: 2rem auto;
+
     .admin-wrapper {
+        /* Main Controls Panel */
+        .controls {
+            max-width: 600px;
+            width: 100%;
+            padding: 1.5rem;
+            margin-top: 2em;
+            border: 1px solid #ccc;
+            border-radius: 12px;
+            background: #fafafa;
 
+            h3 {
+                text-align: center;
+                margin-bottom: 1rem;
+            }
 
-        /* Stylings for combo-box */
-        .combo-container {
-            position: relative; /* Anchor for the listbox */
-            width: 300px;
-        
-            #gallery-label {
-                display: block;
-                font-weight: 500;
-                margin-bottom: 4px;
-            }
-        
-            #gallery-input {
-                width: 100%;
-                padding: 8px 12px;
-                font-size: 16px;
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                box-sizing: border-box; /* Important for 100% width */
-            }
-        
-            #gallery-listbox {
-                /* Positioning */
-                position: absolute;
-                top: 100%; /* Place it right below the input */
-                left: 0;
-                right: 0;
-                
-                /* Sizing and appearance */
-                max-height: 200px;
-                overflow-y: auto;
-                margin: 4px 0 0 0;
-                padding: 0;
-                list-style-type: none;
-                
-                /* Looks */
-                border: 1px solid #ccc;
-                border-radius: 4px;
-                background-color: #fff;
-                box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-                z-index: 1000;
-        
-                /* State modifier */
-                &.hidden {
-                    display: none;
+            /* === Phase Blocks === */
+            .phase {
+                border-left: 4px solid #007bff;
+                background: #fff;
+                padding: 1rem 1.5rem;
+                margin-bottom: 1.5rem;
+                border-radius: 8px;
+                position: relative;
+
+                &.locked {
+                    opacity: 0.6;
+                    pointer-events: none;
                 }
-        
-                /* Option styles */
-                .combo-option {
-                    padding: 8px 12px;
-                    cursor: pointer;
-        
-                    /* Highlighted state for keyboard/mouse */
-                    &.highlighted {
-                        background-color: #007bff;
+
+                .phase-header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 0.5rem;
+
+                    h4 {
+                        margin: 0;
+                        font-size: 1.1rem;
+                        font-weight: 600;
+                    }
+
+                    .status-badge {
+                        font-size: 0.9rem;
+                        padding: 0.2rem 0.6rem;
+                        border-radius: 8px;
                         color: #fff;
+
+                        &.done { background: #28a745; }
+                        &.locked { background: #dc3545; }
+                    }
+                }
+
+                input,
+                button {
+                    padding: 0.5rem;
+                    margin-top: 0.3rem;
+                    width: 100%;
+                    border: 1px solid #ccc;
+                    border-radius: 6px;
+                }
+
+                button {
+                    background: #007bff;
+                    color: #fff;
+                    border: none;
+                    margin-top: 0.8rem;
+                    cursor: pointer;
+                    font-weight: 500;
+
+                    &:disabled {
+                        background: #aaa;
+                        cursor: not-allowed;
+                    }
+                }
+            }
+
+            /* Status Text */
+            .status {
+                text-align: center;
+                font-weight: 600;
+                margin-top: 1rem;
+            }
+
+            /* === Combo Box Styles (Phase 2 Form) === */
+            .combo-container {
+                position: relative;
+                width: 300px;
+                margin-top: 1rem;
+
+                #gallery-label {
+                    display: block;
+                    font-weight: 500;
+                    margin-bottom: 4px;
+                }
+
+                #gallery-input {
+                    width: 100%;
+                    padding: 8px 12px;
+                    font-size: 16px;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    box-sizing: border-box;
+                }
+
+                #gallery-listbox {
+                    position: absolute;
+                    top: 100%;
+                    left: 0;
+                    right: 0;
+                    max-height: 200px;
+                    overflow-y: auto;
+                    margin: 4px 0 0 0;
+                    padding: 0;
+                    list-style-type: none;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    background-color: #fff;
+                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+                    z-index: 1000;
+
+                    &.hidden {
+                        display: none;
+                    }
+
+                    .combo-option {
+                        padding: 8px 12px;
+                        cursor: pointer;
+
+                        &.highlighted {
+                            background-color: #007bff;
+                            color: #fff;
+                        }
                     }
                 }
             }
         }
     }
 }
-

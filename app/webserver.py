@@ -3,11 +3,13 @@ import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
 from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request, flash
+from pytest import Session
 from werkzeug.utils import secure_filename
 
 from app import create_app, db
 from app.models.admin import Admin
 from app.models.gallery import Gallery
+from app.models.session import Session
 from app.services.auth_service import register_admin, verify_admin
 from image_processing import generate_frames
 from config import BROWSER_WS_PORT, config_done_event
@@ -144,6 +146,7 @@ def admin_start_host():
     admin_name = session["user"]
     admin_id = session["id"]
     gallery_name = request.form.get('gallery_name')
+    session_name = request.form.get('session_name')
     
     # 1. Set status to "Starting"
     admin_status["admin_name"] = admin_name
@@ -160,6 +163,16 @@ def admin_start_host():
         )
         db.session.add(new_gallery)
         db.session.commit()
+    
+    # 2.5 Create a new session
+    gallery_id = Gallery.query.filter_by(name=gallery_name).first().id
+    new_session = Session(
+        name=session_name,
+        gallery_id=gallery_id,
+    )
+    db.session.add(new_session)
+    db.session.commit()
+    
     
     # 3. Set status to "Hosting"
     admin_status["status"] = "HOSTING"

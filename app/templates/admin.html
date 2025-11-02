@@ -118,6 +118,14 @@
                             </ul>
                     </div>
 
+                    <div>
+                        <label id="session-label" for="session-input">Session Name:</label>
+                        
+                        <input type="text" 
+                            id="session-input"
+                            name="session_name" />
+                    </div>
+
                     <button type="submit" 
                             {% if current_status != 'CONFIGURED' %} 
                                 disabled 

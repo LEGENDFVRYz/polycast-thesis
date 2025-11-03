@@ -9,7 +9,9 @@ ws_server = None
 
 
 def parse_esp_binary(msg: bytes):
-    """Parse binary packets of absolute coordinates (type=0)."""
+    """
+    Parse binary packets of absolute coordinates (type=0)
+    """
     points = []
     i = 0
     while i + 6 <= len(msg):
@@ -69,8 +71,8 @@ def ws_client_thread():
             wsapp.run_forever()
         except Exception as e:
             print("[ESP WS] client exception:", e)
-        print("[ESP WS] reconnecting in 2s...")
-        time.sleep(2)
+        print("[ESP WS] reconnecting in 1s...")
+        time.sleep(1)
 
 
 def start_browser_ws_server(port):

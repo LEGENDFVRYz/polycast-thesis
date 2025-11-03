@@ -5,6 +5,10 @@ import socket
 # --- 2. Define the shared event here ---
 config_done_event = threading.Event()
 
+# Background Task: Thread Reference
+prototype_reader_thread_stop_event = threading.Event()
+prototype_reader_thread = None
+
 
 # Canvas dimensions
 CANVAS_WIDTH, CANVAS_HEIGHT = 35560, 22219

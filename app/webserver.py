@@ -16,6 +16,9 @@ from config import BROWSER_WS_PORT, config_done_event
 from config import prototype_config
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
+from config import prototype_reader_thread, prototype_reader_thread_stop_event
+from prototype import ws_client_thread
+
 
 # ---------------------------------------------------------------------
 # Flask app initialization
@@ -80,29 +83,33 @@ def admin_configure():
         flash("No IP address was provided.", "error")
         return redirect(url_for("admin_page"))
 
-    # 1. Construct the full WebSocket URL.
     ws_url_to_test = f"ws://{esp_ip}/ws"
 
-    # 2. Set status to "Configuring..."
+
+    # Set status to "Configuring..."
     admin_status["admin_name"] = admin_name
     admin_status["status"] = "CONFIGURING"
     print(f"[ADMIN] {admin_name} is configuring with IP: {esp_ip}...")
     
-    # 3. Perform the actual WebSocket connection check
+    # Perform the actual WebSocket connection check
     is_connected = check_esp_ws_connection(ws_url_to_test)
     
     if is_connected:
         
-        # Save the IP (like you had before)
-        prototype_config.PROTOTYPE_IP = esp_ip 
+        prototype_config.PROTOTYPE_IP = esp_ip  # Save the IP
         
         admin_status["status"] = "CONFIGURED"
         print(f"[ADMIN] {admin_name} finished configuration. Connection SUCCESS.")
-        
         flash(f"Successfully connected to PolyCast at {esp_ip}!", "success")
         
-        # Set the event to unblock any threads waiting on it
-        config_done_event.set()
+        global prototype_reader_thread
+        if prototype_reader_thread and prototype_reader_thread.is_alive():
+            print("Thread already running.")
+            return redirect(url_for("admin_page"))
+
+        prototype_reader_thread_stop_event.clear()  # reset stop signal
+        thread = threading.Thread(target=ws_client_thread, daemon=True)
+        thread.start()
     
     else:
         # 4. FAILURE: Set status back to "IDLE"
@@ -112,9 +119,7 @@ def admin_configure():
         flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
         
         prototype_config.PROTOTYPE_IP = None
-        # You might want to set this to None or a default, non-working URL
     
-    # 5. Redirect back to the admin page
     return redirect(url_for("admin_page"))
 
 # Admin Configurantion Helper: API for scanning IP

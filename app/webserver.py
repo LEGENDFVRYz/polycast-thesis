@@ -19,6 +19,8 @@ from app.utils.utils import find_esp_ip, check_esp_ws_connection
 from config import prototype_reader_thread, prototype_reader_thread_stop_event
 from prototype import ws_client_thread
 
+from background.prototype_manager import PrototypeManager
+
 
 # ---------------------------------------------------------------------
 # Flask app initialization
@@ -29,6 +31,8 @@ app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
 # # Initialize database (ensures tables exist)
 # with app.app_context():
 #     init_auth_db(app)
+
+thread_manager = PrototypeManager()     # prototype background thread
 
 # Directory for gallery images
 GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
@@ -102,14 +106,17 @@ def admin_configure():
         print(f"[ADMIN] {admin_name} finished configuration. Connection SUCCESS.")
         flash(f"Successfully connected to PolyCast at {esp_ip}!", "success")
         
-        global prototype_reader_thread
-        if prototype_reader_thread and prototype_reader_thread.is_alive():
-            print("Thread already running.")
-            return redirect(url_for("admin_page"))
+        # global prototype_reader_thread
+        # if prototype_reader_thread and prototype_reader_thread.is_alive():
+        #     print("Thread already running.")
+        #     return redirect(url_for("admin_page"))
 
-        prototype_reader_thread_stop_event.clear()  # reset stop signal
-        thread = threading.Thread(target=ws_client_thread, daemon=True)
-        thread.start()
+        # prototype_reader_thread_stop_event.clear()  # reset stop signal
+        # prototype_reader_thread = threading.Thread(target=ws_client_thread, daemon=True)
+        # prototype_reader_thread.start()
+        
+        result = thread_manager.start()
+        print("[PROTO] started" if result else "[PROTO] already running")
     
     else:
         # 4. FAILURE: Set status back to "IDLE"
@@ -185,6 +192,33 @@ def admin_start_host():
     print(f"[ADMIN] {admin_name} is now hosting.")
     
     return redirect(url_for("admin_page"))
+
+@app.route('/endsession')
+def endsession():
+    # global prototype_reader_thread # <-- Add this to modify the global var
+    
+    # if not prototype_reader_thread or not prototype_reader_thread.is_alive():
+    #     print("No active thread to stop")
+    #     return redirect(url_for('admin_page'))
+
+    try:
+        print("Signaling thread to stop...")
+        # prototype_reader_thread_stop_event.set()  # 1. Signal the while loop to stop
+
+        # if prototype_ws_app:
+        #     print("Closing websocket connection...")
+        #     prototype_ws_app.close()          # 2. This unblocks run_forever()
+
+        # 3. Wait for the thread to actually finish
+        # prototype_reader_thread.join(timeout=2.0) 
+        
+        result = thread_manager.stop()
+        print("[PROTO] stopped" if result else "[PROTO] not running")
+        
+    except Exception as e:
+        print(f"Error stopping thread: {e}")
+        
+    return redirect(url_for('admin_page'))
 
 
 @app.route("/client")

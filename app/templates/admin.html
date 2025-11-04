@@ -11,6 +11,10 @@
             <p>Welcome, <strong>{{ session.user }}</strong>!</p>
             <a href="{{ url_for('logout_page') }}">Logout</a>
 
+            {% if current_status == 'HOSTING' %}
+                <a href="{{ url_for('endsession') }}">Logout</a>  // MAke your own route
+            {% endif %}
+            
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     <div class="flash-messages">

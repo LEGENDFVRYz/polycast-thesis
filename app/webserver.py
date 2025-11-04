@@ -210,10 +210,14 @@ def endsession():
         #     prototype_ws_app.close()          # 2. This unblocks run_forever()
 
         # 3. Wait for the thread to actually finish
-        # prototype_reader_thread.join(timeout=2.0) 
+        # prototype_reader_thread.join(timeout=2.0)
         
         result = thread_manager.stop()
         print("[PROTO] stopped" if result else "[PROTO] not running")
+        
+        admin_status["status"] = "IDLE"
+        admin_status["hosting_active"] = False
+        print("[ADMIN] Admin End the session, status reset.")
         
     except Exception as e:
         print(f"Error stopping thread: {e}")

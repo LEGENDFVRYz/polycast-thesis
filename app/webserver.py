@@ -356,10 +356,15 @@ def login_page():
 @app.route("/logout")
 def logout_page():
     session.pop("user", None)
-    # --- MODIFIED: Reset status on logout ---
+    # End the prototype ws thread
+    result = thread_manager.stop()
+    print("[PROTO] stopped" if result else "[PROTO] not running")
+    
+    # Reset status on logout
     admin_status["admin_name"] = None
     admin_status["status"] = "IDLE"
     admin_status["hosting_active"] = False
+    
     print("[ADMIN] Admin logged out, status reset.")
     return redirect(url_for("login_page"))
 

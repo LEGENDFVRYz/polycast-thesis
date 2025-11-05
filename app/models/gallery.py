@@ -9,7 +9,7 @@ class Gallery(db.Model):
     
     id = db.Column('id', db.Integer, primary_key=True)
     # Foreign Key to User (Many Gallery to One Admin)
-    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id'), nullable=False)
+    admin_id = db.Column(db.Integer, db.ForeignKey('admins.id', ondelete='CASCADE'), nullable=False)
     name = db.Column(db.String(80), nullable=False)
     
     # Relationships

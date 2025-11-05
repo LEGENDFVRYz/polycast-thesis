@@ -12,9 +12,15 @@ class Admin(db.Model):
     password_hash = db.Column(db.LargeBinary(128), nullable=False)  # bcrypt hash stored as bytes
     
     # Relationships
-    gallery = db.relationship('Gallery', backref='admin', lazy=True, cascade="all, delete-orphan")
+    gallery = db.relationship(
+        'Gallery', 
+        backref='admin', 
+        lazy=True, 
+        cascade="all, delete-orphan",
+        passive_deletes=True
+    )
     
-
+    
     def set_password(self, password: str):
         """
         Hash and store the user's password

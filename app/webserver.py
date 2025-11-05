@@ -260,14 +260,39 @@ def status_updates():
 
 @app.route("/register", methods=["GET", "POST"])
 def register_page():
+    """
+    Handles the user registration page.
+    Validates form data, checks for matching passwords,
+    and registers the user.
+    """
+    error = None
     if request.method == "POST":
         username = request.form["username"]
         password = request.form["password"]
-        if register_admin(username, password):
-            return redirect(url_for("login_page"))
+        confirm_password = request.form["confirm_password"]
+
+        # --- Validation ---
+        if not username or not password or not confirm_password:
+            error = "All fields are required."
+        elif password != confirm_password:
+            error = "Passwords do not match!"
         else:
-            return "Username already exists!"
-    return render_template("register.html")
+            # --- Try to register ---
+            # Assuming register_admin(username, password) returns True on success, False on failure
+            try:
+                if register_admin(username, password):
+                    # Use flash for success message on redirect
+                    flash("Registration successful! Please log in.", "success")
+                    return redirect(url_for("login_page"))
+                else:
+                    error = "Username already exists!"
+            except Exception as e:
+                # Catch any other potential errors during registration
+                print(f"Error during registration: {e}") # Log the error
+                error = "An unexpected error occurred. Please try again."
+    
+    # On a GET request or if an error occurred during POST, render the register page
+    return render_template("register.html", error=error)
 
 
 @app.route("/login", methods=["GET", "POST"])

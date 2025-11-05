@@ -1,19 +1,51 @@
-
-
 {% extends "base.html" %}
 
 {% block extra_css %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/register.css') }}">
+    <!-- Link to the new register.css file -->
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
 {% endblock %}
 
 {% block content %}
-    <h2>Register</h2>
-    <form method="POST">
-        <label>Username:</label><br>
-        <input type="text" name="username" required><br>
-        <label>Password:</label><br>
-        <input type="password" name="password" required><br><br>
-        <button type="submit">Register</button>
-    </form>
-    <p>Already have an account? <a href="/login">Login</a></p>
+    <div class="register-ctn">
+        <div class="register-wrapper">
+            <h2>Register</h2>
+            
+            <!-- 
+                This block displays flashed messages, like the success 
+                message after redirecting from a successful registration.
+            -->
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    {% for category, message in messages %}
+                        <div class="alert-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                {% endif %}
+            {% endwith %}
+
+            <!-- 
+                This block displays errors from the same page load, 
+                like a password mismatch.
+            -->
+            {% if error %}
+                <div class="alert-error">{{ error }}</div>
+            {% endif %}
+
+            <!-- Registration Form -->
+            <form method="POST">
+                <label>Username:</label>
+                <input type="text" name="username" required>
+                
+                <label>Password:</label>
+                <input type="password" name="password" required>
+                
+                <!-- New Confirm Password Field -->
+                <label>Confirm Password:</label>
+                <input type="password" name="confirm_password" required>
+                
+                <button type="submit">Register</button>
+            </form>
+            
+            <p>Already have an account? <a href="{{ url_for('login_page') }}">Login</a></p>
+        </div>
+    </div>
 {% endblock %}

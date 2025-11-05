@@ -84,8 +84,10 @@ def admin_configure():
 
 
     # Set status to "Configuring..."
-    admin_status["admin_name"] = admin_name
-    admin_status["status"] = "CONFIGURING"
+    admin_status._update_state(
+        status="CONFIGURING",
+        admin_name=admin_name,
+    )
     print(f"[ADMIN] {admin_name} is configuring with IP: {esp_ip}...")
     
     # Perform the actual WebSocket connection check
@@ -95,25 +97,21 @@ def admin_configure():
         
         prototype_config.PROTOTYPE_IP = esp_ip  # Save the IP
         
-        admin_status["status"] = "CONFIGURED"
+        admin_status._update_state(
+            status="CONFIGURED",
+        )
+        
         print(f"[ADMIN] {admin_name} finished configuration. Connection SUCCESS.")
         flash(f"Successfully connected to PolyCast at {esp_ip}!", "success")
-        
-        # global prototype_reader_thread
-        # if prototype_reader_thread and prototype_reader_thread.is_alive():
-        #     print("Thread already running.")
-        #     return redirect(url_for("admin_page"))
-
-        # prototype_reader_thread_stop_event.clear()  # reset stop signal
-        # prototype_reader_thread = threading.Thread(target=ws_client_thread, daemon=True)
-        # prototype_reader_thread.start()
         
         result = thread_manager.start()
         print("[PROTO] started" if result else "[PROTO] already running")
     
     else:
         # 4. FAILURE: Set status back to "IDLE"
-        admin_status["status"] = "IDLE"
+        admin_status._update_state(
+            status="IDLE",
+        )
         print(f"[ADMIN] {admin_name} configuration FAILED. Could not connect.")
         
         flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
@@ -142,22 +140,17 @@ def admin_start_host():
     if "user" not in session:
         return redirect(url_for("login_page"))
     
-    # Only allow starting if configuration is done
-    if admin_status["status"] != "CONFIGURED":
-        # Handle error (e.g., flash a message)
+    if admin_status.get_field("status") != "CONFIGURED":
         return redirect(url_for("admin_page"))
 
-    # CREATE GALLERY DATA
+    # Initilize the data
     admin_name = session["user"]
     admin_id = session["id"]
     gallery_name = request.form.get('gallery_name')
     session_name = request.form.get('session_name')
     
-    # 1. Set status to "Starting"
-    admin_status["admin_name"] = admin_name
-    admin_status["status"] = "STARTING"
-    
-    # 2. Create a new gallery
+    # Start creating new gallery and session
+    admin_status._update_state(status="STARTING")
     print(f"[ADMIN] {admin_name} is starting host...")
     
     existing_gallery = Gallery.query.filter_by(name=gallery_name).first()
@@ -169,7 +162,6 @@ def admin_start_host():
         db.session.add(new_gallery)
         db.session.commit()
     
-    # 2.5 Create a new session
     gallery_id = Gallery.query.filter_by(name=gallery_name).first().id
     new_session = Session(
         name=session_name,
@@ -178,10 +170,11 @@ def admin_start_host():
     db.session.add(new_session)
     db.session.commit()
     
-    
-    # 3. Set status to "Hosting"
-    admin_status["status"] = "HOSTING"
-    admin_status["hosting_active"] = True
+    # Set status to "Hosting"
+    admin_status._update_state(
+        status="HOSTING", 
+        hosting_active=True
+    )
     print(f"[ADMIN] {admin_name} is now hosting.")
     
     return redirect(url_for("admin_page"))
@@ -208,13 +201,15 @@ def endsession():
         result = thread_manager.stop()
         print("[PROTO] stopped" if result else "[PROTO] not running")
         
-        admin_status["status"] = "IDLE"
-        admin_status["hosting_active"] = False
+        admin_status._update_state(
+            status="IDLE",
+            hosting_active=False
+        )
         print("[ADMIN] Admin End the session, status reset.")
         
     except Exception as e:
         print(f"Error stopping thread: {e}")
-        
+    
     return redirect(url_for('admin_page'))
 
 
@@ -227,82 +222,36 @@ def client_page():
 @app.route("/status_updates")
 def status_updates():
     def generate_status():
-        # Store the last status sent to avoid sending duplicates
-        last_sent_status = None
-        last_sent_admin = None  # <-- ADDED: Track admin name changes too
-
         while True:
-            current_status = admin_status["status"]
-            current_admin = admin_status["admin_name"]
-
-            # --- MODIFIED: Check if status OR admin name changed ---
-            if current_status != last_sent_status or current_admin != last_sent_admin:
-                admin_name = current_admin
-                message = ""
-                
-                # --- MODIFIED: New message logic ---
-                if current_status == "IDLE":
-                    if admin_name:
-                        message = f"Admin '{admin_name}' login! Waiting for admin to start configuration..."
-                    else:
-                        message = "Waiting for admin login"
-                elif current_status == "CONFIGURING":
-                    message = f"admin '{admin_name}' is currently configuring"
-                elif current_status == "CONFIGURED":
-                    message = f"admin '{admin_name}' configured the setup successfully"
-                elif current_status == "STARTING":
-                    message = f"admin '{admin_name}' is starting hosting"
-                elif current_status == "HOSTING":
-                    message = f"you are connected to admin '{admin_name}'"
-                
-                # Format the data as an SSE message (data: json_string\n\n)
-                data = json.dumps({"message": message})
-                yield f"data: {data}\n\n"
-                
-                last_sent_status = current_status
-                last_sent_admin = current_admin  # <-- ADDED: Update last admin name
+            # Get the current status 
+            current_status = admin_status.get_field("status")
+            current_admin = admin_status.get_field("admin_name")
             
-            # Wait 1 second before checking again
-            time.sleep(1)
-
+            # SSE message logic 
+            message = ""
+            
+            if current_status == "IDLE":
+                if current_admin:
+                    message = f"Admin '{current_admin}' login! Waiting for admin to start configuration..."
+                else:
+                    message = "Waiting for admin login"
+            elif current_status == "CONFIGURING":
+                message = f"admin '{current_admin}' is currently configuring"
+            elif current_status == "CONFIGURED":
+                message = f"admin '{current_admin}' configured the setup successfully"
+            elif current_status == "STARTING":
+                message = f"admin '{current_admin}' is starting hosting"
+            elif current_status == "HOSTING":
+                message = f"you are connected to admin '{current_admin}'"
+                
+            # Format the data as an SSE message (data: json_string\n\n)
+            data = json.dumps({"message": message})
+            yield f"data: {data}\n\n"
+            
+            admin_status.status_changed.wait()
+    
     # Return a streaming response
     return Response(generate_status(), mimetype="text/event-stream")
-    def generate_status():
-        # Store the last status sent to avoid sending duplicates
-        last_sent_status = None
-        while True:
-            current_status = admin_status["status"]
-            
-            # Only send an update if the status has changed
-            if current_status != last_sent_status:
-                admin_name = admin_status.get("admin_name", "admin") # Default name
-                message = ""
-                
-                # Create the message text based on the status
-                if current_status == "IDLE":
-                    message = "Waiting for admin to start configuration..."
-                elif current_status == "CONFIGURING":
-                    message = f"admin '{admin_name}' is currently configuring"
-                elif current_status == "CONFIGURED":
-                    message = f"admin '{admin_name}' configured the setup successfully"
-                elif current_status == "STARTING":
-                    message = f"admin '{admin_name}' is starting hosting"
-                elif current_status == "HOSTING":
-                    message = f"you are connected to admin '{admin_name}'"
-                
-                # Format the data as an SSE message (data: json_string\n\n)
-                data = json.dumps({"message": message})
-                yield f"data: {data}\n\n"
-                
-                last_sent_status = current_status
-            
-            # Wait 1 second before checking again
-            time.sleep(1)
-
-    # Return a streaming response
-    return Response(generate_status(), mimetype="text/event-stream")
-
-
 
 
 
@@ -362,7 +311,7 @@ def logout_page():
 @app.route("/gallery")
 def gallery_page():
     # --- MODIFIED: Check the real status ---
-    is_setup = admin_status["hosting_active"]
+    is_setup = admin_status.get_field("hosting_active")
     
     folders = []
     try:

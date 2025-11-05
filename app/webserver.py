@@ -11,14 +11,11 @@ from app.models.admin import Admin
 from app.models.gallery import Gallery
 from app.models.session import Session
 from app.services.auth_service import register_admin, verify_admin
-from image_processing import generate_frames
-from config import BROWSER_WS_PORT, config_done_event
-from config import prototype_config
+from app.services.admin_status import AdminStatusManager
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-from config import prototype_reader_thread, prototype_reader_thread_stop_event
-from prototype import ws_client_thread
-
+from image_processing import generate_frames
+from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
 
 
@@ -38,18 +35,14 @@ thread_manager = PrototypeManager()     # prototype background thread
 GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
 
 # --- Shared state for admin status ---
-admin_status = {
-    "admin_name": None,
-    "status": "IDLE",          # IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
-    "hosting_active": False
-}
+admin_status = AdminStatusManager()
 # ---------------------------------------------------------------------
 
 
 @app.route("/")
 def index():
     # --- MODIFIED: Check the real status ---
-    is_setup = admin_status["hosting_active"]
+    is_setup = admin_status.get_field("hosting_active")
     return render_template("index.html", is_setup=is_setup)
 
 
@@ -70,7 +63,7 @@ def admin_page():
     return render_template(
         "admin.html", 
         ws_port=BROWSER_WS_PORT,
-        current_status=admin_status["status"],      # Pass status to template
+        current_status=admin_status.get_field("status"),      # Pass status to template
         gallery_data=gallery_list
     )
 
@@ -334,18 +327,14 @@ def login_page():
         
         user = verify_admin(username, password)
         if user:
+            if not admin_status.login(user.username):
+                current_admin_name = admin_status.get_field('admin_name')
+                print(f"[STATUS CHECK] Login failed. Admin '{current_admin_name}' is already logged in.")
+                return render_template("login.html")
+            
+            # Login was successful
             session["id"] = user.id
             session["user"] = user.username
-
-            # In case server restarted while admin was logged in
-            if admin_status["status"] == "HOSTING":
-                admin_status["admin_name"] = username
-            else:
-                # If not hosting, reset to idle
-                admin_status["admin_name"] = username
-                admin_status["status"] = "IDLE"
-                admin_status["hosting_active"] = False
-
             return redirect(url_for("admin_page"))
         else:
             return "Invalid username or password"
@@ -356,14 +345,13 @@ def login_page():
 @app.route("/logout")
 def logout_page():
     session.pop("user", None)
-    # End the prototype ws thread
+    session.pop("id", None)
+    
+    # End the prototype ws thread, if the session still running
     result = thread_manager.stop()
     print("[PROTO] stopped" if result else "[PROTO] not running")
     
-    # Reset status on logout
-    admin_status["admin_name"] = None
-    admin_status["status"] = "IDLE"
-    admin_status["hosting_active"] = False
+    admin_status.reset()   # Reset status on logout
     
     print("[ADMIN] Admin logged out, status reset.")
     return redirect(url_for("login_page"))

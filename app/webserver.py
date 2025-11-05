@@ -361,10 +361,8 @@ def gallery_folder(foldername):
 
 @app.route("/stream")
 def stream_page():
-    # --- MODIFIED: Protect the route ---
-    if not admin_status["hosting_active"]:
+    if not admin_status.get_field("hosting_active"):
         # If hosting is not active, redirect them to the client page
-        # where they can see the status.
         print("[CLIENT] Denied access to /stream, hosting not active.")
         return redirect(url_for("client_page"))
         
@@ -374,8 +372,7 @@ def stream_page():
 
 @app.route("/video_feed")
 def video_feed():
-    # --- MODIFIED: Protect the video feed ---
-    if not admin_status["hosting_active"]:
+    if not admin_status.get_field("hosting_active"):
         print("[CLIENT] Denied access to /video_feed, hosting not active.")
         return "Hosting is not active.", 403 # Return an error
         
@@ -388,7 +385,7 @@ def run_webserver(port):
         host="0.0.0.0",
         port=port,
         debug=True,
-        threaded=True # threaded=True is CRITICAL for SSE and time.sleep()
+        threaded=True # CRITICAL for SSE
     )
 
 

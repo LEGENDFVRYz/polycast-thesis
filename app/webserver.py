@@ -153,7 +153,7 @@ def admin_start_host():
     admin_status._update_state(status="STARTING")
     print(f"[ADMIN] {admin_name} is starting host...")
     
-    existing_gallery = Gallery.query.filter_by(name=gallery_name).first()
+    existing_gallery = Gallery.query.filter_by(name=gallery_name, admin_id=admin_id).first()
     if not existing_gallery:
         new_gallery = Gallery(
             name=gallery_name,
@@ -162,7 +162,7 @@ def admin_start_host():
         db.session.add(new_gallery)
         db.session.commit()
     
-    gallery_id = Gallery.query.filter_by(name=gallery_name).first().id
+    gallery_id = Gallery.query.filter_by(name=gallery_name, admin_id=admin_id).first().id
     new_session = Session(
         name=session_name,
         gallery_id=gallery_id,
@@ -226,6 +226,8 @@ def status_updates():
             # Get the current status 
             current_status = admin_status.get_field("status")
             current_admin = admin_status.get_field("admin_name")
+            
+            print(admin_status.get_status())
             
             # SSE message logic 
             message = ""

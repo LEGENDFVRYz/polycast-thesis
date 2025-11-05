@@ -50,14 +50,15 @@ class AdminStatusManager:
             if hosting_active is not None:
                 updates["hosting_active"] = hosting_active
 
+            if admin_name == "":
+                updates["admin_name"] = None    # Force reset the admin name if empty
+            
             # Apply updates only if something actually changed
             for key, new_value in updates.items():
                 old_value = self._status.get(key)
                 if old_value != new_value:
                     self._status[key] = new_value
                     changed = True
-
-            print('dsadasdas')
             
             if changed:
                 self.status_changed.set()       # Trigger event
@@ -85,6 +86,6 @@ class AdminStatusManager:
         """
         self._update_state(
             status="IDLE",
-            admin_name=None,
+            admin_name="",
             hosting_active=False
         )

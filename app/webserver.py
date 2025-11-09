@@ -17,6 +17,7 @@ from app.utils.utils import find_esp_ip, check_esp_ws_connection
 from image_processing import generate_frames, enable_archiving, disable_archiving
 from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
+from background.image_generator import Archiver
 
 
 # ---------------------------------------------------------------------
@@ -30,6 +31,7 @@ app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
 #     init_auth_db(app)
 
 thread_manager = PrototypeManager()     # prototype background thread
+archiver_manager = None
 
 # Directory for gallery images
 GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
@@ -137,6 +139,8 @@ def scan_for_ip_route():
 # --- NEW: Admin action route to start hosting ---
 @app.route("/admin/start_host", methods=["POST"])
 def admin_start_host():
+    global archiver_manager
+    
     if "user" not in session:
         return redirect(url_for("login_page"))
     
@@ -177,12 +181,16 @@ def admin_start_host():
     )
     print(f"[ADMIN] {admin_name} is now hosting.")
     
-    enable_archiving()
+    archiver_manager = Archiver(initial_archive_path="archive")
+    archiver_manager.start()
+    
+    # enable_archiving()
     
     return redirect(url_for("admin_page"))
 
 @app.route('/endsession')
 def endsession():
+    global archiver_manager
     # global prototype_reader_thread # <-- Add this to modify the global var
     
     # if not prototype_reader_thread or not prototype_reader_thread.is_alive():
@@ -208,7 +216,7 @@ def endsession():
             hosting_active=False
         )
         
-        disable_archiving()
+        archiver_manager.stop()
         
         print("[ADMIN] Admin End the session, status reset.")
         

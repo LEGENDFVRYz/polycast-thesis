@@ -14,6 +14,9 @@ canvas = Image.new("L", (MJPEG_WIDTH, MJPEG_HEIGHT), "white")
 draw = ImageDraw.Draw(canvas)
 image_lock = threading.Lock()
 
+# trigger events
+archiving_enabled_event = threading.Event()
+
 
 def logical_to_pixel(x, y):
     """Convert logical coordinates to pixel space."""
@@ -32,9 +35,14 @@ def draw_segment(x0, y0, x1, y1, p):
     draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
 
 
-def archiver_thread():
+
+def archiver_thread(enabled_event):
     """Automatically save the latest canvas every second."""
     while True:
+        # This is the key: The thread will pause here until
+        # the event is "set" by the main thread.
+        enabled_event.wait()
+        
         time.sleep(1)
         with image_lock:
             snap = canvas.copy()
@@ -46,7 +54,19 @@ def archiver_thread():
         except Exception as e:
             print("[ARCHIVER] error:", e)
 
+# --- Trigger Functions ---
+def enable_archiving():
+    """Triggers the archiver to turn ON."""
+    print("[MAIN] Enabling auto-archiving...")
+    archiving_enabled_event.set()
 
+def disable_archiving():
+    """Triggers the archiver to turn OFF."""
+    print("[MAIN] Disabling auto-archiving...")
+    archiving_enabled_event.clear()
+
+
+# VIDEO STREAM FRAMES
 def generate_frames():
     """Generate MJPEG frames for streaming."""
     import io, time

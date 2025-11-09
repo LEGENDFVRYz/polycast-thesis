@@ -14,7 +14,7 @@ from app.services.auth_service import register_admin, verify_admin
 from app.services.admin_status import AdminStatusManager
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-from image_processing import generate_frames
+from image_processing import generate_frames, enable_archiving, disable_archiving
 from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
 
@@ -177,6 +177,8 @@ def admin_start_host():
     )
     print(f"[ADMIN] {admin_name} is now hosting.")
     
+    enable_archiving()
+    
     return redirect(url_for("admin_page"))
 
 @app.route('/endsession')
@@ -205,6 +207,9 @@ def endsession():
             status="IDLE",
             hosting_active=False
         )
+        
+        disable_archiving()
+        
         print("[ADMIN] Admin End the session, status reset.")
         
     except Exception as e:
@@ -330,6 +335,9 @@ def logout_page():
     admin_status.reset()   # Reset status on logout
     
     print("[ADMIN] Admin logged out, status reset.")
+    
+    disable_archiving()
+    
     return redirect(url_for("login_page"))
 
 

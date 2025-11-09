@@ -174,6 +174,9 @@ def admin_start_host():
     db.session.add(new_session)
     db.session.commit()
     
+    # reference id for url/folder_ctn
+    session_id = Session.query.filter_by(name=session_name, gallery_id=gallery_id).first().id
+    
     # Set status to "Hosting"
     admin_status._update_state(
         status="HOSTING", 
@@ -181,7 +184,9 @@ def admin_start_host():
     )
     print(f"[ADMIN] {admin_name} is now hosting.")
     
-    archiver_manager = Archiver(initial_archive_path="archive")
+    archiver_manager = Archiver(
+        initial_archive_path=os.path.join("archive", str(admin_id), str(gallery_id), str(session_id))
+    )
     archiver_manager.start()
     
     # enable_archiving()

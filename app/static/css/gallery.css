@@ -53,6 +53,91 @@ div.gallery-wrap{
         }
     }
 
+    /* --- Folders List --- */
+    .folders {
+        margin-bottom: 2rem;
+
+        .folder-list {
+            display: grid;
+            gap: 0.75rem;
+            
+            a {
+                all: unset;      /* Resets all inherited and non-inherited properties */
+                display: inline; /* Reset display if needed */
+                text-decoration: none;
+                color: inherit;
+                font: inherit;
+                cursor: pointer; /* Optional: for link behavior */
+            }
+
+            .folder-item {
+                display: flex;
+                align-items: center;
+                gap: 1rem;
+                padding: 1rem;
+                background-color: #FFFFFF; // white
+                border-radius: 0.75rem; // 12px
+                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+                border: 1px solid #E5E7EB;
+
+                .item-icon {
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    flex-shrink: 0;
+                    width: 40px;
+                    height: 40px;
+                    background-color: #EFF6FF; // light blue
+                    border-radius: 0.5rem; // 8px
+
+                    .lucide {
+                        width: 20px;
+                        height: 20px;
+                        color: #2563EB; // primary dark
+                    }
+
+                    .lucide-folder {
+                        color: #111827; // gray-900
+                        fill: #111827; // gray-900
+                    }
+                }
+
+                .item-info {
+                    flex-grow: 1;
+                    overflow: hidden; // For text ellipsis
+
+                    .item-title {
+                        font-size: 1rem;
+                        font-weight: 600;
+                        color: #1F2937; // primary text
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    }
+
+                    .item-subtitle {
+                        font-size: 0.875rem;
+                        color: #6B7280; // secondary text
+                    }
+                }
+
+                .item-menu {
+                    flex-shrink: 0;
+                    background: none;
+                    border: none;
+                    cursor: pointer;
+                    color: #6B7280; // secondary text
+
+                    .lucide {
+                        width: 20px;
+                        height: 20px;
+                    }
+                }
+            }
+        }
+    }
+
+
 
     // div.folder-ctn{
     //     display: flex;

@@ -42,7 +42,6 @@ body {
 }
 
 
-
 /* --- App Navigation --- */
 .app-navigation {
     display: flex;
@@ -69,4 +68,22 @@ body {
         color: #2563EB; 
         border-bottom-color: #2563EB; 
     }
+}
+
+
+/* --- Main Content Inital --- */
+.main-content {
+    padding: 1.5rem 1.25rem;
+    height: 100%;
+    
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+}
+
+.section-title {
+    font-size: 1.25rem;
+    font-weight: 700;
+    margin-bottom: 1rem;
+    color: #1F2937; /* --color-text-primary */
 }

@@ -2,43 +2,58 @@
 
 {% block extra_css %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
+    
 {% endblock %}
 
 {% block content %}
     <div class="gallery-wrap">
-        <div>
-            <h1>Gallery</h1>
-        </div>
 
-        <p>Please choose a folder:</p>
+        <!-- Quick Actions -->
+        <section class="quick-actions">
+            <button class="qa-button active" data-icon-btn="home">
+                <i data-lucide="home"></i>
+                <span>Home</span>
+            </button>
+            <button class="qa-button" data-icon-btn="folder">
+                <i data-lucide="folder"></i>
+                <span>Folder</span>
+            </button>
+            <button class="qa-button" data-icon-btn="favorites">
+                <i data-lucide="heart"></i>
+                <span>Favorites</span>
+            </button>
+            <button class="qa-button" data-icon-btn="trash">
+                <i data-lucide="trash-2"></i>
+                <span>Trash</span>
+            </button>
+        </section>
 
-        <div class="folder-ctn">
-            <div>
-                </div>
-
-            <div class="folder-wrapper">
-                
-                {% if folders %}  
-                    {% for folder in folders %}
-                        <a href="{{ url_for('gallery_folder', foldername=folder) }}" class="folder-link-wrapper">
-                            <div class="folder-card">
-                                <div class="folder-icon">
-                                    <i class="icon-placeholder">
-                                        <img src="{{ url_for('static', filename='images/folder.png') }}" alt="Folder Icon">
-                                    </i> 
-                                </div>
-                                
-                                <div class="folder-detail">
-                                    <div class="folder-name">{{ folder }}</div> <div class="folder-tag">Contains all files</div>
-                                </div>
-                            </div>
-                        </a>
-                    {% endfor %}
-                {% else %}
-                    <p>No gallery folders found. Add some folders to 'static/gallery_images' to get started!</p>
-                {% endif %}
-
-            </div>
-        </div>
     </div>
+
+    <script>
+        lucide.createIcons();
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Quick Actions Button Navigation ---
+            const iconButtons = document.querySelectorAll('.qa-button');
+            const iconButtonsContainer = document.querySelector('.quick-actions');
+
+            iconButtonsContainer.addEventListener('click', (e) => {
+                const clickedButton = e.target.closest('.qa-button');
+                if (!clickedButton) return; // Exit if click wasn't on a button
+
+                // Remove active class from all buttons
+                iconButtons.forEach(btn => {
+                    btn.classList.remove('active');
+                });
+
+                // Add active class to the clicked button
+                clickedButton.classList.add('active');
+
+                // You could add logic here based on the clicked button
+                // const activeBtn = clickedButton.dataset.iconBtn;
+                // console.log('Active button:', activeBtn);
+            });
+        });
+    </script>
 {% endblock %}

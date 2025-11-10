@@ -311,7 +311,7 @@ def register_page():
                 error = "An unexpected error occurred. Please try again."
     
     # On a GET request or if an error occurred during POST, render the register page
-    return render_template("register.html", error=error)
+    return render_template("auth/register.html", error=error)
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -333,8 +333,8 @@ def login_page():
             return redirect(url_for("admin_page"))
         else:
             return "Invalid username or password"
-        
-    return render_template("auth/base_admin.html")
+
+    return render_template("auth/login.html")
 
 
 @app.route("/logout")

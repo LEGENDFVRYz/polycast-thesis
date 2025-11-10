@@ -1,16 +1,21 @@
-/* ===== Reset + Base ===== */
+/* --- Global Resets & Font --- */
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
 }
 
-body {
+/* body {
     font-family: Arial, sans-serif;
     display: flex;
     min-height: 100vh;
     background: #fffafa;
     color: #333;
+} */
+
+html, body {
+    height: 100%;
+    font-family: 'Inter', sans-serif;
 }
 
 /* ===== Floating Sidebar (Desktop) ===== */
@@ -61,59 +66,59 @@ nav {
     }
 }
 
-/* ===== Main content ===== */
-main {
-    flex: 1;
-    padding: 40px;
-    margin-left: 140px;
-    display: flex;
-    flex-direction: column;
-    justify-content: flex-start;
-    min-height: 100vh;
-    max-width: 1200px;
-    width: 100%;
-    margin-right: auto;
-    box-sizing: border-box;
+// /* ===== Main content ===== */
+// main {
+//     flex: 1;
+//     padding: 40px;
+//     margin-left: 140px;
+//     display: flex;
+//     flex-direction: column;
+//     justify-content: flex-start;
+//     min-height: 100vh;
+//     max-width: 1200px;
+//     width: 100%;
+//     margin-right: auto;
+//     box-sizing: border-box;
 
-    @media (min-width: 1300px) {
-        margin-left: calc(50% - 600px + 70px);
-    }
-}
+//     @media (min-width: 1300px) {
+//         margin-left: calc(50% - 600px + 70px);
+//     }
+// }
 
-/* ===== Mobile floating bottom nav ===== */
-@media (max-width: 768px) {
-    body {
-        flex-direction: column;
-    }
+// /* ===== Mobile floating bottom nav ===== */
+// @media (max-width: 768px) {
+//     body {
+//         flex-direction: column;
+//     }
 
-    nav {
-        flex-direction: row;
-        bottom: 20px;
-        left: 50%;
-        right: auto;
-        top: auto;
-        transform: translateX(-50%);
-        width: 90%;
-        height: 65px;
-        border-radius: 35px;
-        justify-content: space-around;
-        padding: 0 10px;
-        box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
+//     nav {
+//         flex-direction: row;
+//         bottom: 20px;
+//         left: 50%;
+//         right: auto;
+//         top: auto;
+//         transform: translateX(-50%);
+//         width: 90%;
+//         height: 65px;
+//         border-radius: 35px;
+//         justify-content: space-around;
+//         padding: 0 10px;
+//         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
 
-        ul {
-            flex-direction: row;
-            gap: 30px;
-            height: auto;
-        }
-    }
+//         ul {
+//             flex-direction: row;
+//             gap: 30px;
+//             height: auto;
+//         }
+//     }
 
-    main {
-        flex: 1;
-        margin: 0;
-        padding: 20px;
-        margin-bottom: 100px;
-        width: 100%;
-        max-width: 100%;
-        min-height: calc(100vh - 100px);
-    }
-}
+//     main {
+//         flex: 1;
+//         margin: 0;
+//         padding: 20px;
+//         margin-bottom: 100px;
+//         width: 100%;
+//         max-width: 100%;
+//         min-height: calc(100vh - 100px);
+//     }
+// }

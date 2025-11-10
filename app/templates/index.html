@@ -1,13 +1,40 @@
-<!-- templates/home.html -->
-{% extends "base.html" %}
-
-{% block extra_css %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PolyCast | Welcome</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">
-{% endblock %}
+</head>
+<body class="index-page">
 
-{% block content %}
-    <h1>Welcome to the System</h1>
-    <p>Please choose a page:</p>
-    <a href="{{ url_for('admin_page') }}" class="button">Admin Page</a>
-    <a href="{{ url_for('client_page') }}" class="button">Client Page</a>
-{% endblock %}
+    <div class="landing-container">
+        <!-- Header Section -->
+        <header class="landing-header">
+            <div class="logo">
+                POLYCAST
+            </div>
+        </header>
+
+        <!-- Main Content Section -->
+        <main class="landing-main">
+            <h1 class="headline">
+                Write once,
+                Capture forever.
+            </h1>
+            <div class="button-group">
+                <a href="{{ url_for('admin_page') }}" class="btn btn-primary">Sign In as Admin</a>
+                <a href="{{ url_for('client_page') }}" class="btn btn-secondary">Continue as Client</a>
+            </div>
+        </main>
+
+        <!-- Footer Section -->
+        <footer class="landing-footer">
+            <a href="/about" class="footer-link">About Us</a>
+        </footer>
+    </div>
+
+    <!-- <script src="{{ url_for('static', filename='js/script.js') }}"></script> -->
+</body>
+</html>

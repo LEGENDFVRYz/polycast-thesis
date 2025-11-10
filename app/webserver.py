@@ -34,7 +34,8 @@ thread_manager = PrototypeManager()     # prototype background thread
 archiver_manager = None
 
 # Directory for gallery images
-GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
+# GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
+GALLERY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "archive")
 
 # --- Shared state for admin status ---
 admin_status = AdminStatusManager()
@@ -360,15 +361,18 @@ def logout_page():
 def gallery_page():
     # --- MODIFIED: Check the real status ---
     is_setup = admin_status.get_field("hosting_active")
+    user_filepath = os.path.join(
+        GALLERY_PATH, str(admin_status.get_field('admin_name'))
+    )
     
     folders = []
     try:
-        with os.scandir(GALLERY_PATH) as entries:
+        with os.scandir(user_filepath) as entries:
             folders = [entry.name for entry in entries if entry.is_dir()]
     except FileNotFoundError:
         print("No Gallery Folder Yet")
         pass
-
+    
     return render_template(
         "gallery.html", 
         is_setup=is_setup, 
@@ -383,7 +387,13 @@ def gallery_folder(foldername):
     image_extensions = {'.jpg', '.png'}
     foldername = secure_filename(foldername)
     
-    folder_path = os.path.join(GALLERY_PATH, foldername)
+    user_filepath = os.path.join(
+        GALLERY_PATH, str(admin_status.get_field('admin_name'))
+    )
+    
+    folder_path = os.path.join(user_filepath, foldername)
+    
+    print(f">>>{folder_path}")
 
     if not os.path.isdir(folder_path):
         print("FOLDER: Does not exist")

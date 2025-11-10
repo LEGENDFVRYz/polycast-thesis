@@ -3,26 +3,37 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>PolyCast | Config</title>
+    <title>Polycast UI</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
+    
+    <!-- Google Font (Inter) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
 
     <!-- Page-specific styles will go here -->
     {% block extra_css %}{% endblock %}
 </head>
 <body>
 
-    <!-- Navigation -->
-    <nav>
-        <ul>
-            {% if is_setup %}
-                <li><a href="{{ url_for('stream_page') }}">🎞️</a></li>
-                <li><a href="#">📂</a></li>
-            {% endif %}
-            
-            <li><a href="{{ url_for('gallery_page') }}">📸</a></li>
-        </ul>
-    </nav>
+    <!-- Header -->
+    <header class="app-header">
+        <h1 class="header-logo">POLYCAST</h1>
+        <img src="https://placehold.co/40x40/E040FB/FFFFFF?text=P" 
+             alt="Profile Picture" 
+             class="header-profile"
+             onerror="this.src='https://placehold.co/40x40/cccccc/ffffff?text=U'">
+    </header>
 
+    <!-- Navigation Tabs -->
+    <nav class="app-navigation">
+        <a class="app-tab active" data-tab="gallery">Gallery</a>
+        <a class="app-tab" data-tab="stream">Stream</a>
+    </nav>
+    
     <!-- Main content -->
     <main>
         {% block content %}
@@ -30,16 +41,27 @@
 
         {% endblock %}
     </main>
+    
 
 
     <script>
-        // Optional: Add active state toggle
-        const links = document.querySelectorAll('nav a');
-        links.forEach(link => {
-        link.addEventListener('click', () => {
-            links.forEach(l => l.classList.remove('active'));
-            link.classList.add('active');
-        });
+        document.addEventListener('DOMContentLoaded', () => {
+            // --- Tab Navigation ---
+            const tabs = document.querySelectorAll('.app-tab');
+            const tabsContainer = document.querySelector('.app-navigation');
+
+            tabsContainer.addEventListener('click', (e) => {
+                const clickedTab = e.target.closest('.app-tab');
+                if (!clickedTab) return; // Exit if click wasn't on a tab
+
+                // Remove active class from all tabs
+                tabs.forEach(tab => {
+                    tab.classList.remove('active');
+                });
+
+                // Add active class to the clicked tab
+                clickedTab.classList.add('active');
+            });
         });
     </script>
 </body>

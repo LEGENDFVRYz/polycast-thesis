@@ -1,3 +1,4 @@
+
 /* --- Global Resets & Font --- */
 * {
     box-sizing: border-box;
@@ -5,120 +6,67 @@
     padding: 0;
 }
 
-/* body {
-    font-family: Arial, sans-serif;
-    display: flex;
-    min-height: 100vh;
-    background: #fffafa;
-    color: #333;
-} */
-
 html, body {
     height: 100%;
+}
+
+body {
     font-family: 'Inter', sans-serif;
+    background-color: #F9FAFB; /* --color-bg-light */
+    color: #1F2937; /* --color-text-primary */
+    line-height: 1.5;
 }
 
-/* ===== Floating Sidebar (Desktop) ===== */
-nav {
-    background: white;
-    width: 70px;
-    height: 400px;
 
+/* --- App Header --- */
+.app-header {
     display: flex;
-    flex-direction: column;
+    justify-content: space-between;
     align-items: center;
-    justify-content: center;
+    padding: 1.5rem 1.25rem;
+    background-color: #F9FAFB;
 
-    border-radius: 70px;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-
-    position: fixed;
-    top: 50%;
-    left: 30px;
-    transform: translateY(-50%);
-    z-index: 1000;
-    padding: 20px 0;
-    transition: all 0.3s ease;
-
-    &:hover {
-        box-shadow: 0 3px 9px rgba(0, 0, 0, 0.2);
-        transform: translateY(-50%) scale(1.01);
+    .header-logo {
+        font-size: 1.25rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        color: #1F2937;
     }
 
-    ul {
-        list-style: none;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        gap: 25px;
-        height: 100%;
-
-        li {
-            text-align: center;
-
-            a {
-                text-decoration: none;
-                color: #555;
-                font-size: 24px;
-                transition: all 0.2s ease;
-            }
-        }
+    .header-profile {
+        width: 40px;
+        height: 40px;
+        border-radius: 50%;
+        object-fit: cover;
     }
 }
 
-// /* ===== Main content ===== */
-// main {
-//     flex: 1;
-//     padding: 40px;
-//     margin-left: 140px;
-//     display: flex;
-//     flex-direction: column;
-//     justify-content: flex-start;
-//     min-height: 100vh;
-//     max-width: 1200px;
-//     width: 100%;
-//     margin-right: auto;
-//     box-sizing: border-box;
 
-//     @media (min-width: 1300px) {
-//         margin-left: calc(50% - 600px + 70px);
-//     }
-// }
 
-// /* ===== Mobile floating bottom nav ===== */
-// @media (max-width: 768px) {
-//     body {
-//         flex-direction: column;
-//     }
+/* --- App Navigation --- */
+.app-navigation {
+    display: flex;
+    justify-content: space-around;
+    padding: 0 1.25rem;
+    border-bottom: 1px solid #E5E7EB;
+    background-color: #F9FAFB;
+    
+    .app-tab {
+        flex: 1;
+        text-align: center;
+        padding: 0.75rem 0.5rem;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #6B7280; 
+        text-decoration: none;
+        cursor: pointer;
+        border-bottom: 3px solid transparent;
+        margin-bottom: -1px; /* Aligns with parent border */
+        transition: color 0.2s, border-color 0.2s;
+    }
 
-//     nav {
-//         flex-direction: row;
-//         bottom: 20px;
-//         left: 50%;
-//         right: auto;
-//         top: auto;
-//         transform: translateX(-50%);
-//         width: 90%;
-//         height: 65px;
-//         border-radius: 35px;
-//         justify-content: space-around;
-//         padding: 0 10px;
-//         box-shadow: 0 4px 15px rgba(0, 0, 0, 0.15);
-
-//         ul {
-//             flex-direction: row;
-//             gap: 30px;
-//             height: auto;
-//         }
-//     }
-
-//     main {
-//         flex: 1;
-//         margin: 0;
-//         padding: 20px;
-//         margin-bottom: 100px;
-//         width: 100%;
-//         max-width: 100%;
-//         min-height: calc(100vh - 100px);
-//     }
-// }
+    .app-tab.active{
+        color: #2563EB; 
+        border-bottom-color: #2563EB; 
+    }
+}

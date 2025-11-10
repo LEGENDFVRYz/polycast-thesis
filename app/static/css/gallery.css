@@ -53,6 +53,78 @@ div.gallery-wrap{
         }
     }
 
+
+    /* --- Recents --- */
+    .recently-added {
+        margin-bottom: 2rem;
+    }
+
+    .recently-added__scroll-container {
+        display: flex;
+        overflow-x: auto;
+        gap: 1rem;
+        padding-bottom: 1rem; /* For scrollbar spacing */
+        /* Hide scrollbar */
+        -ms-overflow-style: none;  /* IE and Edge */
+        scrollbar-width: none;  /* Firefox */
+    }
+    
+    .recently-added__scroll-container::-webkit-scrollbar {
+        display: none; /* Chrome, Safari, Opera */
+    }
+
+    .file-card {
+        flex: 0 0 180px; /* Do not grow, do not shrink, base width 180px */
+        background-color: #FFFFFF; /* white */
+        border-radius: 1rem; /* 16px */
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+        border: 1px solid #E5E7EB; /* light gray */
+        overflow: hidden;
+
+        .fc-preview {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100px;
+            background-color: #F3F4F6; /* gray-100 */
+
+            .lucide {
+            width: 32px;
+            height: 32px;
+            color: #9CA3AF; /* gray-400 */
+            }
+        }
+
+        .fc-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+
+            .fc-name {
+                font-size: 0.875rem;
+                font-weight: 600;
+                color: #1F2937; /* dark gray */
+                white-space: nowrap;
+                overflow: hidden;
+                text-overflow: ellipsis;
+            }
+    
+            .fc-menu-btn {
+                background: none;
+                border: none;
+                cursor: pointer;
+                color: #6B7280; /* gray-500 */
+    
+                .lucide {
+                width: 16px;
+                height: 16px;
+                }
+            }
+        }
+    }
+
+
     /* --- Folders List --- */
     .folders {
         margin-bottom: 2rem;
@@ -60,7 +132,7 @@ div.gallery-wrap{
         .folder-list {
             display: grid;
             gap: 0.75rem;
-            
+
             a {
                 all: unset;      /* Resets all inherited and non-inherited properties */
                 display: inline; /* Reset display if needed */

@@ -10,7 +10,7 @@ html, body {
     font-family: 'Inter', sans-serif;
 }
 
-.login-ctn {
+.auth-ctn {
     font-family: 'Inter', sans-serif;
     background-color: #1a2c47; 
     color: #1a2c47; 
@@ -22,7 +22,7 @@ html, body {
     flex: 1;
 
 
-    .login-wrapper {
+    .auth-wrapper {
         width: 100%;
         max-width: 500px;
         height: 100%;
@@ -166,6 +166,7 @@ html, body {
 
 
 
+/* 
 
 .register-ctn {
     display: flex;
@@ -252,7 +253,9 @@ html, body {
             }
         }
     }
-}
+} 
+
+*/
 
 
 /* --- Alert Styles --- */

@@ -53,7 +53,11 @@
         <div class="client-wrapper">
             <div id="status-box">
                 <!-- temporary, minimized but can be optimized in other ways -->
-                <img src="{{ url_for('static', filename='images/1.png') }}" alt="status" style="width:200px; height:200px;">
+                <img id="status-image" 
+                    src="{{ url_for('static', filename='images/1.png') }}" 
+                    alt="status" 
+                    style="width:200px; height:200px;">
+                    <!-- add transition: opacity 0.5s; for fade effect -->
                 <h1 id="status-comment">...</h1>
                 <h3 id="status-message">connecting to server</h3>
             </div>
@@ -66,6 +70,7 @@
     </div>
 
     <script>
+        const statusImage = document.getElementById('status-image');
         const statusComment = document.getElementById('status-comment');
         const statusMessage = document.getElementById('status-message');
 
@@ -78,6 +83,13 @@
             // Update text fields
             statusComment.textContent = data.main_hook;
             statusMessage.textContent = data.status_detail;
+
+            // Smoothly change image
+            // statusImage.style.opacity = 0;      // for fade  effect
+            setTimeout(() => {
+                statusImage.src = `/static/${data.image}`;
+                // statusImage.style.opacity = 1;
+            }, 300);
         };
 
         eventSource.onerror = function(err) {

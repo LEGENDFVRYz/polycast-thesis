@@ -252,6 +252,7 @@ def status_updates():
             # Default placeholders
             main_hook = ""
             status_detail = ""
+            image_number = 1  # default
 
             # --- Status Handling ---
             if current_status == "IDLE":
@@ -259,45 +260,52 @@ def status_updates():
                     # 2. IDLE (Admin Logged In)
                     main_hook = "Hang tight!"
                     status_detail = "The admin is online and preparing."
+                    image_number = 2
                 else:
                     # 1. IDLE (No Admin)
                     main_hook = "Ready to Connect"
                     status_detail = "Waiting for the admin to log in."
+                    image_number = 1
 
             elif current_status == "CONFIGURING":
                 # 3. CONFIGURING
                 main_hook = "Setup in Progress"
                 status_detail = "Admin is currently configuring the prototype."
+                image_number = 3
 
             elif current_status == "CONFIGURED":
                 # 4. CONFIGURED
                 main_hook = "Almost There!"
                 status_detail = "Configuration is done. Waiting for session to start."
+                image_number = 4
 
             elif current_status == "STARTING":
                 # 5. STARTING
                 main_hook = "Starting Up..."
                 status_detail = "Session is loading. This should only take a moment."
+                image_number = 5
 
             elif current_status == "HOSTING":
                 # 6. HOSTING
                 main_hook = "You're Connected!"
                 status_detail = "Successfully connected to the admin's live session."
+                image_number = 6
 
             # Prepare SSE message as JSON
             data = json.dumps({
                 "status": current_status,
                 "main_hook": main_hook,
-                "status_detail": status_detail
+                "status_detail": status_detail,
+                "image": f"images/{image_number}.png"
             })
 
             # Send as an SSE message
             yield f"data: {data}\n\n"
 
-            # Wait for a status change before sending another update
             admin_status.status_changed.wait()
 
     return Response(generate_status(), mimetype="text/event-stream")
+
 
 
 

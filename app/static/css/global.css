@@ -26,11 +26,17 @@ body {
     padding: 1.5rem 1.25rem;
     background-color: #F9FAFB;
 
-    .header-logo {
-        font-size: 1.25rem;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        color: #1F2937;
+    a {
+        all: unset;
+        cursor: pointer; 
+        text-decoration: none;
+        
+        .header-logo {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: 0.05em;
+            color: #1F2937;
+        }
     }
 
     .header-profile {

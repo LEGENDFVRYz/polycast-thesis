@@ -32,8 +32,12 @@
 
     <!-- Navigation Tabs -->
     <nav class="app-navigation">
-        <a class="app-tab active" data-tab="gallery">Gallery</a>
-        <a class="app-tab" data-tab="stream">Stream</a>
+        {% for tab_name, tab_data in nav_tabs.items() %}
+            <a class="app-tab {% if request.endpoint in tab_data.endpoints %}active{% endif %}"
+            href="{{ tab_data.url }}">
+                {{ tab_name }}
+            </a>
+        {% endfor %}
     </nav>
 
     <!-- Main content -->
@@ -44,27 +48,6 @@
         {% endblock %}
     </main>
     
-
-
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            // --- Tab Navigation ---
-            const tabs = document.querySelectorAll('.app-tab');
-            const tabsContainer = document.querySelector('.app-navigation');
-
-            tabsContainer.addEventListener('click', (e) => {
-                const clickedTab = e.target.closest('.app-tab');
-                if (!clickedTab) return; // Exit if click wasn't on a tab
-
-                // Remove active class from all tabs
-                tabs.forEach(tab => {
-                    tab.classList.remove('active');
-                });
-
-                // Add active class to the clicked tab
-                clickedTab.classList.add('active');
-            });
-        });
-    </script>
+    
 </body>
 </html>

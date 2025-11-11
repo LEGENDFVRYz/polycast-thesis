@@ -43,6 +43,15 @@ admin_status = AdminStatusManager()
 # ---------------------------------------------------------------------
 
 
+# GLOBAL VARIABLES
+@app.context_processor
+def inject_nav_tabs():
+    return dict(nav_tabs={
+        'Gallery': {'url': url_for('gallery_page'), 'endpoints': ['gallery_page', 'session_page', 'folderview_page']},
+        'Stream': {'url': url_for('stream_page'), 'endpoints': ['client_page', 'stream_page']}
+    })
+
+
 @app.route("/")
 def index():
     # --- MODIFIED: Check the real status ---

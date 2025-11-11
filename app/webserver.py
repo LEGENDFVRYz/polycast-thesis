@@ -377,7 +377,7 @@ def gallery_page():
         pass
     
     return render_template(
-        "gallery.html", 
+        "gallery/gallery.html", 
         is_setup=is_setup, 
         ws_port=BROWSER_WS_PORT,
         folders=folders
@@ -401,7 +401,7 @@ def session_page(galleryname):
         pass
     
     return render_template(
-        "session.html",
+        "gallery/session.html",
         selected_gallery=galleryname,
         sessions=folders
     )
@@ -436,7 +436,7 @@ def folderview_page(galleryname, sessionname):
     base_url = f"{admin_name}/{galleryname}/{sessionname}"
     
     return render_template(
-        "gallery_folderview.html",
+        "gallery/view.html",
         admin_name=admin_name,
         galleryname=galleryname,
         sessionname=sessionname,

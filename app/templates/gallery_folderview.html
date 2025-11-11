@@ -17,7 +17,7 @@
             {% for image in images %}
                 <div class="image-card">
                     <img 
-                        data-src="{{ url_for('static', filename='gallery_images/' + foldername + '/' + image) }}"
+                        data-src="{{ url_for('serve_gallery_image', filename=admin_name ~ '/' ~ galleryname ~ '/' ~ foldername ~ '/' ~ image) }}"
                         alt="{{ image }}"
                         data-filename="{{ image }}"
                         class="lazy-image"

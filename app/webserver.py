@@ -2,7 +2,7 @@ import os
 import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
-from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash
+from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash, send_from_directory, abort
 from pytest import Session
 from werkzeug.utils import secure_filename
 
@@ -35,7 +35,7 @@ archiver_manager = None
 
 # Directory for gallery images
 # GALLERY_PATH = os.path.join(app.static_folder, "gallery_images")
-GALLERY_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "archive")
+GALLERY_PATH = os.path.join(os.getcwd(), "archive")
 
 # --- Shared state for admin status ---
 admin_status = AdminStatusManager()
@@ -359,11 +359,13 @@ def logout_page():
 
 @app.route("/gallery")
 def gallery_page():
-    # --- MODIFIED: Check the real status ---
+    """
+    List all galleries belonging to the login admin
+    """
     is_setup = admin_status.get_field("hosting_active")
-    user_filepath = os.path.join(
-        GALLERY_PATH, str(admin_status.get_field('admin_name'))
-    )
+    admin_name = str(admin_status.get_field('admin_name'))
+    
+    user_filepath = os.path.join(GALLERY_PATH, admin_name)
     
     folders = []
     try:
@@ -383,10 +385,11 @@ def gallery_page():
 
 @app.route("/gallery/<string:galleryname>")
 def session_page(galleryname):
-    
-    gallery_filepath = os.path.join(
-        GALLERY_PATH, str(admin_status.get_field('admin_name')), galleryname
-    )
+    """
+    List all sessions within the selected gallery
+    """
+    admin_name = str(admin_status.get_field('admin_name'))
+    gallery_filepath = os.path.join(GALLERY_PATH, admin_name, galleryname)
     
     folders = []
     try:
@@ -405,14 +408,14 @@ def session_page(galleryname):
 
 @app.route("/gallery/<string:galleryname>/<string:sessionname>")
 def folderview_page(galleryname, sessionname):
-    # (No changes needed in this function)
+    """
+    Show all images within the selected folder
+    """
     image_extensions = {'.jpg', '.png'}
+    admin_name = str(admin_status.get_field('admin_name'))
     foldername = secure_filename(sessionname)
     
-    folder_path = os.path.join(
-        GALLERY_PATH, str(admin_status.get_field('admin_name')), galleryname, sessionname
-    )
-    
+    folder_path = os.path.join(GALLERY_PATH, admin_name, galleryname, sessionname)
     print(f">>>{folder_path}")
 
     if not os.path.isdir(folder_path):
@@ -429,12 +432,42 @@ def folderview_page(galleryname, sessionname):
     except (FileNotFoundError, PermissionError):
         print("FOLDER: Access Error")
         return redirect(url_for("gallery_page"))
-
+    
     return render_template(
         "gallery_folderview.html",
+        admin_name=admin_name,
+        galleryname=galleryname,
         foldername=foldername,
         images=images
     )
+    
+
+# BRIDGE ROUTE FOR CONNECTING ARCHIVE TO FLASK SERVER
+@app.route("/gallery_images/<path:filename>")
+def serve_gallery_image(filename):
+    """
+    Serve dynamically generated images from archive.
+    filename: relative path inside <admin_name>/<gallery>/<session>/<image>
+    """
+    
+
+    # Construct the full filesystem path safely
+    requested_path = os.path.abspath(os.path.join(GALLERY_PATH, filename))
+    safe_base = os.path.abspath(GALLERY_PATH) + os.sep
+
+    # Security check: prevent directory traversal
+    if not requested_path.startswith(safe_base):
+        print(f"Forbidden attempt: {requested_path}")
+        abort(403)
+
+    if not os.path.isfile(requested_path):
+        print(f"File not found: {requested_path}")
+        abort(404)
+    
+    relative_path = os.path.relpath(requested_path, GALLERY_PATH).replace(os.sep, "/")
+    return send_from_directory(GALLERY_PATH, relative_path)
+
+
 
 
 @app.route("/stream")

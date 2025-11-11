@@ -21,7 +21,7 @@
                 {% if sessions %}  
                     {% for session in sessions %}
 
-                        <a href="#" class="folder-link-wrapper">
+                        <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session) }}" class="folder-link-wrapper">
                             <div class="folder-item">
                                 <div class="item-icon">
                                     <!-- Use a custom filled-in folder icon -->

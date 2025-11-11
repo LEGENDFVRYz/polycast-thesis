@@ -439,7 +439,7 @@ def folderview_page(galleryname, sessionname):
         "gallery_folderview.html",
         admin_name=admin_name,
         galleryname=galleryname,
-        foldername=foldername,
+        sessionname=sessionname,
         images=images,
         base_url=base_url
     )

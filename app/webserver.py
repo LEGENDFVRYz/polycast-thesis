@@ -243,36 +243,60 @@ def client_page():
 def status_updates():
     def generate_status():
         while True:
-            # Get the current status 
+            # Get the current status and admin name
             current_status = admin_status.get_field("status")
             current_admin = admin_status.get_field("admin_name")
-            
+
             print(admin_status.get_status())
-            
-            # SSE message logic 
-            message = ""
-            
+
+            # Default placeholders
+            main_hook = ""
+            status_detail = ""
+
+            # --- Status Handling ---
             if current_status == "IDLE":
                 if current_admin:
-                    message = f"Admin '{current_admin}' login! Waiting for admin to start configuration..."
+                    # 2. IDLE (Admin Logged In)
+                    main_hook = "Hang tight!"
+                    status_detail = "The admin is online and preparing."
                 else:
-                    message = "Waiting for admin login"
+                    # 1. IDLE (No Admin)
+                    main_hook = "Ready to Connect"
+                    status_detail = "Waiting for the admin to log in."
+
             elif current_status == "CONFIGURING":
-                message = f"admin '{current_admin}' is currently configuring"
+                # 3. CONFIGURING
+                main_hook = "Setup in Progress"
+                status_detail = "Admin is currently configuring the prototype."
+
             elif current_status == "CONFIGURED":
-                message = f"admin '{current_admin}' configured the setup successfully"
+                # 4. CONFIGURED
+                main_hook = "Almost There!"
+                status_detail = "Configuration is done. Waiting for session to start."
+
             elif current_status == "STARTING":
-                message = f"admin '{current_admin}' is starting hosting"
+                # 5. STARTING
+                main_hook = "Starting Up..."
+                status_detail = "Session is loading. This should only take a moment."
+
             elif current_status == "HOSTING":
-                message = f"you are connected to admin '{current_admin}'"
-                
-            # Format the data as an SSE message (data: json_string\n\n)
-            data = json.dumps({"message": message})
+                # 6. HOSTING
+                main_hook = "You're Connected!"
+                status_detail = "Successfully connected to the admin's live session."
+
+            # Prepare SSE message as JSON
+            data = json.dumps({
+                "status": current_status,
+                "main_hook": main_hook,
+                "status_detail": status_detail
+            })
+
+            # Send as an SSE message
             yield f"data: {data}\n\n"
-            
+
+            # Wait for a status change before sending another update
             admin_status.status_changed.wait()
-    
-    # Return a streaming response
+
     return Response(generate_status(), mimetype="text/event-stream")
 
 

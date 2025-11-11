@@ -83,7 +83,7 @@
                 {% if folders %}  
                     {% for folder in folders %}
 
-                        <a href="{{ url_for('gallery_folder', foldername=folder) }}" class="folder-link-wrapper">
+                        <a href="{{ url_for('session_page', galleryname=folder) }}" class="folder-link-wrapper">
                             <div class="folder-item">
                                 <div class="item-icon">
                                     <!-- Use a custom filled-in folder icon -->

@@ -2,7 +2,7 @@ import os
 import time  # <-- ADDED: For simulating delays
 import json  # <-- ADDED: For sending SSE data
 import threading
-from flask import Flask, Response, render_template, redirect, url_for, request, session, jsonify, request, flash
+from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash
 from pytest import Session
 from werkzeug.utils import secure_filename
 
@@ -381,40 +381,63 @@ def gallery_page():
     )
 
 
-@app.route("/gallery/<string:foldername>")
-def gallery_folder(foldername):
-    # (No changes needed in this function)
-    image_extensions = {'.jpg', '.png'}
-    foldername = secure_filename(foldername)
+@app.route("/gallery/<string:galleryname>")
+def session_page(galleryname):
     
-    user_filepath = os.path.join(
-        GALLERY_PATH, str(admin_status.get_field('admin_name'))
+    gallery_filepath = os.path.join(
+        GALLERY_PATH, str(admin_status.get_field('admin_name')), galleryname
     )
     
-    folder_path = os.path.join(user_filepath, foldername)
-    
-    print(f">>>{folder_path}")
-
-    if not os.path.isdir(folder_path):
-        print("FOLDER: Does not exist")
-        return redirect(url_for("gallery_page"))
-
+    folders = []
     try:
-        with os.scandir(folder_path) as folder:
-            images = sorted(
-                (item.name for item in folder
-                 if item.is_file() and os.path.splitext(item.name)[1].lower() in image_extensions),
-                key=str.lower
-            )
-    except (FileNotFoundError, PermissionError):
-        print("FOLDER: Access Error")
-        return redirect(url_for("gallery_page"))
-
+        with os.scandir(gallery_filepath) as entries:
+            folders = [entry.name for entry in entries if entry.is_dir()]
+    except FileNotFoundError:
+        print(f"No Session Found in {galleryname}")
+        pass
+    
     return render_template(
-        "gallery_folderview.html",
-        foldername=foldername,
-        images=images
+        "session.html",
+        sessions=folders
     )
+
+
+
+
+# @app.route("/gallery/<string:foldername>")
+# def gallery_folder(foldername):
+#     # (No changes needed in this function)
+#     image_extensions = {'.jpg', '.png'}
+#     foldername = secure_filename(foldername)
+    
+#     user_filepath = os.path.join(
+#         GALLERY_PATH, str(admin_status.get_field('admin_name'))
+#     )
+    
+#     folder_path = os.path.join(user_filepath, foldername)
+    
+#     print(f">>>{folder_path}")
+
+#     if not os.path.isdir(folder_path):
+#         print("FOLDER: Does not exist")
+#         return redirect(url_for("gallery_page"))
+
+#     try:
+#         with os.scandir(folder_path) as folder:
+#             images = sorted(
+#                 (item.name for item in folder
+#                  if item.is_file() and os.path.splitext(item.name)[1].lower() in image_extensions),
+#                 key=str.lower
+#             )
+#     except (FileNotFoundError, PermissionError):
+#         print("FOLDER: Access Error")
+#         return redirect(url_for("gallery_page"))
+
+#     return render_template(
+#         "gallery_folderview.html",
+#         foldername=foldername,
+#         images=images
+#     )
 
 
 @app.route("/stream")

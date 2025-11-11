@@ -5,6 +5,7 @@ import threading
 from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash, send_from_directory, abort
 from pytest import Session
 from werkzeug.utils import secure_filename
+from urllib.parse import quote
 
 from app import create_app, db
 from app.models.admin import Admin
@@ -412,11 +413,10 @@ def folderview_page(galleryname, sessionname):
     Show all images within the selected folder
     """
     image_extensions = {'.jpg', '.png'}
-    admin_name = str(admin_status.get_field('admin_name'))
     foldername = secure_filename(sessionname)
+    admin_name = str(admin_status.get_field('admin_name'))
     
     folder_path = os.path.join(GALLERY_PATH, admin_name, galleryname, sessionname)
-    print(f">>>{folder_path}")
 
     if not os.path.isdir(folder_path):
         print("FOLDER: Does not exist")
@@ -433,12 +433,15 @@ def folderview_page(galleryname, sessionname):
         print("FOLDER: Access Error")
         return redirect(url_for("gallery_page"))
     
+    base_url = f"{admin_name}/{galleryname}/{sessionname}"
+    
     return render_template(
         "gallery_folderview.html",
         admin_name=admin_name,
         galleryname=galleryname,
         foldername=foldername,
-        images=images
+        images=images,
+        base_url=base_url
     )
     
 

@@ -6,18 +6,38 @@
 {% endblock %}
 
 {% block content %}
-    <div class="gallery-wrap">
+    <div class="session-wrap gallery-scope">
+
+        <!-- Session Identifier -->
+        <div class="folder-header">
+            <div class="card-content">
+                <div class="icon-container">
+                    <div class="circle"></div>
+                </div>
+                <div class="info-container">
+                    <p class="title">{{ selected_gallery }}</p>
+                    <p class="subtitle">BSCpE 4-3</p>
+                </div>
+            </div>
+
+            <!-- <div class="hidden-details" id="folderDetails">
+                <p><strong>Course:</strong> Database Management Systems</p>
+                <p><strong>Section:</strong> BSCpE 4-3</p>
+                <p><strong>Professor:</strong> Dr. A. Smith</p>
+            </div> -->
+
+            <div class="details-container">
+                <a href="#" class="details-link" id="detailsToggle">Folder Details?</a>
+            </div>
+        </div>
 
 
-
-
-        <!-- Folders -->
+        <!-- Session Folders -->
         <section class="folders">
-            <h2 class="section-title">Session:</h2>
+            <h2 class="section-title">Session ({{ sessions|length }}):</h2>
             <div class="folder-list">
                 
                 <!-- Loop through all available folders -->
-                
                 {% if sessions %}  
                     {% for session in sessions %}
 
@@ -50,27 +70,27 @@
     <script>
         lucide.createIcons();
 
-        document.addEventListener('DOMContentLoaded', () => {
-            // --- Quick Actions Button Navigation ---
-            const iconButtons = document.querySelectorAll('.qa-button');
-            const iconButtonsContainer = document.querySelector('.quick-actions');
+        // document.addEventListener('DOMContentLoaded', () => {
+            // // Get the link and the details content by their IDs
+            // const toggleLink = document.getElementById("detailsToggle");
+            // const detailsContent = document.getElementById("folderDetails");
 
-            iconButtonsContainer.addEventListener('click', (e) => {
-                const clickedButton = e.target.closest('.qa-button');
-                if (!clickedButton) return; // Exit if click wasn't on a button
+            // // Add a 'click' event listener to the link
+            // toggleLink.addEventListener("click", function(event) {
+            //     // Prevent the link's default behavior (which is to jump to the top)
+            //     event.preventDefault(); 
+                
+            //     // Add or remove the 'show' class on the details content
+            //     detailsContent.classList.toggle("show");
 
-                // Remove active class from all buttons
-                iconButtons.forEach(btn => {
-                    btn.classList.remove('active');
-                });
-
-                // Add active class to the clicked button
-                clickedButton.classList.add('active');
-
-                // You could add logic here based on the clicked button
-                // const activeBtn = clickedButton.dataset.iconBtn;
-                // console.log('Active button:', activeBtn);
-            });
-        });
+            //     // Check if the content is now visible and update the link text
+            //     if (detailsContent.classList.contains("show")) {
+            //         toggleLink.textContent = "Hide Details";
+            //     } else {
+            //         toggleLink.textContent = "Folder Details?";
+            //     }
+            // });
+        // });
     </script>
+
 {% endblock %}

@@ -61,31 +61,34 @@ def index():
 
 @app.route("/admin")
 def admin_page():
+    # Check if user is logged in
     if "user" not in session:
         return redirect(url_for("login_page"))
     
     # FETCH ADMIN
     admin_name = str(admin_status.get_field('admin_name'))
-    
     current_admin = Admin.query.filter_by(username=admin_name).first()
-    if not current_admin:
-        return "Admin not found", 404
     
-    # FETCH THE USER OBJECT: "current_admin.gallery" translated code
-    # Temporary solutiuonn
-    admin_galleries = Gallery.query.filter_by(admin_id=current_admin.id) \
-                                .filter(Gallery.deleted_at.is_(None)) \
-                                .order_by(Gallery.name) \
-                                .all()
+    gallery_list_for_json = []
 
-    gallery_list_for_json = [g.to_dict() for g in admin_galleries]
-    
+    if current_admin:
+        # FETCH galleries for the admin, excluding soft-deleted ones
+        admin_galleries = (
+            Gallery.query
+            .filter_by(admin_id=current_admin.id)
+            .filter(Gallery.deleted_at.is_(None))
+            .order_by(Gallery.name)
+            .all()
+        )
+        gallery_list_for_json = [g.to_dict() for g in admin_galleries]
+
     return render_template(
-        "admin.html", 
+        "admin.html",
         ws_port=BROWSER_WS_PORT,
-        current_status=admin_status.get_field("status"), 
-        gallery_data=gallery_list_for_json 
+        current_status=admin_status.get_field("status"),
+        gallery_data=gallery_list_for_json
     )
+
 
 # Admin Configurantion:
 @app.route("/admin/configure", methods=["POST"])
@@ -571,25 +574,27 @@ def gallery_page():
 
     # FETCH ADMIN
     admin_name = str(admin_status.get_field('admin_name'))
-    
     current_admin = Admin.query.filter_by(username=admin_name).first()
-    if not current_admin:
-        return "Admin not found", 404
-    
-    # FETCH galleries from database, excluding soft-deleted ones
-    admin_galleries = Gallery.query.filter_by(admin_id=current_admin.id) \
-                                   .filter(Gallery.deleted_at.is_(None)) \
-                                   .order_by(Gallery.name) \
-                                   .all()
 
-    # Check if the folder exists on disk using the gallery ID
-    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
     eligible_folders = []
-    for g in admin_galleries:
-        folder_path = os.path.join(user_filepath, str(g.id))
-        print(folder_path)  # Debug: see which paths are being checked
-        if os.path.isdir(folder_path):
-            eligible_folders.append(g.name)  # Keep name for display
+
+    if current_admin:
+        # FETCH galleries from database, excluding soft-deleted ones
+        admin_galleries = (
+            Gallery.query
+            .filter_by(admin_id=current_admin.id)
+            .filter(Gallery.deleted_at.is_(None))
+            .order_by(Gallery.name)
+            .all()
+        )
+
+        # Check if the folder exists on disk using the gallery ID
+        user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
+        for g in admin_galleries:
+            folder_path = os.path.join(user_filepath, str(g.id))
+            print(folder_path)  # Debug: see which paths are being checked
+            if os.path.isdir(folder_path):
+                eligible_folders.append(g.name)  # Keep name for display
 
     is_setup = admin_status.get_field("hosting_active")
 

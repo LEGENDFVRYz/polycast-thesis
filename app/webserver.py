@@ -162,62 +162,100 @@ def scan_for_ip_route():
 def admin_start_host():
     global archiver_manager
     
+    # --- Authentication Check ---
     if "user" not in session:
+        flash("You must be logged in to perform this action.", "error")
         return redirect(url_for("login_page"))
     
+    # --- Status Check ---
     if admin_status.get_field("status") != "CONFIGURED":
+        flash("System is not in a 'CONFIGURED' state yet", "warning")
         return redirect(url_for("admin_page"))
 
-    # Initilize the data
+    # --- Form Data Validation ---
     admin_name = session["user"]
     admin_id = session["id"]
-    gallery_name = request.form.get('gallery_name')
-    session_name = request.form.get('session_name')
+    gallery_name = request.form.get('gallery_name', '').strip()
+    session_name = request.form.get('session_name', '').strip()
+    
+    if not gallery_name:
+        flash("Gallery name is required.", "error")
+        return redirect(url_for("admin_page"))
+
+    if not session_name:
+        flash("Session name is required.", "error")
+        return redirect(url_for("admin_page"))
+    
     
     # Start creating new gallery and session
-    admin_status._update_state(status="STARTING")
     print(f"[ADMIN] {admin_name} is starting host...")
+    admin_status._update_state(status="STARTING")
     
-    # Check if the gallery exists
+    # --- Gallery Logic ---
     existing_gallery = Gallery.query.filter_by(name=gallery_name, admin_id=admin_id).first()
     if not existing_gallery:
-        new_gallery = Gallery(
-            name=gallery_name,
-            admin_id=admin_id
-        )
-        db.session.add(new_gallery)
-        db.session.commit()
-        gallery_id = new_gallery.id
+        try:
+            new_gallery = Gallery(
+                name=gallery_name,
+                admin_id=admin_id
+            )
+            db.session.add(new_gallery)
+            db.session.commit()
+            gallery_id = new_gallery.id
+            flash(f"New gallery '{gallery_name}' created.", "notice")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[ADMIN] Error creating gallery: {e}")
+            flash(f"Error creating gallery: {e}", "error")
+            admin_status._update_state(status="CONFIGURED") # Rollback status
+            return redirect(url_for("admin_page"))
     else:
         gallery_id = existing_gallery.id
+        flash(f"Connecting to existing gallery '{gallery_name}'.", "notice")
     
-    # Check if session already exists for this gallery
+    # --- Session Logic (Allow existing) ---
     existing_session = Session.query.filter_by(name=session_name, gallery_id=gallery_id).first()
     if existing_session:
-        print(f"[ADMIN] Session '{session_name}' already exists for gallery '{gallery_name}'. Skipping creation.")
         session_id = existing_session.id
+        print(f"[ADMIN] Connecting to existing session '{session_name}' for gallery '{gallery_name}'.")
+        flash(f"Connecting to existing session '{session_name}'.", "notice")
     else:
-        new_session = Session(
-            name=session_name,
-            gallery_id=gallery_id,
-        )
-        db.session.add(new_session)
-        db.session.commit()
-        session_id = new_session.id
+        try:
+            new_session = Session(
+                name=session_name,
+                gallery_id=gallery_id,
+            )
+            db.session.add(new_session)
+            db.session.commit()
+            session_id = new_session.id
+            flash(f"New session '{session_name}' created.", "notice")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[ADMIN] Error creating session: {e}")
+            flash(f"Error creating session: {e}", "error")
+            admin_status._update_state(status="CONFIGURED") # Rollback status
+            return redirect(url_for("admin_page"))
     
     
     # Set status to "Hosting"
+    print(f"[ADMIN] {admin_name} is now hosting.")
     admin_status._update_state(
         status="HOSTING", 
         hosting_active=True
     )
-    print(f"[ADMIN] {admin_name} is now hosting.")
     
-    archiver_manager = Archiver(
-        initial_archive_path=os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
-    )
-    archiver_manager.start()
+    try:
+        archive_path = os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
+        archiver_manager = Archiver(
+            initial_archive_path=archive_path
+        )
+        archiver_manager.start()
+        print(f"[ADMIN] Archiver started for path: {archive_path}")
+    except Exception as e:
+        print(f"[ADMIN] CRITICAL: Failed to start Archiver: {e}")
+        flash(f"Hosting started, but archiver failed to initialize: {e}", "error")
     
+    flash(f"Successfully started hosting session '{session_name}'.", "success")
     # enable_archiving()
     
     return redirect(url_for("admin_page"))

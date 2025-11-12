@@ -270,6 +270,48 @@ def delete_gallery(gallery_id):
 
     return redirect(url_for('admin_page'))
 
+@app.route("/gallery/<int:gallery_id>/update", methods=['POST'])
+def update_gallery_name(gallery_id):
+    # 1. Check if user is logged in
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+
+    current_user_id = session['id']
+    
+    # 2. Find the gallery or return 404
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # 3. SECURITY CHECK: Ensure the gallery belongs to the current user
+    if gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    # 4. Get the new name from the form
+    new_name = request.form.get('gallery_name')
+
+    # 5. Validate the new name
+    if not new_name or len(new_name.strip()) == 0:
+        flash('A gallery name is required.', 'error')
+        return redirect(url_for('admin_page'))
+    
+    new_name = new_name.strip()
+
+    # 6. Optional: Check if a gallery with that name already exists
+    existing = Gallery.query.filter_by(name=new_name, admin_id=current_user_id).first()
+    if existing and existing.id != gallery_id:
+         flash('A gallery with this name already exists.', 'error')
+         return redirect(url_for('admin_page'))
+
+    # 7. Update the database
+    try:
+        gallery.name = new_name
+        db.session.commit()
+        flash('Gallery name updated successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred while updating the name: {e}', 'danger')
+
+    return redirect(url_for('admin_page'))
+
 
 
 @app.route("/client")

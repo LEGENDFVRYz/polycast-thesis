@@ -16,9 +16,7 @@
             <!-- PAGE TITILE -->
             {% if current_status != 'HOSTING' %}
                 <h1 class="page-title">System Configuration</h1>
-            {% endif %}
-
-            <a href="{{ url_for('logout_page') }}">Logout</a> 
+            {% endif %} 
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
@@ -118,8 +116,7 @@
                             {% for gallery in gallery_data %}
                                 <div class="folder-item">
                                     <div class="item-icon">
-                                        <svg class="lucide lucide-folder" ... >
-                                            </svg>
+                                        <image src="../static/images/icons/folder1.svg">
                                     </div>
                                     <div class="item-info">
                                         <h3 class="item-title">{{ gallery.name }}</h3>

@@ -11,19 +11,19 @@
         <!-- Quick Actions -->
         <section class="quick-actions">
             <button class="qa-button active" data-icon-btn="home">
-                <i data-lucide="home"></i>
+                <image src="../static/images/icons/home.svg">
                 <span>Home</span>
             </button>
             <button class="qa-button" data-icon-btn="folder">
-                <i data-lucide="folder"></i>
+                <image src="../static/images/icons/folder1.svg">
                 <span>Folder</span>
             </button>
             <button class="qa-button" data-icon-btn="favorites">
-                <i data-lucide="heart"></i>
+                <image src="../static/images/icons/favorites.svg">
                 <span>Favorites</span>
             </button>
             <button class="qa-button" data-icon-btn="trash">
-                <i data-lucide="trash-2"></i>
+                <image src="../static/images/icons/trash.svg">
                 <span>Trash</span>
             </button>
         </section>
@@ -36,36 +36,36 @@
                 <!-- File Card 1 -->
                 <div class="file-card">
                     <div class="fc-preview">
-                        <i data-lucide="image"></i>
+                        <image src="../static/images/icons/image1.svg">
                     </div>
                     <div class="fc-info">
-                        <span class="fc-name">File1 Name</span>
+                        <span class="fc-name">IMG_1230</span>
                         <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
+                            <image src="../static/images/icons/dots.svg">
                         </button>
                     </div>
                 </div>
                 <!-- File Card 2 -->
                 <div class="file-card">
                     <div class="fc-preview">
-                        <i data-lucide="image"></i>
+                        <image src="../static/images/icons/image1.svg">
                     </div>
                     <div class="fc-info">
-                        <span class="fc-name">File2 Name</span>
+                        <span class="fc-name">IMG_7381</span>
                         <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
+                            <image src="../static/images/icons/dots.svg">
                         </button>
                     </div>
                 </div>
                 <!-- File Card 3 -->
                 <div class="file-card">
                     <div class="fc-preview">
-                        <i data-lucide="image"></i>
+                        <image src="../static/images/icons/image1.svg">
                     </div>
                     <div class="fc-info">
-                        <span class="fc-name">File3 Name</span>
+                        <span class="fc-name">IMG_4212</span>
                         <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
+                            <image src="../static/images/icons/dots.svg">
                         </button>
                     </div>
                 </div>
@@ -86,17 +86,14 @@
                         <a href="{{ url_for('session_page', galleryname=folder) }}" class="folder-link-wrapper">
                             <div class="folder-item">
                                 <div class="item-icon">
-                                    <!-- Use a custom filled-in folder icon -->
-                                    <svg class="lucide lucide-folder" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: #111827; color: #111827;">
-                                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-                                    </svg>
+                                    <image src="../static/images/icons/folder1.svg">
                                 </div>
                                 <div class="item-info">
                                     <h3 class="item-title">{{ folder }}</h3>
                                     <p class="item-subtitle">BSCPE 4-3</p>
                                 </div>
                                 <button class="item-menu">
-                                    <i data-lucide="more-vertical"></i>
+                                    <image src="../static/images/icons/dots.svg">
                                 </button>
                             </div>
                         </a>

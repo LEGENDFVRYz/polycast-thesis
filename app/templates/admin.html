@@ -19,9 +19,7 @@
             <!-- PAGE TITILE -->
             {% if current_status != 'HOSTING' %}
                 <h1 class="page-title">System Configuration</h1>
-            {% endif %}
-
-            <a href="{{ url_for('logout_page') }}">Logout</a> 
+            {% endif %} 
 
             <div class="forms">
                 {% if current_status == 'HOSTING' %}
@@ -113,8 +111,7 @@
                             {% for gallery in gallery_data %}
                                 <div class="folder-item">
                                     <div class="item-icon">
-                                        <svg class="lucide lucide-folder" ... >
-                                            </svg>
+                                        <image src="../static/images/icons/folder1.svg">
                                     </div>
                                     <div class="item-info">
                                         <a href="{{ url_for('session_page', galleryname=gallery.name) }}">

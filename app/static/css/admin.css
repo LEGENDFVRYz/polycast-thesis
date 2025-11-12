@@ -1,6 +1,9 @@
+@import url('fonts.css');
 
 /* === ADMIN CONTROL PANEL STYLES === */
 .admin-ctn {
+    font-family: 'Poppins-SB';
+    color: #102E4A;
     display: flex;
     flex-direction: column;
     /* justify-content: center; */
@@ -17,11 +20,17 @@
         /* SCOPE DESIGN */
         h1.page-title {
             font-size: 1.5rem;
-            font-weight: 600;
+            /* font-weight: 600; */
             text-align: center;
             margin-bottom: 16px;
         }
         
+        img {
+            width: 30px;
+            height: 30px;
+            /* filter: invert(20%) sepia(51%) saturate(5853%) hue-rotate(355deg) brightness(106%) contrast(84%); */
+        }
+
         div.forms{
             display: flex;
             flex-direction: column;
@@ -36,7 +45,7 @@
                 display: block;
                 font-size: 14px;
                 font-weight: 500;
-                color: #495057;
+                color: #102E4A;
                 margin-bottom: 8px;
             }
     
@@ -61,9 +70,9 @@
                 }
 
                 &.btn-secondary {
-                    background-color: #2E7CF6; 
+                    background-color: #2E7CF6;
                     color: white;
-                    padding: 10px 18px; 
+                    padding: 10px 18px;
                     font-size: 14px;
     
                     &:hover {
@@ -129,11 +138,11 @@
 
         /* --- Cards & Display --- */
         .config-card {
-            background-color: #ffffff;
+            background-color: #FFFFFF;
             border-radius: 8px;
             padding: 24px 30px;
             box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-            border-left: 6px solid #2E7CF6;
+            border-left: 8px solid #2E7CF6;
 
             /* Disabled style */
             &.disabled {
@@ -155,7 +164,7 @@
             h2 {
                 font-size: 18px;
                 font-weight: 500;
-                color: #343a40;
+                color: #102E4A;
             }
         }
 
@@ -235,15 +244,10 @@
                         background-color: #EFF6FF; 
                         border-radius: 0.5rem; 
 
-                        .lucide {
-                            width: 20px;
-                            height: 20px;
-                            color: #2563EB; 
-                        }
-
-                        .lucide-folder {
-                            color: #111827; 
-                            fill: #111827; 
+                        img {
+                            width: 35px;
+                            height: 35px;
+                            filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
                         }
                     }
 

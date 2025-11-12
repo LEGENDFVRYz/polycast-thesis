@@ -304,12 +304,16 @@ def endsession():
 # ADMIN CRUD OPERATIONS:
 @app.route("/gallery/<int:gallery_id>/delete", methods=['POST'])
 def delete_gallery(gallery_id):
-    current_user_id = session['id']
+    
+    if "user" not in session:
+        flash("You must be admin in to perform this action.", "error")
+        return redirect(url_for("login_page"))
     
     # Find the specific gallery or return a 404 error
     gallery = Gallery.query.get_or_404(gallery_id)
 
     # SECURITY CHECK: Ensure the gallery belongs to the current user
+    current_user_id = session['id']
     if gallery.admin_id != current_user_id:
         abort(403) # Forbidden
 
@@ -329,6 +333,7 @@ def delete_gallery(gallery_id):
 def update_gallery_name(gallery_id):
     # 1. Check if user is logged in
     if "user" not in session:
+        flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("login_page"))
 
     current_user_id = session['id']

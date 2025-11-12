@@ -81,7 +81,15 @@
 
         <!-- Folders -->
         <section class="folders">
-            <h2 class="section-title">Folders</h2>
+            <h2 class="section-title">
+                {% if active_view == 'favorites' %}
+                    Favorites
+                {% elif active_view == 'trash' %}
+                    Recover
+                {% else %}
+                    Folders
+                {% endif %}
+            </h2>
             <div class="folder-list">
                 
                 <!-- Loop through all available folders -->

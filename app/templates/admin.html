@@ -1,4 +1,4 @@
-{% from 'shared/_modal.html' import modal_shell %}
+a{% from 'shared/_modal.html' import modal_shell %}
 
 <!-- BASE STRUCT -->
 {% extends "base.html" %}
@@ -125,7 +125,9 @@
                                             </svg>
                                     </div>
                                     <div class="item-info">
-                                        <h3 class="item-title">{{ gallery.name }}</h3>
+                                        <a href="{{ url_for('session_page', galleryname=gallery.name) }}">
+                                            <h3 class="item-title">{{ gallery.name }}</h3>
+                                        </a>
                                         <p class="item-subtitle">BSCPE 4-3</p>
                                     </div>
                                     <div class="item-menu">
@@ -187,6 +189,7 @@
         {% endcall %}
     </div>
     
+
     <!-- ESP SCANNER SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', (event) => {
@@ -288,51 +291,52 @@
         });
     </script>
 
-<script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+    <!-- MODALS SCRIPT -->
+    <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
-<script>
-    document.addEventListener('DOMContentLoaded', function() {
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
 
-        const editForm = document.getElementById('editGalleryForm');
-        const editNameInput = document.getElementById('new_gallery_name');
+            const editForm = document.getElementById('editGalleryForm');
+            const editNameInput = document.getElementById('new_gallery_name');
 
-        // Listen for clicks on the *specific* edit buttons
-        document.querySelectorAll('.edit-gallery-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                // Get data from the button
-                const galleryId = this.dataset.galleryId;
-                const galleryName = this.dataset.galleryName;
+            // Listen for clicks on the *specific* edit buttons
+            document.querySelectorAll('.edit-gallery-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    // Get data from the button
+                    const galleryId = this.dataset.galleryId;
+                    const galleryName = this.dataset.galleryName;
 
-                // Set the form action and input value
-                if (editForm && editNameInput) {
-                    editForm.action = '/gallery/' + galleryId + '/update'; 
-                    editNameInput.value = galleryName;
-                }
+                    // Set the form action and input value
+                    if (editForm && editNameInput) {
+                        editForm.action = '/gallery/' + galleryId + '/update'; 
+                        editNameInput.value = galleryName;
+                    }
+                });
+            });
+
+
+            // ===========================================
+            // 3. SPECIFIC LOGIC FOR "DELETE CONFIRM" MODAL
+            // ===========================================
+            const deleteForm = document.getElementById('deleteGalleryForm');
+
+            // Listen for clicks on ANY trash icon button
+            document.querySelectorAll('.delete-gallery-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    
+                    // Get the URL from the button that was clicked
+                    const deleteUrl = this.dataset.deleteUrl;
+
+                    // Set the modal's form "action" to that URL
+                    if (deleteForm) {
+                        deleteForm.action = deleteUrl;
+                    }
+                    
+                    // The generic JS will now open the modal,
+                    // which is now correctly configured.
+                });
             });
         });
-
-
-        // ===========================================
-        // 3. SPECIFIC LOGIC FOR "DELETE CONFIRM" MODAL
-        // ===========================================
-        const deleteForm = document.getElementById('deleteGalleryForm');
-
-        // Listen for clicks on ANY trash icon button
-        document.querySelectorAll('.delete-gallery-btn').forEach(button => {
-            button.addEventListener('click', function() {
-                
-                // Get the URL from the button that was clicked
-                const deleteUrl = this.dataset.deleteUrl;
-
-                // Set the modal's form "action" to that URL
-                if (deleteForm) {
-                    deleteForm.action = deleteUrl;
-                }
-                
-                // The generic JS will now open the modal,
-                // which is now correctly configured.
-            });
-        });
-    });
-</script>
+    </script>
 {% endblock %}

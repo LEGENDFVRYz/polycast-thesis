@@ -201,7 +201,7 @@ body {
     flex-direction: column;
     gap: 10px;
     z-index: 9999;    /* On top of everything */
-    width: auto;      /* Let width adjust based on content */
+    width: 80%;      /* Let width adjust based on content */
     max-width: 90%;   /* Prevent it from being too wide on mobile */
     padding: 0 10px;  /* Small padding around the container */
     align-items: center; /* Center messages inside container */

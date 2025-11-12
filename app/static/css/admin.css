@@ -208,6 +208,13 @@
                     cursor: pointer; 
                 }
 
+                .icon-button {
+                    display: flex;
+                    justify-self: center;
+                    align-self: center;
+                    cursor: pointer;
+                }
+
                 .folder-item {
                     display: flex;
                     align-items: center;

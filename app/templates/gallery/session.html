@@ -1,3 +1,5 @@
+{% from 'shared/_modal.html' import modal_shell %}
+
 {% extends "base.html" %}
 
 {% block extra_css %}
@@ -41,23 +43,29 @@
                 {% if sessions %}  
                     {% for session in sessions %}
 
-                        <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
-                            <div class="folder-item">
-                                <div class="item-icon">
-                                    <!-- Use a custom filled-in folder icon -->
-                                    <svg class="lucide lucide-folder" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: #111827; color: #111827;">
-                                        <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-                                    </svg>
-                                </div>
-                                <div class="item-info">
-                                    <h3 class="item-title">{{ session.name }}</h3>
+                        <div class="folder-item">
+                            <div class="item-icon">
+                                <!-- Use a custom filled-in folder icon -->
+                                <svg class="lucide lucide-folder" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: #111827; color: #111827;">
+                                    <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+                                </svg>
+                            </div>
+                            <div class="item-info">
+                                    <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
+                                        <h3 class="item-title">{{ session.name }}</h3>
+                                    </a>
                                     <p class="item-subtitle">BSCPE 4-3</p>
                                 </div>
-                                <button class="item-menu">
-                                    <i data-lucide="more-vertical"></i>
+
+                            {% if is_current_user %}
+
+                                <button type="button" class="icon-button delete-session-btn"
+                                        data-modal-target="#deleteSessionModal"
+                                        data-delete-url="{{ url_for('delete_session', session_id=session.id) }}">
+                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
                                 </button>
-                            </div>
-                        </a>
+                            {% endif %}
+                        </div>
                     {% endfor %}
                 {% else %}
                     <p>No Session found!</p>
@@ -67,30 +75,45 @@
         </section>
     </div>
 
+    <!-- Delete Modal -->
+    {% call modal_shell(modal_id='deleteSessionModal', modal_title='Confirm Session Deletion') %}
+        
+        <p>Are you sure you want to move this session to the recycle bin?</p>
+        
+        <form id="deleteSessionForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
+            </div>
+        </form>
+
+    {% endcall %}
+    
+    
+
+    <!-- MODALS SCRIPT -->
+    <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+
     <script>
         lucide.createIcons();
 
-        // document.addEventListener('DOMContentLoaded', () => {
-            // // Get the link and the details content by their IDs
-            // const toggleLink = document.getElementById("detailsToggle");
-            // const detailsContent = document.getElementById("folderDetails");
+        document.addEventListener('DOMContentLoaded', function() {
 
-            // // Add a 'click' event listener to the link
-            // toggleLink.addEventListener("click", function(event) {
-            //     // Prevent the link's default behavior (which is to jump to the top)
-            //     event.preventDefault(); 
-                
-            //     // Add or remove the 'show' class on the details content
-            //     detailsContent.classList.toggle("show");
+            // ===========================================
+            // "DELETE SESSION" MODAL
+            // ===========================================
+            const deleteForm = document.getElementById('deleteSessionForm');
 
-            //     // Check if the content is now visible and update the link text
-            //     if (detailsContent.classList.contains("show")) {
-            //         toggleLink.textContent = "Hide Details";
-            //     } else {
-            //         toggleLink.textContent = "Folder Details?";
-            //     }
-            // });
-        // });
+            document.querySelectorAll('.delete-session-btn').forEach(button => {
+                button.addEventListener('click', function() {
+                    const deleteUrl = this.dataset.deleteUrl;
+                    if (deleteForm) {
+                        deleteForm.action = deleteUrl;
+                    }
+                });
+            });
+
+        });
     </script>
 
 {% endblock %}

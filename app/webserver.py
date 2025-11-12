@@ -324,6 +324,33 @@ def update_gallery_name(gallery_id):
 
     return redirect(url_for('admin_page'))
 
+@app.route("/session/<int:session_id>/delete", methods=['POST'])
+def delete_session(session_id):
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+
+    # 1. Find the session
+    session_to_delete = Session.query.get_or_404(session_id)
+
+    # 2. SECURITY CHECK: Check if the session's gallery belongs to the user
+    if session_to_delete.gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    try:
+        # 3. Use your soft-delete method
+        session_to_delete.delete(commit=False) # Or db.session.delete(session_to_delete)
+        db.session.commit()
+        flash('Session has been moved to the recycle bin.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred: {e}', 'danger')
+
+    # 4. Redirect back to the page the user was on
+    # request.referrer is the URL they just came from (the session list)
+    return redirect(request.referrer or url_for('admin_page'))
+
 
 
 @app.route("/client")
@@ -537,6 +564,12 @@ def session_page(galleryname):
     if not current_admin:
         return "Admin not found", 404
     
+    # CHECK if user is currently logged in and is the admin using session
+    if 'user' in session:
+        is_current_user = session['user'] == admin_name
+    else:
+        is_current_user = False  # session key doesn't exist
+    
     # FETCH the gallery by ID, make sure it belongs to this admin and is not soft-deleted
     gallery = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id) \
                            .filter(Gallery.deleted_at.is_(None)) \
@@ -562,7 +595,8 @@ def session_page(galleryname):
     return render_template(
         "gallery/session.html",
         selected_gallery=gallery.name,
-        sessions=sessions
+        sessions=sessions,
+        is_current_user=is_current_user
     )
 
 

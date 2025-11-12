@@ -289,6 +289,25 @@ div.session-wrap{
     flex: 1;
     gap: 2em;
 
+    a {
+        display: flex;
+        flex-wrap: wrap; /* lets children flow to new lines if needed */
+    }
+
+    .icon-button {
+        display: flex;
+        justify-self: center;
+        align-self: center;
+        cursor: pointer;
+
+        background: none;      /* Removes the gray background */
+        border: none;          /* Removes the border */
+        padding: 0;            /* Removes the default spacing */
+        margin: 0;             /* Removes default margins */
+        cursor: pointer;       /* Keeps the hand cursor */
+        outline: none;         /* Optional: Removes the blue ring on click (focus) */
+    }
+
     .folder-header {
         width: 100%;
         height: 360px;

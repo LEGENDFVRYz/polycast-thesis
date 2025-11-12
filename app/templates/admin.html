@@ -67,8 +67,10 @@
                             <label for="folder-name">Folder Name</label>
                             <div class="input-with-button">
                                 <select id="folder-name" name="gallery_name">
-                                    <option value="Folder 1">Folder 1</option>
-                                    <option value="Folder 2">Folder 2</option>
+                                    <option value="">-- No Gallery Yet --</option>
+                                    {% for name in gallery_data %}
+                                        <option value="{{ name }}">{{ name }}</option>
+                                    {% endfor %}
                                 </select>
                                 <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
                             </div>
@@ -138,39 +140,54 @@
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
     <script>
+        // Gallery options passed from Flask
+        const GALLERY_OPTIONS = {{ gallery_data | tojson }};
+
         document.querySelectorAll('.toggle-input').forEach(button => {
-            button.addEventListener('click', () => {
+            button.addEventListener('click', (e) => {
+                e.preventDefault(); // avoid form submission
 
                 const targetId = button.getAttribute('data-target');
                 const container = button.parentElement;
-                let currentElement = container.querySelector(`#${targetId}`);
+                const currentElement = container.querySelector(`#${targetId}`);
 
+                // --- Toggle select → input ---
                 if (currentElement.tagName.toLowerCase() === 'select') {
-                    // Convert <select> to <input>
                     const input = document.createElement('input');
                     input.type = 'text';
                     input.id = targetId;
                     input.name = currentElement.name;
                     input.className = currentElement.className;
-                    input.placeholder = 'Enter new value...';
+                    input.placeholder = 'Enter new folder name...';
                     container.replaceChild(input, currentElement);
                     button.textContent = 'Cancel';
-                } else {
-                    // Convert <input> back to <select>
-                    const select = document.createElement('select');
-                    select.id = targetId;
-                    select.name = currentElement.name;
-                    select.className = currentElement.className;
-
-                    // Optionally, restore original options (could come from your backend)
-                    const option = document.createElement('option');
-                    option.value = '';
-                    option.textContent = '-- Select an option --';
-                    select.appendChild(option);
-
-                    container.replaceChild(select, currentElement);
-                    button.textContent = 'New';
+                    return;
                 }
+
+                // --- Toggle input → select ---
+                const select = document.createElement('select');
+                select.id = targetId;
+                select.name = currentElement.name;
+                select.className = currentElement.className;
+
+                // Add placeholder
+                const defaultOption = document.createElement('option');
+                defaultOption.value = '';
+                defaultOption.textContent = '-- Select an option --';
+                select.appendChild(defaultOption);
+
+                // ✅ Populate only for folder-name
+                if (targetId === 'folder-name' && Array.isArray(GALLERY_OPTIONS)) {
+                    GALLERY_OPTIONS.forEach(name => {
+                        const opt = document.createElement('option');
+                        opt.value = name;
+                        opt.textContent = name;
+                        select.appendChild(opt);
+                    });
+                }
+
+                container.replaceChild(select, currentElement);
+                button.textContent = 'New';
             });
         });
     </script>

@@ -100,6 +100,18 @@
                     select {
                         flex-grow: 1;
                     }
+
+                    select {
+                        -webkit-appearance: none; /* remove default arrow in Chrome/Safari */
+                        -moz-appearance: none;    /* remove default arrow in Firefox */
+                        appearance: none;         /* remove default arrow in modern browsers */
+                        padding: 1rem 2.5rem 1rem 1rem; /* add right padding for custom arrow */
+
+                        background-image: url("data:image/svg+xml;utf8,<svg fill='%239CA3AF' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+                        background-repeat: no-repeat;
+                        background-position: right 1rem center; /* position arrow */
+                        background-size: 1rem;
+                    }
     
                     button {
                         flex-shrink: 0;

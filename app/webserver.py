@@ -393,6 +393,7 @@ def logout_page():
     print("[ADMIN] Admin logged out, status reset.")
     
     disable_archiving()
+    archiver_manager.stop()
     
     return redirect(url_for("login_page"))
 

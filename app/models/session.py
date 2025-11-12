@@ -2,7 +2,7 @@ from app import db
 from .mixins import SoftDeleteMixin
 
 
-class Session(db.Model):
+class Session(db.Model, SoftDeleteMixin):
     """
     Represents an session of notes per gallery
     """

@@ -23,16 +23,6 @@
 
             <a href="{{ url_for('logout_page') }}">Logout</a> 
 
-            {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                    <div class="flash-messages">
-                        {% for category, message in messages %}
-                            <div class="flash {{ category }}">{{ message }}</div>
-                        {% endfor %}
-                    </div>
-                {% endif %}
-            {% endwith %}
-
             <div class="forms">
                 {% if current_status == 'HOSTING' %}
                     <!-- Form Header -->

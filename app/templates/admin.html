@@ -7,6 +7,12 @@
 {% block content %}
     <div class="admin-ctn">
         <div class="admin-wrapper">
+
+            <!-- NAVIGATION: Render only if set-up properly -->
+            {% if current_status == 'HOSTING' %}
+                {% include "stream/_navigation.html" %}
+            {% endif %}
+
             <!-- PAGE TITILE -->
             <h1 class="page-title">System Configuration</h1>
             <a href="{{ url_for('logout_page') }}">Logout</a>
@@ -94,7 +100,7 @@
 
         </div>
     </div>
-
+    
     <!-- ESP SCANNER SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', (event) => {

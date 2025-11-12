@@ -1,0 +1,100 @@
+
+<!-- Quick Actions -->
+<section class="quick-actions">
+    <button class="qa-button active" id="config" data-icon-btn="home">
+        <i data-lucide="home"></i>
+        <span>Config</span>
+    </button>
+    <button class="qa-button" data-icon-btn="folder">
+        <i data-lucide="folder"></i>
+        <span>Live</span>
+    </button>
+    <button class="qa-button" data-icon-btn="favorites">
+        <i data-lucide="heart"></i>
+        <span>Playback</span>
+    </button>
+</section>
+
+
+<!-- Integrated Styles -->
+<style>
+    .quick-actions {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 0.75rem;
+        margin-bottom: 2rem;
+    
+        .qa-button {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 0.25rem;
+            padding: 1rem 0.5rem;
+            background-color: #ffffff;
+            border: 2px solid #e5e7eb;
+            border-radius: 1rem;
+            font-size: 0.875rem;
+            font-weight: 600;
+            color: #4b5563;
+            cursor: pointer;
+            transition: all 0.2s ease-in-out;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+    
+            &:hover {
+                background-color: #f9fafb;
+            }
+    
+            .lucide {
+                width: 24px;
+                height: 24px;
+                color: #6b7280;
+                transition: color 0.2s;
+            }
+        }
+
+        #config {
+            grid-column: span 2;
+        }
+    
+        .qa-button.active {
+            background-color: #eff6ff;
+            border-color: #3b82f6;
+            color: #2563eb;
+            box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.25);
+    
+            .lucide {
+                color: #2563eb;
+            }
+        }
+    }
+</style>
+
+
+<!-- Integrated JS -->
+<script>
+    lucide.createIcons();
+
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- Quick Actions Button Navigation ---
+        const iconButtons = document.querySelectorAll('.qa-button');
+        const iconButtonsContainer = document.querySelector('.quick-actions');
+
+        iconButtonsContainer.addEventListener('click', (e) => {
+            const clickedButton = e.target.closest('.qa-button');
+            if (!clickedButton) return; // Exit if click wasn't on a button
+
+            // Remove active class from all buttons
+            iconButtons.forEach(btn => {
+                btn.classList.remove('active');
+            });
+
+            // Add active class to the clicked button
+            clickedButton.classList.add('active');
+
+            // You could add logic here based on the clicked button
+            // const activeBtn = clickedButton.dataset.iconBtn;
+            // console.log('Active button:', activeBtn);
+        });
+    });
+</script>

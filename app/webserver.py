@@ -15,7 +15,7 @@ from app.services.auth_service import register_admin, verify_admin
 from app.services.admin_status import AdminStatusManager
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-# from image_processing import generate_frames, enable_archiving, disable_archiving
+from image_processing import generate_frames, enable_archiving, disable_archiving
 from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
 from background.image_generator import Archiver
@@ -67,8 +67,13 @@ def admin_page():
     # FETCH ADMIN
     current_admin = Admin.query.get(session["id"])
     
-    # FETCH THE LIST OF *GALLERY OBJECTS*
-    admin_galleries = current_admin.gallery
+    # FETCH THE USER OBJECT: "current_admin.gallery" translated code
+    # Temporary solutiuonn
+    admin_galleries = Gallery.query.filter_by(admin_id=current_admin.id) \
+                                .filter(Gallery.deleted_at.is_(None)) \
+                                .order_by(Gallery.name) \
+                                .all()
+
     gallery_list_for_json = [g.to_dict() for g in admin_galleries]
     
     return render_template(
@@ -254,13 +259,14 @@ def delete_gallery(gallery_id):
         abort(403) # Forbidden
 
     try:
-        # The 'cascade' option in your model will handle deleting child 'sessions'
-        db.session.delete(gallery)
+        gallery.delete(commit=False)    # custom softdelete method
         db.session.commit()
-        flash('Gallery and all its sessions have been deleted.', 'success')
+        
+        # Updated flash message for clarity
+        flash('Gallery has been moved to the recycle bin.', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'An error occurred while deleting: {e}', 'danger')
+        flash(f'An error occurred while moving to bin: {e}', 'danger')
 
     return redirect(url_for('admin_page'))
 

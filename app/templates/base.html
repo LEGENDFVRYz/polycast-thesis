@@ -40,6 +40,19 @@
         {% endfor %}
     </nav>
 
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+            <div id="flash-container">
+            {% for category, message in messages %}
+                <!-- The category (e.g., 'error') is added as a class -->
+                <div class="flash-message {{ category }}">
+                    {{ message }}
+                </div>
+            {% endfor %}
+            </div>
+        {% endif %}
+    {% endwith %}
+
     <!-- Main content -->
     <main class="main-content">
         {% block content %}
@@ -48,6 +61,42 @@
         {% endblock %}
     </main>
     
-    
+
 </body>
+
+    <!-- 
+    HIDDING FLASH MESSAGE
+    -->
+    <script>
+        // Wait for the document to be fully loaded
+        document.addEventListener('DOMContentLoaded', (event) => {
+            
+            // Find the flash container
+            const flashContainer = document.getElementById('flash-container');
+            if (flashContainer) {
+                // Get all messages inside
+                const messages = flashContainer.querySelectorAll('.flash-message');
+                
+                messages.forEach((message, index) => {
+                    // Set a timeout to fade out the message
+                    // We can stagger them slightly for a nice effect, or just use one duration
+                    const fadeOutDelay = 3000 + (index * 500); // 3s delay, plus 0.5s for each
+                    const removeDelay = fadeOutDelay + 500; // 0.5s for fade-out transition
+
+                    setTimeout(() => {
+                        message.classList.add('fade-out');
+                    }, fadeOutDelay);
+                    
+                    // Set another timeout to remove the element from the DOM
+                    setTimeout(() => {
+                        message.remove();
+                        // If the container is empty, remove it too
+                        if (flashContainer.children.length === 0) {
+                            flashContainer.remove();
+                        }
+                    }, removeDelay);
+                });
+            }
+        });
+    </script>
 </html>

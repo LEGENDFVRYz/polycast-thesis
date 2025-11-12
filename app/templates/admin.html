@@ -86,7 +86,7 @@
                                     <select id="folder-name" name="gallery_name">
                                         <option value="">-- No Gallery Yet --</option>
                                         {% for g in gallery_data %}
-                                            <option value="{{ name }}">{{ g.name }}</option>
+                                            <option value="{{ g.name }}">{{ g.name }}</option>
                                         {% endfor %}
                                     </select>
                                     <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>

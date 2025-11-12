@@ -175,6 +175,7 @@ def admin_start_host():
     admin_status._update_state(status="STARTING")
     print(f"[ADMIN] {admin_name} is starting host...")
     
+    # Check if the gallery exists
     existing_gallery = Gallery.query.filter_by(name=gallery_name, admin_id=admin_id).first()
     if not existing_gallery:
         new_gallery = Gallery(
@@ -183,17 +184,24 @@ def admin_start_host():
         )
         db.session.add(new_gallery)
         db.session.commit()
+        gallery_id = new_gallery.id
+    else:
+        gallery_id = existing_gallery.id
     
-    gallery_id = Gallery.query.filter_by(name=gallery_name, admin_id=admin_id).first().id
-    new_session = Session(
-        name=session_name,
-        gallery_id=gallery_id,
-    )
-    db.session.add(new_session)
-    db.session.commit()
+    # Check if session already exists for this gallery
+    existing_session = Session.query.filter_by(name=session_name, gallery_id=gallery_id).first()
+    if existing_session:
+        print(f"[ADMIN] Session '{session_name}' already exists for gallery '{gallery_name}'. Skipping creation.")
+        session_id = existing_session.id
+    else:
+        new_session = Session(
+            name=session_name,
+            gallery_id=gallery_id,
+        )
+        db.session.add(new_session)
+        db.session.commit()
+        session_id = new_session.id
     
-    # reference id for url/folder_ctn
-    session_id = Session.query.filter_by(name=session_name, gallery_id=gallery_id).first().id
     
     # Set status to "Hosting"
     admin_status._update_state(
@@ -616,7 +624,7 @@ def folderview_page(galleryname, sessionname):
         images=images,
         base_url=base_url
     )
-    
+
 
 # BRIDGE ROUTE FOR CONNECTING ARCHIVE TO FLASK SERVER
 @app.route("/gallery_images/<path:filename>")

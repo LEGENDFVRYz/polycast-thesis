@@ -73,6 +73,8 @@ def admin_page():
     
     gallery_list = [g.get_gallery_name() for g in admin_galleries]
     
+    print(gallery_list)
+    
     return render_template(
         "admin.html", 
         ws_port=BROWSER_WS_PORT,

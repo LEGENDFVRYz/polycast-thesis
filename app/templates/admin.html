@@ -20,13 +20,6 @@
 
             <!-- <a href="{{ url_for('logout_page') }}">Logout</a> -->
 
-            {% if current_status == 'HOSTING' %}
-                <div class="status-block">
-                    <h3>Status:</h3>
-                    <a href="{{ url_for('endsession') }}">End Session</a>
-                </div>
-            {% endif %}
-            
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
                     <div class="flash-messages">
@@ -37,74 +30,125 @@
                 {% endif %}
             {% endwith %}
 
-
-            <!-- Phase 1 -->
-            <section 
-                id="prototype-config"
-                class="
-                    config-card
-                    {% if current_status != 'IDLE' %}success{% endif %}
-                "
-            >
-                <h2>Prototype Configuration</h2>
-                
-                {% if current_status == 'IDLE' %}
-                    <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
-                        <div class="input-group">
-                            <label for="ip-address">PolyCast IP Address</label>
-                            <div class="input-with-button">
-                                <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find...">
-                                <button class="btn btn-secondary" id="scanBtn">Scan</button>
-                            </div>
-                        </div>
-                        <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
-                    </form>
+            <div class="forms">
+                {% if current_status == 'HOSTING' %}
+                    <!-- Form Header -->
+                    <div class="status-block">
+                        <h3>Status:</h3>
+                        <a href="{{ url_for('endsession') }}">End Session</a>
+                    </div>
                 {% endif %}
-            </section>
 
-            <!-- Phase 2 -->
-            <section 
-                id="note-config-active"
-                class="
-                    config-card
-                    {% if current_status in ['IDLE', 'CONFIGURING'] %} disabled{% endif %}
-                    {% if current_status == 'HOSTING' %} success{% endif %}
-                "
-            >
-                <h2>Note Configuration</h2>
-
-                {% if current_status == 'CONFIGURED' %}
-                    <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
-                
-                        <div class="input-group">
-                            <label for="folder-name">Folder Name</label>
-                            <div class="input-with-button">
-                                <select id="folder-name" name="gallery_name">
-                                    <option value="">-- No Gallery Yet --</option>
-                                    {% for name in gallery_data %}
-                                        <option value="{{ name }}">{{ name }}</option>
-                                    {% endfor %}
-                                </select>
-                                <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
+                <!-- Phase 1 -->
+                <section 
+                    id="prototype-config"
+                    class="
+                        config-card
+                        {% if current_status != 'IDLE' %}success{% endif %}
+                    "
+                >
+                    <h2>Prototype Configuration</h2>
+                    
+                    {% if current_status == 'IDLE' %}
+                        <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
+                            <div class="input-group">
+                                <label for="ip-address">PolyCast IP Address</label>
+                                <div class="input-with-button">
+                                    <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find...">
+                                    <button class="btn btn-secondary" id="scanBtn">Scan</button>
+                                </div>
                             </div>
-                        </div>
-
-                        <div class="input-group">
-                            <label for="session-name">Session Name</label>
-                            <div class="input-with-button">
-                                <select id="session-name" name="session_name">
-                                    <option value="Session A">Session A</option>
-                                    <option value="Session B">Session B</option>
-                                </select>
-                                <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
+                            <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
+                        </form>
+                    {% endif %}
+                </section>
+    
+                <!-- Phase 2 -->
+                <section 
+                    id="note-config-active"
+                    class="
+                        config-card
+                        {% if current_status in ['IDLE', 'CONFIGURING'] %} disabled{% endif %}
+                        {% if current_status == 'HOSTING' %} success{% endif %}
+                    "
+                >
+                    <h2>Note Configuration</h2>
+    
+                    {% if current_status == 'CONFIGURED' %}
+                        <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
+                    
+                            <div class="input-group">
+                                <label for="folder-name">Folder Name</label>
+                                <div class="input-with-button">
+                                    <select id="folder-name" name="gallery_name">
+                                        <option value="">-- No Gallery Yet --</option>
+                                        {% for name in gallery_data %}
+                                            <option value="{{ name }}">{{ name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
+                                </div>
                             </div>
-                        </div>
-                        
-                        <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
-                    </form>
-                {% endif %}
-            </section>
+    
+                            <div class="input-group">
+                                <label for="session-name">Session Name</label>
+                                <div class="input-with-button">
+                                    <select id="session-name" name="session_name">
+                                        <option value="Session A">Session A</option>
+                                        <option value="Session B">Session B</option>
+                                    </select>
+                                    <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
+                                </div>
+                            </div>
+                            
+                            <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
+                        </form>
+                    {% endif %}
+                </section>
+            </div>
 
+
+            <!-- Manage Galleries: Only when "HOSTING" -->
+            {% if current_status == 'HOSTING' %}
+                <section class="folders">
+                    <h2 class="section-title">Manage:</h2>
+
+                    <div class="folder-list">
+                        <!-- Loop through all available folders -->
+                        {% if gallery_data %}  
+                            {% for gallery in gallery_data %}
+                                <div class="folder-item">
+                                    <div class="item-icon">
+                                        <!-- Use a custom filled-in folder icon -->
+                                        <svg class="lucide lucide-folder" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: #111827; color: #111827;">
+                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
+                                        </svg>
+                                    </div>
+                                    <div class="item-info">
+                                        <h3 class="item-title">{{ gallery }}</h3>
+                                        <p class="item-subtitle">BSCPE 4-3</p>
+                                    </div>
+                                    <div class="item-menu">
+                                        <!-- MODIFY BUTTON -->
+                                        <a href="#">
+                                            <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Pen Icon" width="21" height="21">
+                                        </a>
+                                        <!-- DELETE BUTTON -->
+                                        <a href="#">
+                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
+                                        </a>
+                                    </div>
+                                </div>
+
+                            {% endfor %}
+                        {% else %}
+                            <p>No gallery folders found!</p>
+                        {% endif %}
+
+                    </div>
+                </section>
+
+            {% endif %}
         </div>
     </div>
     

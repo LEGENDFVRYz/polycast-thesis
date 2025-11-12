@@ -12,7 +12,7 @@
         flex-direction: column;
         width: 100%;
         max-width: 550px;
-        gap: 1rem;
+        gap: 2rem;
 
         /* SCOPE DESIGN */
         h1.page-title {
@@ -22,6 +22,12 @@
             margin-bottom: 16px;
         }
 
+        div.forms{
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            gap: 1rem;
+        }
 
         form {
             margin-top: 1.5rem;
@@ -181,6 +187,96 @@
                 &:hover {
                     background-color: #D62839; 
                     cursor: pointer; 
+                }
+            }
+        }
+
+        /* --- Cards & Display --- */
+        .folders {
+            margin-bottom: 2rem;
+
+            .folder-list {
+                display: grid;
+                gap: 0.75rem;
+
+                a {
+                    all: unset;      
+                    display: inline; 
+                    text-decoration: none;
+                    color: inherit;
+                    font: inherit;
+                    cursor: pointer; 
+                }
+
+                .folder-item {
+                    display: flex;
+                    align-items: center;
+                    gap: 1rem;
+                    padding: 1rem;
+                    background-color: #FFFFFF; 
+                    border-radius: 0.75rem; 
+                    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+                    border: 1px solid #E5E7EB;
+
+                    .item-icon {
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        flex-shrink: 0;
+                        width: 40px;
+                        height: 40px;
+                        background-color: #EFF6FF; 
+                        border-radius: 0.5rem; 
+
+                        .lucide {
+                            width: 20px;
+                            height: 20px;
+                            color: #2563EB; 
+                        }
+
+                        .lucide-folder {
+                            color: #111827; 
+                            fill: #111827; 
+                        }
+                    }
+
+                    .item-info {
+                        flex-grow: 1;
+                        overflow: hidden; 
+
+                        .item-title {
+                            font-size: 1rem;
+                            font-weight: 600;
+                            color: #1F2937; 
+                            white-space: nowrap;
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                        }
+
+                        .item-subtitle {
+                            font-size: 0.875rem;
+                            color: #6B7280; 
+                        }
+                    }
+
+                    .item-menu {
+                        display: flex;
+                        justify-content: center;
+                        align-content: center;
+                        flex-shrink: 0;
+                        gap: 0.5rem;
+
+                        background: none;
+                        border: none;
+                        cursor: pointer;
+                        color: #6B7280;
+
+                        a {
+                            display: flex;
+                            justify-self: center;
+                            align-self: center;
+                        }
+                    }
                 }
             }
         }

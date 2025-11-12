@@ -14,10 +14,17 @@
             {% endif %}
 
             <!-- PAGE TITILE -->
-            <h1 class="page-title">System Configuration</h1>
-            <a href="{{ url_for('logout_page') }}">Logout</a>
+            {% if current_status != 'HOSTING' %}
+                <h1 class="page-title">System Configuration</h1>
+            {% endif %}
+
+            <!-- <a href="{{ url_for('logout_page') }}">Logout</a> -->
+
             {% if current_status == 'HOSTING' %}
-                <a href="{{ url_for('endsession') }}">End Session</a>
+                <div class="status-block">
+                    <h3>Status:</h3>
+                    <a href="{{ url_for('endsession') }}">End Session</a>
+                </div>
             {% endif %}
             
             {% with messages = get_flashed_messages(with_categories=true) %}

@@ -152,5 +152,37 @@
                 color: #343a40;
             }
         }
+
+        /* --- Status header: When Hosting only --- */
+        .status-block {
+            display: flex;
+            justify-content: space-between; 
+            align-items: center;   
+
+            h3 {
+                margin: 0; 
+                font-weight: 800; 
+                /* font-size: 1.75rem;  */
+                color: #2a2a2a;
+            }
+
+            a {
+                background-color: #E63946; 
+                color: #FFFFFF;          
+                border-radius: 8px;     
+                
+                padding: 0.5rem 1rem;      
+                font-weight: 600;       
+                font-size: 0.8rem;         
+                text-decoration: none;   
+                
+                transition: background-color 0.2s ease-in-out;
+
+                &:hover {
+                    background-color: #D62839; 
+                    cursor: pointer; 
+                }
+            }
+        }
     }
 }

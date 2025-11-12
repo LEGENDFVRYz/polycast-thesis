@@ -41,7 +41,7 @@
                 {% if sessions %}  
                     {% for session in sessions %}
 
-                        <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session) }}" class="folder-link-wrapper">
+                        <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
                             <div class="folder-item">
                                 <div class="item-icon">
                                     <!-- Use a custom filled-in folder icon -->
@@ -50,7 +50,7 @@
                                     </svg>
                                 </div>
                                 <div class="item-info">
-                                    <h3 class="item-title">{{ session }}</h3>
+                                    <h3 class="item-title">{{ session.name }}</h3>
                                     <p class="item-subtitle">BSCPE 4-3</p>
                                 </div>
                                 <button class="item-menu">

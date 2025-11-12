@@ -65,7 +65,11 @@ def admin_page():
         return redirect(url_for("login_page"))
     
     # FETCH ADMIN
-    current_admin = Admin.query.get(session["id"])
+    admin_name = str(admin_status.get_field('admin_name'))
+    
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+    if not current_admin:
+        return "Admin not found", 404
     
     # FETCH THE USER OBJECT: "current_admin.gallery" translated code
     # Temporary solutiuonn
@@ -199,7 +203,7 @@ def admin_start_host():
     print(f"[ADMIN] {admin_name} is now hosting.")
     
     archiver_manager = Archiver(
-        initial_archive_path=os.path.join("archive", str(admin_id), str(gallery_id), str(session_id))
+        initial_archive_path=os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
     )
     archiver_manager.start()
     
@@ -476,26 +480,39 @@ def logout_page():
 @app.route("/gallery")
 def gallery_page():
     """
-    List all galleries belonging to the login admin
+    List all galleries belonging to the logged-in admin,
+    only showing galleries that exist in the database and are not soft-deleted.
     """
-    is_setup = admin_status.get_field("hosting_active")
+
+    # FETCH ADMIN
     admin_name = str(admin_status.get_field('admin_name'))
     
-    user_filepath = os.path.join(GALLERY_PATH, admin_name)
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+    if not current_admin:
+        return "Admin not found", 404
     
-    folders = []
-    try:
-        with os.scandir(user_filepath) as entries:
-            folders = [entry.name for entry in entries if entry.is_dir()]
-    except FileNotFoundError:
-        print("No Gallery Folder Yet")
-        pass
-    
+    # FETCH galleries from database, excluding soft-deleted ones
+    admin_galleries = Gallery.query.filter_by(admin_id=current_admin.id) \
+                                   .filter(Gallery.deleted_at.is_(None)) \
+                                   .order_by(Gallery.name) \
+                                   .all()
+
+    # Check if the folder exists on disk using the gallery ID
+    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
+    eligible_folders = []
+    for g in admin_galleries:
+        folder_path = os.path.join(user_filepath, str(g.id))
+        print(folder_path)  # Debug: see which paths are being checked
+        if os.path.isdir(folder_path):
+            eligible_folders.append(g.name)  # Keep name for display
+
+    is_setup = admin_status.get_field("hosting_active")
+
     return render_template(
         "gallery/gallery.html", 
         is_setup=is_setup, 
         ws_port=BROWSER_WS_PORT,
-        folders=folders
+        folders=eligible_folders
     )
 
 
@@ -504,21 +521,40 @@ def session_page(galleryname):
     """
     List all sessions within the selected gallery
     """
+    
+    # FETCH ADMIN
     admin_name = str(admin_status.get_field('admin_name'))
-    gallery_filepath = os.path.join(GALLERY_PATH, admin_name, galleryname)
     
-    folders = []
-    try:
-        with os.scandir(gallery_filepath) as entries:
-            folders = [entry.name for entry in entries if entry.is_dir()]
-    except FileNotFoundError:
-        print(f"No Session Found in {galleryname}")
-        pass
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+    if not current_admin:
+        return "Admin not found", 404
     
+    # FETCH the gallery by ID, make sure it belongs to this admin and is not soft-deleted
+    gallery = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id) \
+                           .filter(Gallery.deleted_at.is_(None)) \
+                           .first()
+    if not gallery:
+        return "Gallery not found or deleted", 404
+
+    # Path to the gallery folder using gallery ID
+    gallery_filepath = os.path.join(GALLERY_PATH, admin_name, str(gallery.id))
+
+    # FETCH sessions from database, only not soft-deleted
+    sessions_db = Session.query.filter_by(gallery_id=gallery.id) \
+                               .filter(Session.deleted_at.is_(None)) \
+                               .all()
+
+    # Only include sessions whose folders exist on disk
+    sessions = []
+    for s in sessions_db:
+        folder_path = os.path.join(gallery_filepath, str(s.id))
+        if os.path.isdir(folder_path):
+            sessions.append({'id': s.id, 'name': s.name})
+            
     return render_template(
         "gallery/session.html",
-        selected_gallery=galleryname,
-        sessions=folders
+        selected_gallery=gallery.name,
+        sessions=sessions
     )
 
 
@@ -531,7 +567,29 @@ def folderview_page(galleryname, sessionname):
     foldername = secure_filename(sessionname)
     admin_name = str(admin_status.get_field('admin_name'))
     
-    folder_path = os.path.join(GALLERY_PATH, admin_name, galleryname, sessionname)
+    # FETCH ADMIN using admin_name from admin_status
+    admin_name = str(admin_status.get_field('admin_name'))
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+    if not current_admin:
+        return "Admin not found", 404
+    
+    # FETCH gallery and ensure it belongs to admin and is not soft-deleted
+    gallery = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id) \
+                           .filter(Gallery.deleted_at.is_(None)) \
+                           .first()
+    if not gallery:
+        return "Gallery not found or deleted", 404
+
+    # FETCH session and ensure it belongs to the gallery and is not soft-deleted
+    session_obj = Session.query.filter_by(name=sessionname, gallery_id=gallery.id) \
+                               .filter(Session.deleted_at.is_(None)) \
+                               .first()
+    
+    if not session_obj:
+        return "Session not found or deleted", 404
+    
+    # Path to the session folder using IDs
+    folder_path = os.path.join(GALLERY_PATH, admin_name, str(gallery.id), str(session_obj.id))
 
     if not os.path.isdir(folder_path):
         print("FOLDER: Does not exist")
@@ -548,13 +606,13 @@ def folderview_page(galleryname, sessionname):
         print("FOLDER: Access Error")
         return redirect(url_for("gallery_page"))
     
-    base_url = f"{admin_name}/{galleryname}/{sessionname}"
+    base_url = f"{admin_name}/{gallery.id}/{session_obj.id}"
     
     return render_template(
         "gallery/view.html",
         admin_name=admin_name,
-        galleryname=galleryname,
-        sessionname=sessionname,
+        galleryname=gallery.name,
+        sessionname=session_obj.name,
         images=images,
         base_url=base_url
     )

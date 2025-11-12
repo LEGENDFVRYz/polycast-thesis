@@ -10,68 +10,74 @@
 
         <!-- Quick Actions -->
         <section class="quick-actions">
-            <button class="qa-button active" data-icon-btn="home">
+            
+            <a href="{{ url_for('gallery_page', view='all') }}" 
+               class="qa-button {% if active_view == 'all' %}active{% endif %}" 
+               data-icon-btn="home">
                 <i data-lucide="home"></i>
                 <span>Home</span>
-            </button>
-            <button class="qa-button" data-icon-btn="folder">
-                <i data-lucide="folder"></i>
-                <span>Folder</span>
-            </button>
-            <button class="qa-button" data-icon-btn="favorites">
+            </a>
+            
+            <a href="{{ url_for('gallery_page', view='favorites') }}" 
+               class="qa-button {% if active_view == 'favorites' %}active{% endif %}" 
+               data-icon-btn="favorites">
                 <i data-lucide="heart"></i>
                 <span>Favorites</span>
-            </button>
-            <button class="qa-button" data-icon-btn="trash">
+            </a>
+
+            <a href="{{ url_for('gallery_page', view='trash') }}" 
+               class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
+               data-icon-btn="trash">
                 <i data-lucide="trash-2"></i>
                 <span>Trash</span>
-            </button>
+            </a>
         </section>
 
 
         <!-- Recents -->
-        <section class="recently-added">
-            <h2 class="section-title">Recently Added</h2>
-            <div class="recently-added__scroll-container">
-                <!-- File Card 1 -->
-                <div class="file-card">
-                    <div class="fc-preview">
-                        <i data-lucide="image"></i>
+        {% if active_view == 'all' %}
+            <section class="recently-added">
+                <h2 class="section-title">Recently Added</h2>
+                <div class="recently-added__scroll-container">
+                    <!-- File Card 1 -->
+                    <div class="file-card">
+                        <div class="fc-preview">
+                            <i data-lucide="image"></i>
+                        </div>
+                        <div class="fc-info">
+                            <span class="fc-name">File1 Name</span>
+                            <button class="fc-menu-btn">
+                                <i data-lucide="more-vertical"></i>
+                            </button>
+                        </div>
                     </div>
-                    <div class="fc-info">
-                        <span class="fc-name">File1 Name</span>
-                        <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
-                        </button>
+                    <!-- File Card 2 -->
+                    <div class="file-card">
+                        <div class="fc-preview">
+                            <i data-lucide="image"></i>
+                        </div>
+                        <div class="fc-info">
+                            <span class="fc-name">File2 Name</span>
+                            <button class="fc-menu-btn">
+                                <i data-lucide="more-vertical"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <!-- File Card 3 -->
+                    <div class="file-card">
+                        <div class="fc-preview">
+                            <i data-lucide="image"></i>
+                        </div>
+                        <div class="fc-info">
+                            <span class="fc-name">File3 Name</span>
+                            <button class="fc-menu-btn">
+                                <i data-lucide="more-vertical"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
-                <!-- File Card 2 -->
-                <div class="file-card">
-                    <div class="fc-preview">
-                        <i data-lucide="image"></i>
-                    </div>
-                    <div class="fc-info">
-                        <span class="fc-name">File2 Name</span>
-                        <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
-                        </button>
-                    </div>
-                </div>
-                <!-- File Card 3 -->
-                <div class="file-card">
-                    <div class="fc-preview">
-                        <i data-lucide="image"></i>
-                    </div>
-                    <div class="fc-info">
-                        <span class="fc-name">File3 Name</span>
-                        <button class="fc-menu-btn">
-                            <i data-lucide="more-vertical"></i>
-                        </button>
-                    </div>
-                </div>
-            </div>
-        </section>
-        
+            </section>
+        {% endif %}
 
         <!-- Folders -->
         <section class="folders">

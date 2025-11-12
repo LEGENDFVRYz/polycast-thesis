@@ -28,7 +28,7 @@
         img {
             width: 30px;
             height: 30px;
-            filter: invert(20%) sepia(51%) saturate(5853%) hue-rotate(355deg) brightness(106%) contrast(84%);
+            /* filter: invert(20%) sepia(51%) saturate(5853%) hue-rotate(355deg) brightness(106%) contrast(84%); */
         }
 
         div.forms{

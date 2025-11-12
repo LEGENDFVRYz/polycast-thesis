@@ -47,8 +47,8 @@ admin_status = AdminStatusManager()
 @app.context_processor
 def inject_nav_tabs():
     return dict(nav_tabs={
-        'Gallery': {'url': url_for('gallery_page'), 'endpoints': ['gallery_page', 'session_page', 'folderview_page']},
-        'Stream': {'url': url_for('stream_page'), 'endpoints': ['client_page', 'stream_page']}
+        'Stream': {'url': url_for('stream_page'), 'endpoints': ['client_page', 'stream_page']},
+        'Gallery': {'url': url_for('gallery_page'), 'endpoints': ['gallery_page', 'session_page', 'folderview_page']}
     })
 
 
@@ -367,7 +367,7 @@ def login_page():
             if not admin_status.login(user.username):
                 current_admin_name = admin_status.get_field('admin_name')
                 print(f"[STATUS CHECK] Login failed. Admin '{current_admin_name}' is already logged in.")
-                return render_template("login.html")
+                return render_template("auth/login.html")
             
             # Login was successful
             session["id"] = user.id

@@ -7,117 +7,58 @@
 {% block content %}
     <div class="admin-ctn">
         <div class="admin-wrapper">
-            <h1>Admin Control Panel</h1>
-            <p>Welcome, <strong>{{ session.user }}</strong>!</p>
+            <!-- PAGE TITILE -->
+            <h1 class="page-title">System Configuration</h1>
             <a href="{{ url_for('logout_page') }}">Logout</a>
-
-            {% if current_status == 'HOSTING' %}
-                <a href="{{ url_for('endsession') }}">End Session</a>
-            {% endif %}
             
-            {% with messages = get_flashed_messages(with_categories=true) %}
-                {% if messages %}
-                    <div class="flash-messages">
-                        {% for category, message in messages %}
-                            <div class="flash {{ category }}">{{ message }}</div>
-                        {% endfor %}
-                    </div>
+            <!-- Phase 1 -->
+            <section class="config-card" id="prototype-config">
+                <h2>Prototype Configuration</h2>
+
+                {% if current_status == 'IDLE' %}
+                    <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
+                        <div class="input-group">
+                            <label for="ip-address">PolyCast IP Address</label>
+                            <div class="input-with-button">
+                                <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find...">
+                                <button class="btn btn-secondary" id="scanBtn">Scan</button>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
+                    </form>
                 {% endif %}
-            {% endwith %}
+            </section>
 
-            <hr>
-            
-            <div class="controls">
-                <h3>System Control</h3>
+            <!-- Phase 2 -->
+            <section class="config-card disabled" id="note-config-active">
+                <h2>Note Configuration</h2>
 
-                <!-- Phase 1 -->
-                <div class="phase" id="phase1">
-                    <div class="phase-header">
-                        <h4>Phase 1: Prototype Configuration</h4>
-                        <span class="status-badge" id="badge1">🔒 Locked</span>
-                    </div>
-
-                    {% if current_status == 'IDLE' %}
-                        <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
-                            <!-- SCAN IP -->
-                            <div class="ip-scan">
-                                <label for="esp_ip">PolyCast IP:</label>
-                                <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find..." required>
-                                <button type="button" id="scanBtn">Scan for ESP32</button>
+                {% if current_status == 'CONFIGURED' %}
+                    <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
+                
+                        <div class="input-group">
+                            <label for="folder-name">Folder Name</label>
+                            <div class="input-with-button">
+                                <select id="folder-name">
+                                    </select>
+                                <button class="btn btn-secondary">New</button>
                             </div>
-
-                            <div class="proto-config-confirm">
-                                <button type="submit" 
-                                        {% if current_status != 'IDLE' and current_status != 'CONFIGURED' %} 
-                                            disabled 
-                                        {% endif %}>
-                                    1. Configure Setup
-                                </button>
+                        </div>
+                        
+                        <div class="input-group">
+                            <label for="session-name">Session Name</label>
+                            <div class="input-with-button">
+                                <select id="session-name">
+                                    </select>
+                                <button class="btn btn-secondary">New</button>
                             </div>
-                        </form>
-                    {% endif %}
-                </div>
+                        </div>
+                        
+                        <button class="btn btn-primary btn-full" id="start-stream-btn" disabled>Start Stream</button>
+                    </form>
+                {% endif %}
+            </section>
 
-
-                <!-- Phase 2 -->
-                <div class="phase locked" id="phase2">
-                    <div class="phase-header">
-                        <h4>Phase 2: Note Configuration</h4>
-                        <span class="status-badge locked" id="badge2">🔒 Locked</span>
-                    </div>
-
-                    {% if current_status == 'CONFIGURED' %}
-                        <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
-                            <div class="note-form">
-                                <!-- ComboBox for Gallery Details -->
-                                <div class="combo-container" 
-                                    role="combobox" 
-                                    aria-haspopup="listbox" 
-                                    aria-expanded="false">
-                                    
-                                    <label id="gallery-label" for="gallery-input">Choose a Gallery:</label>
-                                    
-                                    <input type="text" 
-                                        id="gallery-input"
-                                        name="gallery_name"
-                                        role="textbox"
-                                        aria-autocomplete="list"
-                                        aria-controls="gallery-listbox" />
-                                    
-                                    <ul id="gallery-listbox" 
-                                        role="listbox" 
-                                        aria-labelledby="gallery-label" 
-                                        class="hidden">
-                                    </ul>
-                                </div>
-                                <!-- Input for Session Details -->
-                                <div>
-                                    <label id="session-label" for="session-input">Session Name:</label>
-                                    
-                                    <input type="text" 
-                                        id="session-input"
-                                        name="session_name" />
-                                </div>
-                            </div>
-    
-                            <div class="host-config-confirm">
-                                <button type="submit" 
-                                        {% if current_status != 'CONFIGURED' %} 
-                                            disabled 
-                                        {% endif %}>
-                                    2. Start Hosting
-                                </button>
-
-                            </div>
-                        </form>
-                    {% endif %}
-                </div>
-
-
-                <div class="status">
-                    Current Status: <span id="status-text">{{ current_status }}</span>
-                </div>
-            </div>
         </div>
     </div>
 

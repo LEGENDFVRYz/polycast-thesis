@@ -1,146 +1,141 @@
 
 /* === ADMIN CONTROL PANEL STYLES === */
 .admin-ctn {
-    font-family: system-ui, sans-serif;
     display: flex;
-    justify-content: center;
-    margin: 2rem auto;
+    flex-direction: column;
+    /* justify-content: center; */
+    align-items: center;
+    flex: 1;
 
     .admin-wrapper {
-        /* Main Controls Panel */
-        .controls {
-            max-width: 600px;
-            width: 100%;
-            padding: 1.5rem;
-            margin-top: 2em;
-            border: 1px solid #ccc;
-            border-radius: 12px;
-            background: #fafafa;
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        max-width: 550px;
+        gap: 1rem;
 
-            h3 {
-                text-align: center;
-                margin-bottom: 1rem;
+        /* SCOPE DESIGN */
+        h1.page-title {
+            font-size: 1.5rem;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 16px;
+        }
+
+
+        form {
+            margin-top: 1.5rem;
+
+            label {
+                display: block;
+                font-size: 14px;
+                font-weight: 500;
+                color: #495057;
+                margin-bottom: 8px;
             }
-
-            /* === Phase Blocks === */
-            .phase {
-                border-left: 4px solid #007bff;
-                background: #fff;
-                padding: 1rem 1.5rem;
-                margin-bottom: 1.5rem;
-                border-radius: 8px;
-                position: relative;
-
-                &.locked {
-                    opacity: 0.6;
-                    pointer-events: none;
-                }
-
-                .phase-header {
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    margin-bottom: 0.5rem;
-
-                    h4 {
-                        margin: 0;
-                        font-size: 1.1rem;
-                        font-weight: 600;
-                    }
-
-                    .status-badge {
-                        font-size: 0.9rem;
-                        padding: 0.2rem 0.6rem;
-                        border-radius: 8px;
-                        color: #fff;
-
-                        &.done { background: #28a745; }
-                        &.locked { background: #dc3545; }
+    
+            /* --- Buttons --- */
+            .btn {
+                padding: 12px 20px;
+                border: none;
+                border-radius: 6px;
+                font-size: 15px;
+                font-weight: 500;
+                cursor: pointer;
+                font-family: inherit;
+                transition: background-color 0.2s ease, opacity 0.2s ease;
+                
+                &.btn-primary {
+                    background-color: #2E7CF6;
+                    color: white;
+    
+                    &:hover {
+                        background-color: #0b5ed7;
                     }
                 }
 
-                input,
-                button {
-                    padding: 0.5rem;
-                    margin-top: 0.3rem;
+                &.btn-secondary {
+                    background-color: #2E7CF6; // Both buttons are blue in the wireframe
+                    color: white;
+                    padding: 10px 18px; // Slightly smaller to match input height
+                    font-size: 14px;
+    
+                    &:hover {
+                        background-color: #0b5ed7;
+                    }
+                }
+
+                &.btn-full {
                     width: 100%;
-                    border: 1px solid #ccc;
-                    border-radius: 6px;
-                }
-
-                button {
-                    background: #007bff;
-                    color: #fff;
-                    border: none;
-                    margin-top: 0.8rem;
-                    cursor: pointer;
-                    font-weight: 500;
-
-                    &:disabled {
-                        background: #aaa;
-                        cursor: not-allowed;
-                    }
-                }
-            }
-
-            /* Status Text */
-            .status {
-                text-align: center;
-                font-weight: 600;
-                margin-top: 1rem;
-            }
-
-            /* === Combo Box Styles (Phase 2 Form) === */
-            .combo-container {
-                position: relative;
-                width: 300px;
-                margin-top: 1rem;
-
-                #gallery-label {
-                    display: block;
-                    font-weight: 500;
-                    margin-bottom: 4px;
-                }
-
-                #gallery-input {
-                    width: 100%;
-                    padding: 8px 12px;
+                    padding: 14px;
                     font-size: 16px;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    box-sizing: border-box;
                 }
+            }
 
-                #gallery-listbox {
-                    position: absolute;
-                    top: 100%;
-                    left: 0;
-                    right: 0;
-                    max-height: 200px;
-                    overflow-y: auto;
-                    margin: 4px 0 0 0;
-                    padding: 0;
-                    list-style-type: none;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    background-color: #fff;
-                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-                    z-index: 1000;
+            /* --- Inputs / Input + button --- */
+            .input-group {
+                margin-bottom: 1rem;
 
-                    &.hidden {
-                        display: none;
-                    }
-
-                    .combo-option {
-                        padding: 8px 12px;
-                        cursor: pointer;
-
-                        &.highlighted {
-                            background-color: #007bff;
-                            color: #fff;
-                        }
+                input[type='text'] {
+                    width: 100%;
+                    padding: 1rem;
+                    border: 1px solid #d1d5db;
+                    border-radius: 0.5rem;
+                    font-size: 1rem;
+                    font-family: 'Inter', sans-serif;
+    
+                    &:focus {
+                        outline: 2px solid #1a2c47;
+                        border-color: transparent;
                     }
                 }
+    
+                .input-with-button {
+                    display: flex;
+                    gap: 12px;
+    
+                    input,
+                    select {
+                        flex-grow: 1;
+                    }
+    
+                    button {
+                        flex-shrink: 0;
+                        color: #dee2e6;
+                    }
+                }
+            }
+        }
+
+        /* --- Cards & Display --- */
+        .config-card {
+            background-color: #ffffff;
+            border-radius: 8px;
+            padding: 24px 30px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+            border-left: 6px solid #2E7CF6;
+
+            /* Disabled style */
+            &.disabled {
+                background-color: #f8f9fa;
+                border-left-color: #dee2e6;
+                
+                h2 {
+                    color: #adb5bd;
+                    margin-bottom: 0;
+                }
+            }
+
+            /* Success style */
+            &.success {
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+                border-left: 6px solid #198754; 
+            }
+
+            h2 {
+                font-size: 18px;
+                font-weight: 500;
+                color: #343a40;
             }
         }
     }

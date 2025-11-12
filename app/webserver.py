@@ -522,25 +522,36 @@ def register_page():
 
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
-    if request.method == "POST":
-        username = request.form["username"]
-        password = request.form["password"]
-        
-        user = verify_admin(username, password)
-        if user:
-            if not admin_status.login(user.username):
-                current_admin_name = admin_status.get_field('admin_name')
-                print(f"[STATUS CHECK] Login failed. Admin '{current_admin_name}' is already logged in.")
-                return render_template("auth/login.html")
-            
-            # Login was successful
-            session["id"] = user.id
-            session["user"] = user.username
-            return redirect(url_for("admin_page"))
-        else:
-            return "Invalid username or password"
+    error = None
 
-    return render_template("auth/login.html")
+    if request.method == "POST":
+        username = request.form.get("username")
+        password = request.form.get("password")
+
+        # --- Validation ---
+        if not username or not password:
+            error = "Both username and password are required."
+        else:
+            try:
+                user = verify_admin(username, password)
+                if user:
+                    # Check if admin is already logged in
+                    if not admin_status.login(user.username):
+                        current_admin_name = admin_status.get_field('admin_name')
+                        print(f"[STATUS CHECK] Login failed. Admin '{current_admin_name}' is already logged in.")
+                        error = f"Admin '{current_admin_name}' is already logged in."
+                    else:
+                        # Login successful
+                        session["id"] = user.id
+                        session["user"] = user.username
+                        return redirect(url_for("admin_page"))
+                else:
+                    error = "Invalid username or password."
+            except Exception as e:
+                # Catch unexpected errors
+                print(f"Error during login: {e}")  # Log the error
+                error = "An unexpected error occurred. Please try again."
+    return render_template("auth/login.html", error=error)
 
 
 @app.route("/logout")

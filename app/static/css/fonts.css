@@ -1,0 +1,14 @@
+/* --- Font Setup --- */
+@font-face {
+  font-family: 'Poppins-SB';
+  src: url('../fonts/Poppins-SemiBold.ttf') format('truetype');
+  /* font-weight: 400; */
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Poppins-M';
+  src: url('../fonts/Poppins-Medium.ttf') format('truetype');
+  /* font-weight: 500; */
+  font-style: normal;
+}

@@ -1,3 +1,5 @@
+@import url('fonts.css');
+
 /* --- Global Resets & Font --- */
 * {
     box-sizing: border-box;
@@ -7,12 +9,17 @@
 
 html, body {
     height: 100%;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Poppins-SB', sans-serif;
 }
 
 .auth-ctn {
-    font-family: 'Inter', sans-serif;
-    background-color: #1a2c47; 
+    font-family: 'Poppins-SB', sans-serif;
+    background: linear-gradient(
+        90deg,       /* 180deg = top to bottom */
+        #0D1720 0%,   /* start color */
+        #102E4A 50%,  /* middle color */
+        #13263B 100%  /* end color */
+    );
     color: #1a2c47; 
     display: flex;
     justify-content: center;
@@ -32,15 +39,12 @@ html, body {
         flex: 1;
         
         .logo-header {
-            padding: 4rem 2rem 2rem;
+            padding: 3.5rem 2rem 2rem;
             text-align: center;
 
-            h1 {
-                color: #ffffff;
-                font-size: 2.5rem;
-                font-weight: 800;
-                letter-spacing: 2px;
-                opacity: 0.8;
+            img {
+                width: 70%;
+                filter: brightness(0) saturate(100%) invert(53%) sepia(18%) saturate(1036%) hue-rotate(167deg) brightness(92%) contrast(89%) drop-shadow(3px 3px 6px rgba(0, 0, 0, 0.5));
             }
         }
 
@@ -51,8 +55,8 @@ html, body {
             
             .signin-card {
                 background-color: #ffffff;
-                border-radius: 2rem 2rem 0 0;
-                padding: 2.5rem;
+                border-radius: 3.5rem 3.5rem 0 0;
+                padding: 2rem;
                 width: 100%;
                 display: flex;
                 flex-direction: column;
@@ -107,6 +111,7 @@ html, body {
                     }
 
                     .signin-button {
+                        font-family: 'Poppins-SB';
                         background-color: #1a2c47;
                         color: white;
                         padding: 1rem;

@@ -2,15 +2,15 @@
 <!-- Quick Actions -->
 <section class="quick-actions">
     <button class="qa-button active" id="config" data-icon-btn="home">
-        <i data-lucide="home"></i>
-        <span>Config</span>
+        <image src="../static/images/icons/settings1.svg">
+        <span>Config</span> 
     </button>
     <button class="qa-button" data-icon-btn="folder">
-        <i data-lucide="folder"></i>
+        <image src="../static/images/icons/stream3.svg">
         <span>Live</span>
     </button>
     <button class="qa-button" data-icon-btn="favorites">
-        <i data-lucide="heart"></i>
+        <image src="../static/images/icons/playback.svg">
         <span>Playback</span>
     </button>
 </section>
@@ -44,10 +44,10 @@
                 background-color: #f9fafb;
             }
     
-            .lucide {
+            img {
                 width: 24px;
                 height: 24px;
-                color: #6b7280;
+                filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
                 transition: color 0.2s;
             }
         }

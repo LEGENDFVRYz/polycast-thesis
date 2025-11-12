@@ -10,13 +10,33 @@
             <!-- PAGE TITILE -->
             <h1 class="page-title">System Configuration</h1>
             <a href="{{ url_for('logout_page') }}">Logout</a>
+            {% if current_status == 'HOSTING' %}
+                <a href="{{ url_for('endsession') }}">End Session</a>
+            {% endif %}
             
-            <!-- Phase 1 -->
-            <section class="config-card" id="prototype-config">
-                <h2>Prototype Configuration</h2>
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-messages">
+                        {% for category, message in messages %}
+                            <div class="flash {{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
 
+
+            <!-- Phase 1 -->
+            <section 
+                id="prototype-config"
+                class="
+                    config-card
+                    {% if current_status != 'IDLE' %}success{% endif %}
+                "
+            >
+                <h2>Prototype Configuration</h2>
+                
                 {% if current_status == 'IDLE' %}
-                    <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
+                    <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
                         <div class="input-group">
                             <label for="ip-address">PolyCast IP Address</label>
                             <div class="input-with-button">
@@ -30,7 +50,14 @@
             </section>
 
             <!-- Phase 2 -->
-            <section class="config-card disabled" id="note-config-active">
+            <section 
+                id="note-config-active"
+                class="
+                    config-card
+                    {% if current_status in ['IDLE', 'CONFIGURING'] %} disabled{% endif %}
+                    {% if current_status == 'HOSTING' %} success{% endif %}
+                "
+            >
                 <h2>Note Configuration</h2>
 
                 {% if current_status == 'CONFIGURED' %}
@@ -39,22 +66,26 @@
                         <div class="input-group">
                             <label for="folder-name">Folder Name</label>
                             <div class="input-with-button">
-                                <select id="folder-name">
-                                    </select>
-                                <button class="btn btn-secondary">New</button>
+                                <select id="folder-name" name="gallery_name">
+                                    <option value="Folder 1">Folder 1</option>
+                                    <option value="Folder 2">Folder 2</option>
+                                </select>
+                                <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
                             </div>
                         </div>
-                        
+
                         <div class="input-group">
                             <label for="session-name">Session Name</label>
                             <div class="input-with-button">
-                                <select id="session-name">
-                                    </select>
-                                <button class="btn btn-secondary">New</button>
+                                <select id="session-name" name="session_name">
+                                    <option value="Session A">Session A</option>
+                                    <option value="Session B">Session B</option>
+                                </select>
+                                <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
                             </div>
                         </div>
                         
-                        <button class="btn btn-primary btn-full" id="start-stream-btn" disabled>Start Stream</button>
+                        <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
                     </form>
                 {% endif %}
             </section>
@@ -99,184 +130,48 @@
                     })
                     .finally(() => {
                         scanButton.disabled = false;
-                        scanButton.textContent = 'Scan for ESP32';
+                        scanButton.textContent = 'Scan';
                     });
             });
         });
     </script>
 
-    <!-- COMBO BOX SCRIPT -->
+    <!-- SIMPLIFIED COMBO BOX SCRIPT -->
     <script>
-        // Data that would come from your Flask backend
-        const ALL_OPTIONS = {{ gallery_data | safe }};
+        document.querySelectorAll('.toggle-input').forEach(button => {
+            button.addEventListener('click', () => {
 
-        // --- 1. Get DOM Elements ---
-        const comboContainer = document.querySelector('.combo-container');
-        const input = document.getElementById('gallery-input');
-        const listbox = document.getElementById('gallery-listbox');
+                const targetId = button.getAttribute('data-target');
+                const container = button.parentElement;
+                let currentElement = container.querySelector(`#${targetId}`);
 
-        let highlightedIndex = -1; // No option highlighted by default
+                if (currentElement.tagName.toLowerCase() === 'select') {
+                    // Convert <select> to <input>
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.id = targetId;
+                    input.name = currentElement.name;
+                    input.className = currentElement.className;
+                    input.placeholder = 'Enter new value...';
+                    container.replaceChild(input, currentElement);
+                    button.textContent = 'Cancel';
+                } else {
+                    // Convert <input> back to <select>
+                    const select = document.createElement('select');
+                    select.id = targetId;
+                    select.name = currentElement.name;
+                    select.className = currentElement.className;
 
-        // --- 2. Core Functions ---
+                    // Optionally, restore original options (could come from your backend)
+                    const option = document.createElement('option');
+                    option.value = '';
+                    option.textContent = '-- Select an option --';
+                    select.appendChild(option);
 
-        /**
-        * Filters and displays the options list based on the input value.
-        */
-        function filterAndShowOptions() {
-            const filter = input.value.toLowerCase();
-            
-            // Get matching options
-            const filteredOptions = ALL_OPTIONS.filter(option => 
-                option.toLowerCase().includes(filter)
-            );
-
-            listbox.innerHTML = ''; // Clear old options
-            
-            if (filteredOptions.length === 0) {
-                hideListbox();
-                return;
-            }
-
-            // Create and add new option elements
-            filteredOptions.forEach((option, index) => {
-                const li = document.createElement('li');
-                li.className = 'combo-option';
-                li.role = 'option';
-                li.id = `option-${index}`; // Unique ID for aria-activedescendant
-                li.textContent = option;
-                
-                // Mouse click event
-                li.addEventListener('mousedown', (e) => {
-                    // 'mousedown' fires before 'blur' on the input
-                    e.preventDefault(); 
-                    selectOption(option);
-                });
-                
-                listbox.appendChild(li);
-            });
-            
-            showListbox();
-        }
-
-        /**
-        * Selects an option, sets the input value, and closes the list.
-        */
-        function selectOption(option) {
-            input.value = option;
-            hideListbox();
-        }
-
-        /**
-        * Shows the listbox and updates ARIA attributes.
-        */
-        function showListbox() {
-            listbox.classList.remove('hidden');
-            comboContainer.setAttribute('aria-expanded', 'true');
-        }
-
-        /**
-        * Hides the listbox and resets ARIA/highlighting.
-        */
-        function hideListbox() {
-            listbox.classList.add('hidden');
-            comboContainer.setAttribute('aria-expanded', 'false');
-            highlightedIndex = -1;
-            input.removeAttribute('aria-activedescendant');
-        }
-
-        /**
-        * Highlights an option in the list using the keyboard.
-        */
-        function highlightOption(index) {
-            const options = listbox.querySelectorAll('.combo-option');
-            
-            // Remove previous highlight
-            const prevOption = listbox.querySelector('.highlighted');
-            if (prevOption) prevOption.classList.remove('highlighted');
-            
-            // Set new highlight
-            const newOption = options[index];
-            if (newOption) {
-                newOption.classList.add('highlighted');
-                
-                // Tell screen reader which option is active
-                input.setAttribute('aria-activedescendant', newOption.id);
-                
-                // Scroll the list to make the option visible
-                newOption.scrollIntoView({ block: 'nearest' });
-                
-                highlightedIndex = index;
-            }
-        }
-
-
-        // --- 3. Event Listeners ---
-
-        // Show all options on click/focus
-        input.addEventListener('focus', filterAndShowOptions);
-        input.addEventListener('click', filterAndShowOptions);
-
-        // Filter as user types
-        input.addEventListener('input', filterAndShowOptions);
-
-        // Hide on click outside
-        document.addEventListener('click', (e) => {
-            if (!comboContainer.contains(e.target)) {
-                hideListbox();
-            }
-        });
-
-        // CRITICAL: Keyboard Navigation
-        input.addEventListener('keydown', (e) => {
-            const options = listbox.querySelectorAll('.combo-option');
-            if (listbox.classList.contains('hidden')) {
-                // If list is hidden and user presses Down, show it
-                if (e.key === 'ArrowDown' && options.length > 0) {
-                    e.preventDefault();
-                    showListbox();
-                    highlightOption(0);
+                    container.replaceChild(select, currentElement);
+                    button.textContent = 'New';
                 }
-                return;
-            }
-
-            switch (e.key) {
-                case 'ArrowDown':
-                    e.preventDefault(); // Stop cursor from moving in input
-                    if (highlightedIndex < options.length - 1) {
-                        highlightOption(highlightedIndex + 1);
-                    }
-                    break;
-                    
-                case 'ArrowUp':
-                    e.preventDefault(); // Stop cursor from moving in input
-                    if (highlightedIndex > 0) {
-                        highlightOption(highlightedIndex - 1);
-                    }
-                    break;
-                    
-                case 'Enter':
-                    e.preventDefault();
-                    if (highlightedIndex > -1) {
-                        selectOption(options[highlightedIndex].textContent);
-                    }
-                    break;
-                    
-                case 'Escape':
-                    e.preventDefault();
-                    hideListbox();
-                    break;
-            }
+            });
         });
-    </script>
-
-    <!-- UI HANDLER -->
-    <script>
-        const status = "{{ current_status }}";  // from Flask
-
-        const phase2 = document.getElementById('phase2');
-
-        if (status === 'CONFIGURED') {
-            phase2.classList.remove('locked');
-        }
     </script>
 {% endblock %}

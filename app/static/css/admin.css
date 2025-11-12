@@ -76,13 +76,15 @@
             .input-group {
                 margin-bottom: 1rem;
 
-                input[type='text'] {
+                input[type='text'],
+                select {
                     width: 100%;
                     padding: 1rem;
                     border: 1px solid #d1d5db;
                     border-radius: 0.5rem;
                     font-size: 1rem;
                     font-family: 'Inter', sans-serif;
+                    color: #343a40;
     
                     &:focus {
                         outline: 2px solid #1a2c47;

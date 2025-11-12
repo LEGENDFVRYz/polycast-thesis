@@ -58,7 +58,9 @@
                                 <label for="ip-address">PolyCast IP Address</label>
                                 <div class="input-with-button">
                                     <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find...">
-                                    <button class="btn btn-secondary" id="scanBtn">Scan</button>
+                                    <button type="button" class="btn btn-secondary" id="scanBtn">
+                                        <img id="scanIcon" src="{{ url_for('static', filename='images/icons/scan1.svg') }}" alt="Scan" width=21>
+                                    </button>
                                 </div>
                             </div>
                             <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
@@ -191,47 +193,53 @@
     
 
     <!-- ESP SCANNER SCRIPT -->
-    <script>
-        document.addEventListener('DOMContentLoaded', (event) => {
-            
-            const scanButton = document.getElementById('scanBtn');
-            const ipInput = document.getElementById('esp_ip');
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const scanIcon = document.getElementById('scanIcon');
+    const ipInput = document.getElementById('esp_ip');
 
-            scanButton.addEventListener('click', function() {
-                
-                // Initial Feedback
-                scanButton.disabled = true;
-                scanButton.textContent = 'Scanning...';
-                ipInput.placeholder = 'Scanning for broadcast...';
-                ipInput.value = ''; // Clear any old value
+    scanIcon.addEventListener('click', function() {
+        // Disable click while scanning
+        scanIcon.style.pointerEvents = 'none';
 
-                // API Call: Prototype Scanner
-                fetch("{{ url_for('scan_for_ip_route') }}")
-                    .then(response => {
-                        if (!response.ok) {
-                            return response.json().then(err => {
-                                throw new Error(err.message || 'Scan failed');
-                            });
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        if (data.success) {
-                            ipInput.value = data.ip; 
-                            ipInput.placeholder = 'IP Found!';
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Fetch error:', error);
-                        ipInput.placeholder = error.message;
-                    })
-                    .finally(() => {
-                        scanButton.disabled = false;
-                        scanButton.textContent = 'Scan';
+        // Toggle image to scanning state
+        scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
+        ipInput.placeholder = 'Scanning for broadcast...';
+        ipInput.value = ''; // Clear old value
+
+        // API Call
+        fetch("{{ url_for('scan_for_ip_route') }}")
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => { 
+                        throw new Error(err.message || 'Scan failed'); 
                     });
+                }
+                return response.json();
+            })
+            .then(data => {
+                if (data.success) {
+                    ipInput.value = data.ip;
+                    ipInput.placeholder = 'IP Found!';
+                } else {
+                    ipInput.placeholder = 'No IP found';
+                }
+            })
+            .catch(error => {
+                console.error('Fetch error:', error);
+                ipInput.placeholder = error.message;
+            })
+            .finally(() => {
+                // Re-enable click and reset image
+                scanIcon.style.pointerEvents = 'auto';
+                scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
             });
-        });
-    </script>
+    });
+});
+</script>
+
+
+
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
     <script>

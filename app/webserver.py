@@ -258,6 +258,8 @@ def endsession():
     return redirect(url_for('admin_page'))
 
 
+
+
 # ADMIN CRUD OPERATIONS:
 @app.route("/gallery/<int:gallery_id>/delete", methods=['POST'])
 def delete_gallery(gallery_id):
@@ -350,6 +352,54 @@ def delete_session(session_id):
     # 4. Redirect back to the page the user was on
     # request.referrer is the URL they just came from (the session list)
     return redirect(request.referrer or url_for('admin_page'))
+
+@app.route("/session/<int:session_id>/update", methods=['POST'])
+def update_session_name(session_id):
+    # 1. Check if user is logged in
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+
+    current_user_id = session['id']
+    
+    # 2. Find the session or return 404
+    session_to_update = Session.query.get_or_404(session_id)
+
+    # 3. SECURITY CHECK: Ensure the session's gallery belongs to the current user
+    if session_to_update.gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    # 4. Get the new name from the form
+    new_name = request.form.get('session_name')
+
+    # 5. Validate the new name
+    if not new_name or len(new_name.strip()) == 0:
+        flash('A session name is required.', 'error')
+        return redirect(request.referrer) # Redirect to the page they were on
+    
+    new_name = new_name.strip()
+
+    # 6. Check if a session with that name already exists *in this gallery*
+    existing = Session.query.filter_by(
+        name=new_name, 
+        gallery_id=session_to_update.gallery_id
+    ).first()
+    
+    if existing and existing.id != session_id:
+         flash('A session with this name already exists in this gallery.', 'error')
+         return redirect(request.referrer)
+
+    # 7. Update the database
+    try:
+        session_to_update.name = new_name
+        db.session.commit()
+        flash('Session name updated successfully.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred: {e}', 'danger')
+
+    # Redirect back to the session list page
+    return redirect(request.referrer or url_for('admin_page'))
+
 
 
 

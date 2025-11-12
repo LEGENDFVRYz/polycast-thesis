@@ -15,7 +15,7 @@ from app.services.auth_service import register_admin, verify_admin
 from app.services.admin_status import AdminStatusManager
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-from image_processing import generate_frames, enable_archiving, disable_archiving
+# from image_processing import generate_frames, enable_archiving, disable_archiving
 from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
 from background.image_generator import Archiver
@@ -64,22 +64,18 @@ def admin_page():
     if "user" not in session:
         return redirect(url_for("login_page"))
     
-    # FETCH GALLERY DATA
+    # FETCH ADMIN
     current_admin = Admin.query.get(session["id"])
+    
+    # FETCH THE LIST OF *GALLERY OBJECTS*
     admin_galleries = current_admin.gallery
-    
-    # gallery_data = [g.to_dict() for g in admin_galleries]   # ORM -> List(Dict())
-    # gallery_json = json.dumps(gallery_data)
-    
-    gallery_list = [g.get_gallery_name() for g in admin_galleries]
-    
-    print(gallery_list)
+    gallery_list_for_json = [g.to_dict() for g in admin_galleries]
     
     return render_template(
         "admin.html", 
         ws_port=BROWSER_WS_PORT,
-        current_status=admin_status.get_field("status"),      # Pass status to template
-        gallery_data=gallery_list
+        current_status=admin_status.get_field("status"), 
+        gallery_data=gallery_list_for_json 
     )
 
 # Admin Configurantion:
@@ -234,7 +230,8 @@ def endsession():
             hosting_active=False
         )
         
-        archiver_manager.stop()
+        # FOR NOW, CLOSEE
+        # archiver_manager.stop()
         
         print("[ADMIN] Admin End the session, status reset.")
         
@@ -242,6 +239,31 @@ def endsession():
         print(f"Error stopping thread: {e}")
     
     return redirect(url_for('admin_page'))
+
+
+# ADMIN CRUD OPERATIONS:
+@app.route("/gallery/<int:gallery_id>/delete", methods=['POST'])
+def delete_gallery(gallery_id):
+    current_user_id = session['id']
+    
+    # Find the specific gallery or return a 404 error
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # SECURITY CHECK: Ensure the gallery belongs to the current user
+    if gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    try:
+        # The 'cascade' option in your model will handle deleting child 'sessions'
+        db.session.delete(gallery)
+        db.session.commit()
+        flash('Gallery and all its sessions have been deleted.', 'success')
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred while deleting: {e}', 'danger')
+
+    return redirect(url_for('admin_page'))
+
 
 
 @app.route("/client")
@@ -383,6 +405,8 @@ def login_page():
 
 @app.route("/logout")
 def logout_page():
+    global archiver_manager
+    
     session.pop("user", None)
     session.pop("id", None)
     
@@ -394,8 +418,7 @@ def logout_page():
     
     print("[ADMIN] Admin logged out, status reset.")
     
-    disable_archiving()
-    archiver_manager.stop()
+    # archiver_manager.stop()
     
     return redirect(url_for("login_page"))
 

@@ -18,7 +18,7 @@
                 <h1 class="page-title">System Configuration</h1>
             {% endif %}
 
-            <!-- <a href="{{ url_for('logout_page') }}">Logout</a> -->
+            <a href="{{ url_for('logout_page') }}">Logout</a> 
 
             {% with messages = get_flashed_messages(with_categories=true) %}
                 {% if messages %}
@@ -82,8 +82,8 @@
                                 <div class="input-with-button">
                                     <select id="folder-name" name="gallery_name">
                                         <option value="">-- No Gallery Yet --</option>
-                                        {% for name in gallery_data %}
-                                            <option value="{{ name }}">{{ name }}</option>
+                                        {% for g in gallery_data %}
+                                            <option value="{{ name }}">{{ g.name }}</option>
                                         {% endfor %}
                                     </select>
                                     <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
@@ -114,40 +114,38 @@
                     <h2 class="section-title">Manage:</h2>
 
                     <div class="folder-list">
-                        <!-- Loop through all available folders -->
                         {% if gallery_data %}  
                             {% for gallery in gallery_data %}
                                 <div class="folder-item">
                                     <div class="item-icon">
-                                        <!-- Use a custom filled-in folder icon -->
-                                        <svg class="lucide lucide-folder" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="fill: #111827; color: #111827;">
-                                            <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"></path>
-                                        </svg>
+                                        <svg class="lucide lucide-folder" ... >
+                                            </svg>
                                     </div>
                                     <div class="item-info">
-                                        <h3 class="item-title">{{ gallery }}</h3>
+                                        <h3 class="item-title">{{ gallery.name }}</h3>
                                         <p class="item-subtitle">BSCPE 4-3</p>
                                     </div>
                                     <div class="item-menu">
-                                        <!-- MODIFY BUTTON -->
                                         <a href="#">
                                             <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Pen Icon" width="21" height="21">
                                         </a>
-                                        <!-- DELETE BUTTON -->
-                                        <a href="#">
-                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
-                                        </a>
+                                        
+                                        <form method="POST" 
+                                            action="{{ url_for('delete_gallery', gallery_id=gallery.id) }}" 
+                                            onsubmit="return confirm('Are you sure you want to delete this gallery? This will also delete all associated sessions.');">
+                                            
+                                            <button type="submit" class="icon-button">
+                                                <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
+                                            </button>
+                                        </form>
                                     </div>
                                 </div>
-
                             {% endfor %}
                         {% else %}
                             <p>No gallery folders found!</p>
                         {% endif %}
-
                     </div>
                 </section>
-
             {% endif %}
         </div>
     </div>
@@ -197,7 +195,6 @@
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
     <script>
-        // Gallery options passed from Flask
         const GALLERY_OPTIONS = {{ gallery_data | tojson }};
 
         document.querySelectorAll('.toggle-input').forEach(button => {
@@ -235,12 +232,17 @@
 
                 // ✅ Populate only for folder-name
                 if (targetId === 'folder-name' && Array.isArray(GALLERY_OPTIONS)) {
-                    GALLERY_OPTIONS.forEach(name => {
+                    
+                    // --- ADJUSTMENT HERE ---
+                    // Instead of 'name', we now iterate over 'gallery' objects
+                    GALLERY_OPTIONS.forEach(gallery => {
                         const opt = document.createElement('option');
-                        opt.value = name;
-                        opt.textContent = name;
+                        // Get the name property from the gallery object
+                        opt.value = gallery.name;
+                        opt.textContent = gallery.name; 
                         select.appendChild(opt);
                     });
+                    // --- END OF ADJUSTMENT ---
                 }
 
                 container.replaceChild(select, currentElement);

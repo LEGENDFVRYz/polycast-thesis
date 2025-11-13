@@ -106,9 +106,17 @@
                                     <h3 class="item-title">{{ folder }}</h3>
                                     <p class="item-subtitle">BSCPE 4-3</p>
                                 </div>
-                                <button class="item-menu">
-                                    <image src="../static/images/icons/dots.svg">
+
+                                <!-- This still exist for clients so it should be hidden for all non-admin users -->
+                                <!-- Still no button actions -->
+                                <button type="button" class="icon-button edit-session-btn">
+                                    <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
                                 </button>
+
+                                <button type="button" class="icon-button delete-session-btn">
+                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
+                                </button>
+
                             </div>
                         </a>
                     {% endfor %}
@@ -121,7 +129,6 @@
     </div>
 
     <script>
-        lucide.createIcons();
 
         document.addEventListener('DOMContentLoaded', () => {
             // --- Quick Actions Button Navigation ---

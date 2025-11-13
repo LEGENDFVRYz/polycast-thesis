@@ -11,14 +11,38 @@
     <div class="session-wrap gallery-scope">
 
         <!-- Session Identifier -->
-        <div class="folder-header">
-            <div class="card-content">
-                <div class="icon-container">
-                    <div class="circle"></div>
-                </div>
-                <div class="info-container">
+        <div class="folder-container">
+            <div class="folder-header">
+                <div class="folder-name">
+                    <a href="{{ url_for('gallery_page') }}" class="icon-button back-button">
+                        <image class="back-icon" src="../../static/images/icons/arrow-right.svg">
+                    </a>
+                    <image class="folder-icon" src="../../static/images/icons/folder1.svg"/>
                     <p class="title">{{ selected_gallery }}</p>
-                    <p class="subtitle">BSCpE 4-3</p>
+                </div>
+                <a href="#" class="details-link" id="detailsToggle">
+                    <image class="info-icon" src="../../static/images/icons/information.svg"/>
+                </a>
+            </div>
+            
+            <div class="card-content">
+                <div class="folder-details">
+                    <div class="specifics">
+                        <p class="detail-label">CYS</p>
+                        <p class="detail-value">BSCPE 4-3</p>
+                    </div>
+                    <div class="specifics">
+                        <p class="detail-label">Modified on</p>
+                        <p class="detail-value">November XX, 20XX</p>
+                    </div>
+                    <div class="specifics">
+                        <p class="detail-label">Created on</p>
+                        <p class="detail-value">November XX, 20XX</p>
+                    </div>
+                    <div class="specifics">
+                        <p class="detail-label">Description</p>
+                        <input class="detail-value" placeholder="Add a description"/>
+                    </div>
                 </div>
             </div>
 
@@ -27,16 +51,12 @@
                 <p><strong>Section:</strong> BSCpE 4-3</p>
                 <p><strong>Professor:</strong> Dr. A. Smith</p>
             </div> -->
-
-            <div class="details-container">
-                <a href="#" class="details-link" id="detailsToggle">Folder Details?</a>
-            </div>
         </div>
 
 
         <!-- Session Folders -->
         <section class="folders">
-            <h2 class="section-title">Session ({{ sessions|length }}):</h2>
+            <h2 class="section-title">Sessions ({{ sessions|length }}):</h2>
             <div class="folder-list">
                 
                 <!-- Loop through all available folders -->
@@ -60,13 +80,13 @@
                                         data-modal-target="#editSessionModal"
                                         data-session-id="{{ session.id }}"
                                         data-session-name="{{ session.name }}">
-                                    <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Edit Icon" width="21" height="21">
+                                    <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
                                 </button>
 
                                 <button type="button" class="icon-button delete-session-btn"
                                         data-modal-target="#deleteSessionModal"
                                         data-delete-url="{{ url_for('delete_session', session_id=session.id) }}">
-                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
+                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
                                 </button>
                             {% endif %}
                         </div>
@@ -80,7 +100,7 @@
     </div>
 
     <!-- Delete Modal -->
-    {% call modal_shell(modal_id='deleteSessionModal', modal_title='Confirm Session Deletion') %}
+    {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
         
         <p>Are you sure you want to move this session to the recycle bin?</p>
         
@@ -94,7 +114,7 @@
     {% endcall %}
     
     <!-- Update Modal -->
-    {% call modal_shell(modal_id='editSessionModal', modal_title='Edit Session Name') %}
+    {% call modal_shell(modal_id='editSessionModal', modal_title='EDIT SESSION NAME') %}
         
         <form id="editSessionForm" method="POST" action=""> 
             <div class="form-group">
@@ -115,7 +135,6 @@
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
     <script>
-        lucide.createIcons();
 
         document.addEventListener('DOMContentLoaded', function() {
 
@@ -154,6 +173,15 @@
             });
 
         });
+
+        document.addEventListener('DOMContentLoaded', function() {
+        const toggleButton = document.getElementById('detailsToggle');
+        const cardContent = document.querySelector('.card-content'); 
+        toggleButton.addEventListener('click', function(event) {
+            event.preventDefault(); 
+            cardContent.classList.toggle('hidden');
+        });
+    });
     </script>
 
 {% endblock %}

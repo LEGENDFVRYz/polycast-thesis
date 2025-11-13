@@ -43,7 +43,6 @@
             label {
                 display: block;
                 font-size: 14px;
-                font-weight: 500;
                 color: #102E4A;
                 margin-bottom: 8px;
             }
@@ -54,7 +53,6 @@
                 border: none;
                 border-radius: 6px;
                 font-size: 15px;
-                font-weight: 500;
                 cursor: pointer;
                 font-family: inherit;
                 transition: background-color 0.2s ease, opacity 0.2s ease;
@@ -175,7 +173,6 @@
 
             h2 {
                 font-size: 18px;
-                font-weight: 500;
                 color: #102E4A;
             }
 

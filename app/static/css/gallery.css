@@ -15,17 +15,21 @@
             align-items: center;
             justify-content: center;
             gap: 0.25rem;
+
             padding: 1rem 0.5rem;
             background-color: #ffffff;
-            border: 2px solid #e5e7eb;
+            border: 1px solid #000425;
             border-radius: 1rem;
+
+            font-family: 'Inter';
             font-size: 0.875rem;
-            font-weight: 600;
-            color: #4b5563;
+            font-weight: 500;
             cursor: pointer;
-            transition: all 0.2s ease-in-out;
             box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-    
+
+            color: inherit;        
+            text-decoration: none; 
+
             &:hover {
                 background-color: #DBEEFF;
             }
@@ -39,9 +43,8 @@
         }
     
         .qa-button.active {
-            background-color: #E5F0FF;
-            border-color: #2E7CF6;
-            color: #102E4A;
+            background-color: #DBEEFF;
+            border: none;
             /* box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.25); */
     
             /* .lucide {

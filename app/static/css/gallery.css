@@ -55,16 +55,17 @@
 
     /* --- Folders List --- */
     .folders {
-        margin-bottom: 2rem;
+        /* margin-bottom: 2rem; */
 
         .section-title {
             color: #0D1720;
         }
 
         .folder-list {
-            display: grid;
-            gap: 0.75rem;
-
+            display: flex;           
+            flex-direction: column;  
+            gap: 0.75rem;           
+            
             a {
                 all: unset;      /* Resets all inherited and non-inherited properties */
                 display: inline; /* Reset display if needed */

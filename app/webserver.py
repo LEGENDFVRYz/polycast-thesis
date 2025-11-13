@@ -619,7 +619,7 @@ def logout_page():
     global archiver_manager
     
     if not is_current_user_admin(admin_status):
-        flash("You must be admin to view this page", "error")
+        flash("Permission Denied", "error")
         return redirect(request.referrer) 
     
     session.pop("user", None)

@@ -37,12 +37,15 @@
 
     <!-- Navigation Tabs -->
     <nav class="app-navigation">
-        {% for tab_name, tab_data in nav_tabs.items() %}
-            <a class="app-tab {% if request.endpoint in tab_data.endpoints %}active{% endif %}"
-            href="{{ tab_data.url }}">
-                {{ tab_name }}
+            <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
+               href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
+                Stream
             </a>
-        {% endfor %}
+
+            <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
+               href="{{ url_for('gallery_page') }}">
+                Gallery
+            </a>
     </nav>
 
     {% with messages = get_flashed_messages(with_categories=true) %}

@@ -45,11 +45,15 @@ admin_status = AdminStatusManager()
 
 # GLOBAL VARIABLES
 @app.context_processor
-def inject_nav_tabs():
-    return dict(nav_tabs={
-        'Stream': {'url': url_for('stream_page'), 'endpoints': ['client_page', 'stream_page', 'admin_page']},
-        'Gallery': {'url': url_for('gallery_page'), 'endpoints': ['gallery_page', 'session_page', 'folderview_page']}
-    })
+def check_if_login_admin():
+    
+    admin_name = admin_status.get_field('admin_name') if admin_status else None
+    current_user = session.get("user")
+
+    # Compare
+    is_admin = (admin_name is not None and current_user == admin_name)
+
+    return dict(is_admin=is_admin)
 
 
 @app.route("/")

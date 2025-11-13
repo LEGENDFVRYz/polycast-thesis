@@ -131,8 +131,7 @@ def draw_segment(x0, y0, x1, y1, p):
     px0, py0 = logical_to_pixel(x0, y0)
     px1, py1 = logical_to_pixel(x1, y1)
     width_px = max(1, int(p * AVG_SCALE * STROKE_FACTOR))
-    with image_lock: # Make sure drawing is thread-safe
-        draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
+    draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
 
 def generate_frames():
     """Generate MJPEG frames for streaming."""

@@ -15,10 +15,10 @@ from app.services.auth_service import register_admin, verify_admin
 from app.services.admin_status import AdminStatusManager
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 
-from image_processing import generate_frames, enable_archiving, disable_archiving
+# from image_processing import generate_frames, enable_archiving, disable_archiving
 from config import BROWSER_WS_PORT, prototype_config
 from background.prototype_manager import PrototypeManager
-from background.image_generator import Archiver
+from background.image_generator import Archiver, generate_frames
 
 
 # ---------------------------------------------------------------------

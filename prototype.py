@@ -1,7 +1,7 @@
 import time, json, struct, websocket
 from config import prototype_config, CONN_LOG, ERROR_LOG
 from app.utils.utils import log_message
-from image_processing import draw_segment, image_lock
+from background.image_generator import draw_segment, image_lock
 from websocket_server import WebsocketServer
 
 last_point = None

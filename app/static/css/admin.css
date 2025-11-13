@@ -61,7 +61,7 @@
                 transition: background-color 0.2s ease, opacity 0.2s ease;
                 
                 &.btn-primary {
-                    background-color: #2E7CF6;
+                    background-color: #0084FF;
                     color: white;
     
                     &:hover {
@@ -72,8 +72,20 @@
                 &.btn-secondary {
                     background-color: #2E7CF6;
                     color: white;
-                    padding: 10px 18px;
+                    /* padding: 10px 18px; */
                     font-size: 14px;
+
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+
+                    width: 4em;
+                    aspect-ratio: 1 / 1;
+                    
+                    img {
+                        width: 2em;
+                        height: 2em;
+                    }
     
                     &:hover {
                         background-color: #0b5ed7;
@@ -139,10 +151,11 @@
         /* --- Cards & Display --- */
         .config-card {
             background-color: #FFFFFF;
-            border-radius: 8px;
             padding: 24px 30px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+            /* box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); */
+            border-radius: 8px;
             border-left: 8px solid #2E7CF6;
+            border: px solid #ABBAD3;
 
             /* Disabled style */
             &.disabled {
@@ -157,14 +170,21 @@
 
             /* Success style */
             &.success {
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
-                border-left: 6px solid #198754; 
+                /* box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); */
+                border-left: 0.5em solid #22BC31; 
             }
 
             h2 {
                 font-size: 18px;
                 font-weight: 500;
                 color: #102E4A;
+            }
+
+            p {
+                font-family: 'Inter';
+                font-weight: 400;
+                padding-top: 0.5em;
+                padding-bottom: 0;
             }
         }
 

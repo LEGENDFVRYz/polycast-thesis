@@ -54,6 +54,11 @@
                             <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
                         </form>
                     {% endif %}
+
+                    <!-- Phase 1: After Successful connection -->
+                    {%if current_status in ['CONFIGURED', 'HOSTING'] %}
+                        <p>Connected: {{prototype_ip}}</p>
+                    {% endif %}
                 </section>
                 
                 <!-- Phase 2 -->
@@ -69,28 +74,32 @@
     
                     {% if current_status == 'CONFIGURED' %}
                         <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
-                    
-<div class="input-group">
-    <label for="folder-name">Folder Name</label>
-    <div class="input-with-button">
-        <select id="folder-name" name="gallery_name">
-            {% for g in gallery_data %}
-                <option value="{{ g.name }}">{{ g.name }}</option>
-            {% endfor %}
-        </select>
-        <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
-    </div>
-</div>
+                            
+                            <div class="input-group">
+                                <label for="folder-name">Folder Name</label>
+                                <div class="input-with-button">
+                                    <select id="folder-name" name="gallery_name">
+                                        {% for g in gallery_data %}
+                                            <option value="{{ g.name }}">{{ g.name }}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">
+                                        <img id="g-input-icon" src="{{ url_for('static', filename='images/icons/plus.svg') }}" alt="Scan" width=21>
+                                    </button>
+                                </div>
+                            </div>
 
-<div class="input-group">
-    <label for="session-name">Session Name</label>
-    <div class="input-with-button">
-        <select id="session-name" name="session_name">
-            <!-- <option value="">-- Select a Session --</option> -->
-        </select>
-        <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
-    </div>
-</div>
+                            <div class="input-group">
+                                <label for="session-name">Session Name</label>
+                                <div class="input-with-button">
+                                    <select id="session-name" name="session_name">
+                                        <!-- <option value="">-- Select a Session --</option> -->
+                                    </select>
+                                    <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">
+                                        <img id="s-input-icon" src="{{ url_for('static', filename='images/icons/plus.svg') }}" alt="Scan" width=21>
+                                    </button>
+                                </div>
+                            </div>
                             
                             <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
                         </form>
@@ -178,53 +187,50 @@
     
 
     <!-- ESP SCANNER SCRIPT -->
-<script>
-document.addEventListener('DOMContentLoaded', () => {
-    const scanIcon = document.getElementById('scanIcon');
-    const ipInput = document.getElementById('esp_ip');
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+        const scanIcon = document.getElementById('scanIcon');
+        const ipInput = document.getElementById('esp_ip');
 
-    scanIcon.addEventListener('click', function() {
-        // Disable click while scanning
-        scanIcon.style.pointerEvents = 'none';
+        scanIcon.addEventListener('click', function() {
+            // Disable click while scanning
+            scanIcon.style.pointerEvents = 'none';
 
-        // Toggle image to scanning state
-        scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
-        ipInput.placeholder = 'Scanning for broadcast...';
-        ipInput.value = ''; // Clear old value
+            // Toggle image to scanning state
+            scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
+            ipInput.placeholder = 'Scanning for broadcast...';
+            ipInput.value = ''; // Clear old value
 
-        // API Call
-        fetch("{{ url_for('scan_for_ip_route') }}")
-            .then(response => {
-                if (!response.ok) {
-                    return response.json().then(err => { 
-                        throw new Error(err.message || 'Scan failed'); 
-                    });
-                }
-                return response.json();
-            })
-            .then(data => {
-                if (data.success) {
-                    ipInput.value = data.ip;
-                    ipInput.placeholder = 'IP Found!';
-                } else {
-                    ipInput.placeholder = 'No IP found';
-                }
-            })
-            .catch(error => {
-                console.error('Fetch error:', error);
-                ipInput.placeholder = error.message;
-            })
-            .finally(() => {
-                // Re-enable click and reset image
-                scanIcon.style.pointerEvents = 'auto';
-                scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
-            });
+            // API Call
+            fetch("{{ url_for('scan_for_ip_route') }}")
+                .then(response => {
+                    if (!response.ok) {
+                        return response.json().then(err => { 
+                            throw new Error(err.message || 'Scan failed'); 
+                        });
+                    }
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.success) {
+                        ipInput.value = data.ip;
+                        ipInput.placeholder = 'IP Found!';
+                    } else {
+                        ipInput.placeholder = 'No IP found';
+                    }
+                })
+                .catch(error => {
+                    console.error('Fetch error:', error);
+                    ipInput.placeholder = error.message;
+                })
+                .finally(() => {
+                    // Re-enable click and reset image
+                    scanIcon.style.pointerEvents = 'auto';
+                    scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
+                });
+        });
     });
-});
-</script>
-
-
-
+    </script>
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
     <script>
@@ -237,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 const targetId = button.getAttribute('data-target');
                 const container = button.parentElement;
                 const currentElement = container.querySelector(`#${targetId}`);
+                const icon = button.querySelector('img'); // get the icon inside the clicked button
 
                 // --- Toggle select → input ---
                 if (currentElement.tagName.toLowerCase() === 'select') {
@@ -245,9 +252,14 @@ document.addEventListener('DOMContentLoaded', () => {
                     input.id = targetId;
                     input.name = currentElement.name;
                     input.className = currentElement.className;
-                    input.placeholder = 'Enter new folder name...';
+                    input.placeholder = targetId === 'folder-name' 
+                        ? 'Enter New Gallery Name...' 
+                        : 'Enter New Session Name...';
                     container.replaceChild(input, currentElement);
-                    button.textContent = 'Cancel';
+
+                    // Change icon to "cancel" or "chevron" (toggle)
+                    icon.src = '/static/images/icons/chevron-down.svg';
+                    icon.alt = 'Cancel';
                     return;
                 }
 
@@ -257,32 +269,80 @@ document.addEventListener('DOMContentLoaded', () => {
                 select.name = currentElement.name;
                 select.className = currentElement.className;
 
-                // Add placeholder
+                // Add placeholder option
                 const defaultOption = document.createElement('option');
                 defaultOption.value = '';
-                defaultOption.textContent = '-- Select an option --';
+                defaultOption.textContent = targetId === 'folder-name'
+                    ? 'Select Existing Gallery...'
+                    : 'Select Existing Session...';
                 select.appendChild(defaultOption);
 
-                // ✅ Populate only for folder-name
+                // Populate options for gallery only
                 if (targetId === 'folder-name' && Array.isArray(GALLERY_OPTIONS)) {
-                    
-                    // --- ADJUSTMENT HERE ---
-                    // Instead of 'name', we now iterate over 'gallery' objects
                     GALLERY_OPTIONS.forEach(gallery => {
                         const opt = document.createElement('option');
-                        // Get the name property from the gallery object
                         opt.value = gallery.name;
-                        opt.textContent = gallery.name; 
+                        opt.textContent = gallery.name;
                         select.appendChild(opt);
                     });
-                    // --- END OF ADJUSTMENT ---
                 }
 
                 container.replaceChild(select, currentElement);
-                button.textContent = 'New';
+
+                // Change icon back to "plus"
+                icon.src = '/static/images/icons/plus.svg';
+                icon.alt = 'Add';
             });
         });
     </script>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const folderSelect = document.getElementById("folder-name");
+            const sessionSelect = document.getElementById("session-name");
+
+            async function loadSessions(galleryName) {
+                // Clear old sessions
+                sessionSelect.innerHTML = "";
+
+                try {
+                    const response = await fetch(`/api/gallery/${encodeURIComponent(galleryName)}/sessions`);
+                    const data = await response.json();
+
+                    if (data.sessions && data.sessions.length > 0) {
+                        data.sessions.forEach(s => {
+                            const opt = document.createElement("option");
+                            opt.value = s;
+                            opt.textContent = s;
+                            sessionSelect.appendChild(opt);
+                        });
+                    } else {
+                        const opt = document.createElement("option");
+                        opt.value = "";
+                        opt.textContent = "-- No Sessions Found --";
+                        sessionSelect.appendChild(opt);
+                    }
+                } catch (err) {
+                    console.error("Error fetching sessions:", err);
+                    const opt = document.createElement("option");
+                    opt.value = "";
+                    opt.textContent = "-- Error Loading Sessions --";
+                    sessionSelect.appendChild(opt);
+                }
+            }
+
+            // Initial load (if a gallery is pre-selected)
+            if (folderSelect.value) {
+                loadSessions(folderSelect.value);
+            }
+
+            // Watch for gallery changes
+            folderSelect.addEventListener("change", (e) => {
+                loadSessions(e.target.value);
+            });
+        });
+    </script>
+
 
     <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
@@ -333,53 +393,4 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     </script>
 
-
-
-
-    <script>
-document.addEventListener("DOMContentLoaded", () => {
-    const folderSelect = document.getElementById("folder-name");
-    const sessionSelect = document.getElementById("session-name");
-
-    async function loadSessions(galleryName) {
-        // Clear old sessions
-        sessionSelect.innerHTML = "";
-
-        try {
-            const response = await fetch(`/api/gallery/${encodeURIComponent(galleryName)}/sessions`);
-            const data = await response.json();
-
-            if (data.sessions && data.sessions.length > 0) {
-                data.sessions.forEach(s => {
-                    const opt = document.createElement("option");
-                    opt.value = s;
-                    opt.textContent = s;
-                    sessionSelect.appendChild(opt);
-                });
-            } else {
-                const opt = document.createElement("option");
-                opt.value = "";
-                opt.textContent = "-- No Sessions Found --";
-                sessionSelect.appendChild(opt);
-            }
-        } catch (err) {
-            console.error("Error fetching sessions:", err);
-            const opt = document.createElement("option");
-            opt.value = "";
-            opt.textContent = "-- Error Loading Sessions --";
-            sessionSelect.appendChild(opt);
-        }
-    }
-
-    // Initial load (if a gallery is pre-selected)
-    if (folderSelect.value) {
-        loadSessions(folderSelect.value);
-    }
-
-    // Watch for gallery changes
-    folderSelect.addEventListener("change", (e) => {
-        loadSessions(e.target.value);
-    });
-});
-</script>
 {% endblock %}

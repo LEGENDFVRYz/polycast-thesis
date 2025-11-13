@@ -70,29 +70,27 @@
                     {% if current_status == 'CONFIGURED' %}
                         <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
                     
-                            <div class="input-group">
-                                <label for="folder-name">Folder Name</label>
-                                <div class="input-with-button">
-                                    <select id="folder-name" name="gallery_name">
-                                        <option value="">-- No Gallery Yet --</option>
-                                        {% for g in gallery_data %}
-                                            <option value="{{ g.name }}">{{ g.name }}</option>
-                                        {% endfor %}
-                                    </select>
-                                    <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
-                                </div>
-                            </div>
-    
-                            <div class="input-group">
-                                <label for="session-name">Session Name</label>
-                                <div class="input-with-button">
-                                    <select id="session-name" name="session_name">
-                                        <option value="Session A">Session A</option>
-                                        <option value="Session B">Session B</option>
-                                    </select>
-                                    <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
-                                </div>
-                            </div>
+<div class="input-group">
+    <label for="folder-name">Folder Name</label>
+    <div class="input-with-button">
+        <select id="folder-name" name="gallery_name">
+            {% for g in gallery_data %}
+                <option value="{{ g.name }}">{{ g.name }}</option>
+            {% endfor %}
+        </select>
+        <button type="button" class="btn btn-secondary toggle-input" data-target="folder-name">New</button>
+    </div>
+</div>
+
+<div class="input-group">
+    <label for="session-name">Session Name</label>
+    <div class="input-with-button">
+        <select id="session-name" name="session_name">
+            <!-- <option value="">-- Select a Session --</option> -->
+        </select>
+        <button type="button" class="btn btn-secondary toggle-input" data-target="session-name">New</button>
+    </div>
+</div>
                             
                             <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
                         </form>
@@ -334,4 +332,54 @@ document.addEventListener('DOMContentLoaded', () => {
             });
         });
     </script>
+
+
+
+
+    <script>
+document.addEventListener("DOMContentLoaded", () => {
+    const folderSelect = document.getElementById("folder-name");
+    const sessionSelect = document.getElementById("session-name");
+
+    async function loadSessions(galleryName) {
+        // Clear old sessions
+        sessionSelect.innerHTML = "";
+
+        try {
+            const response = await fetch(`/api/gallery/${encodeURIComponent(galleryName)}/sessions`);
+            const data = await response.json();
+
+            if (data.sessions && data.sessions.length > 0) {
+                data.sessions.forEach(s => {
+                    const opt = document.createElement("option");
+                    opt.value = s;
+                    opt.textContent = s;
+                    sessionSelect.appendChild(opt);
+                });
+            } else {
+                const opt = document.createElement("option");
+                opt.value = "";
+                opt.textContent = "-- No Sessions Found --";
+                sessionSelect.appendChild(opt);
+            }
+        } catch (err) {
+            console.error("Error fetching sessions:", err);
+            const opt = document.createElement("option");
+            opt.value = "";
+            opt.textContent = "-- Error Loading Sessions --";
+            sessionSelect.appendChild(opt);
+        }
+    }
+
+    // Initial load (if a gallery is pre-selected)
+    if (folderSelect.value) {
+        loadSessions(folderSelect.value);
+    }
+
+    // Watch for gallery changes
+    folderSelect.addEventListener("change", (e) => {
+        loadSessions(e.target.value);
+    });
+});
+</script>
 {% endblock %}

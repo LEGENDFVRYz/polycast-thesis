@@ -625,9 +625,7 @@ def gallery_page():
     Filters based on the 'view' query parameter (all, favorites, trash)
     and only shows galleries that exist on disk.
     """
-    
-    # 1. Get the 'view' parameter from the URL (e.g., /gallery?view=favorites)
-    # Default to 'all' if no view is specified
+
     current_view = request.args.get('view', 'all')
 
     # FETCH ADMIN
@@ -635,51 +633,73 @@ def gallery_page():
     current_admin = Admin.query.filter_by(username=admin_name).first()
 
     eligible_folders = []
-    
-    if not current_admin:
-        # Handle case where admin isn't found
-        return redirect(url_for('login_page')) # Or wherever they should go
 
-    # 2. Create the base query for this admin
+    # If not current admin, just render empty gallery instead of redirect
+    if not current_admin:
+        return render_template(
+            "gallery/gallery.html",
+            is_setup=False,
+            ws_port=BROWSER_WS_PORT,
+            folders=[],
+            active_view=current_view
+        )
+
+    # Base query for current admin
     base_query = Gallery.query.filter_by(admin_id=current_admin.id)
 
-    # 3. Apply filters based on the 'view'
-    #    This assumes your Gallery model has a boolean 'is_favorite' field.
-    
+    # Apply view filter
     if current_view == 'favorites':
-        # Show non-deleted, favorited galleries
         base_query = base_query.filter_by(is_favorite=True).filter(Gallery.deleted_at.is_(None))
-        
     elif current_view == 'trash':
-        # Show only soft-deleted galleries
         base_query = base_query.filter(Gallery.deleted_at.is_not(None))
-        
-    else: 
-        # 'all' view: Show all non-deleted galleries (your original logic)
-        current_view = 'all' # Standardize for the template
+    else:
+        current_view = 'all'
         base_query = base_query.filter(Gallery.deleted_at.is_(None))
 
-    # Add ordering and execute the final query
+    # Fetch galleries
     admin_galleries = base_query.order_by(Gallery.name).all()
 
-    # 4. Check if the folder exists on disk (same as your original logic)
+    # Check if gallery folder exists on disk
     user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
     for g in admin_galleries:
         folder_path = os.path.join(user_filepath, str(g.id))
-        # print(folder_path) # Debug
         if os.path.isdir(folder_path):
-            eligible_folders.append(g.name) # Keep name for display
+            eligible_folders.append(g.name)
 
     is_setup = admin_status.get_field("hosting_active")
 
-    # 5. Pass 'active_view' to the template
+    # Render normally
     return render_template(
-        "gallery/gallery.html", 
-        is_setup=is_setup, 
+        "gallery/gallery.html",
+        is_setup=is_setup,
         ws_port=BROWSER_WS_PORT,
         folders=eligible_folders,
-        active_view=current_view  # <-- This is the new variable for the template
+        active_view=current_view
     )
+    
+    
+    
+@app.route("/api/gallery/<string:gallery_name>/sessions")
+def get_gallery_sessions(gallery_name):
+    """
+    Return all session names for a given gallery (by name) as JSON.
+    """
+    admin_name = str(admin_status.get_field('admin_name'))
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+
+    if not current_admin:
+        return jsonify({"sessions": []})
+
+    gallery = Gallery.query.filter_by(admin_id=current_admin.id, name=gallery_name).first()
+    if not gallery:
+        return jsonify({"sessions": []})
+
+    sessions = Session.query.filter_by(gallery_id=gallery.id).order_by(Session.created_at.desc()).all()
+    session_names = [s.name for s in sessions]
+
+    return jsonify({"sessions": session_names})
+
+    
 
 @app.route("/gallery/<string:galleryname>")
 def session_page(galleryname):

@@ -52,6 +52,7 @@ body {
         height: 40px;
         border-radius: 50%;
         object-fit: cover;
+        filter: invert(80%) sepia(4%) saturate(19%) hue-rotate(346deg) brightness(82%) contrast(86%);
     }
 
     .logout {
@@ -102,23 +103,23 @@ body {
 }
 
 .section-title {
+    font-family: "Poppins-SB";
     font-size: 1.25rem;
-    font-weight: 700;
     margin-bottom: 1rem;
-    color: #1F2937; /* --color-text-primary */
+    color: #102E4A; /* --color-text-primary */
 }
 
 
 
 .main-content {
     
-        /* ==========================================
+/* ==========================================
   BASIC MODAL STYLES
   ==========================================
 */
 p {
-    font-family: "Poppins-sB";
-    padding: 0.75rem 0rem;
+    font-family: "Poppins-SB";
+    /* padding: 0.75rem 0rem; */
 }
 /* The dark background overlay */
 .modal-overlay {
@@ -150,9 +151,15 @@ p {
   box-shadow: 0 4px 15px rgba(0,0,0,0.2);
   position: relative;
   text-align: center;
+  color: #102E4A;
 
   h3 {
     font-size: 24px;
+  }
+
+  p {
+    font-family: "Poppins-M";
+    padding: 0.75rem 0rem;
   }
 }
 
@@ -163,7 +170,6 @@ p {
   top: 10px;
   right: 15px;
   font-size: 28px;
-  font-weight: bold;
 }
 
 .modal-close-btn:hover,
@@ -178,17 +184,18 @@ p {
     margin: 15px 0;
 }
 .modal-content label {
+    text-align: start;
     display: block;
     margin-bottom: 5px;
-    font-weight: bold;
 }
-.modal-content input[type="text"] {
+.modal-content [type="text"] {
     width: 100%;
-    padding: 10px;
     font-size: 1rem;
-    border: 1px solid #ccc;
-    border-radius: 4px;
     box-sizing: border-box; /* Important */
+    padding: 0.5rem 1rem;
+    border: 1px solid #ABBAD3;
+    border-radius: 6px;
+    color: #102E4A;
 }
 
 /* Style the submit button (customize as needed) */
@@ -225,6 +232,16 @@ p {
     padding-top: 1rem;
 }
 
+.modal-content input {
+        padding: 0.5rem 1rem;
+        border: 1px solid #ABBAD3;
+        border-radius: 6px;
+        color: #102E4A;
+    }
+
+    ::placeholder {
+        color: #ABBAD3;
+    }
 }
 
 

@@ -20,11 +20,11 @@
             border: 2px solid #e5e7eb;
             border-radius: 1rem;
             font-size: 0.875rem;
-            font-weight: 600;
             color: #4b5563;
             cursor: pointer;
             transition: all 0.2s ease-in-out;
             box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+            text-decoration: none;
     
             &:hover {
                 background-color: #DBEEFF;
@@ -33,7 +33,7 @@
             img {
                 width: 24px;
                 height: 24px;
-                filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);   
                 transition: color 0.2s;
             }
         }
@@ -41,7 +41,7 @@
         .qa-button.active {
             background-color: #E5F0FF;
             border-color: #2E7CF6;
-            color: #102E4A;
+            color: #224F75;
             /* box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.25); */
     
             /* .lucide {
@@ -55,7 +55,7 @@
         margin-bottom: 2rem;
 
         .section-title {
-            color: #0D1720;
+            color: #102E4A;
         }
 
         .folder-list {
@@ -93,13 +93,8 @@
                     img {
                         width: 35px;
                         height: 35px;
-                        filter: invert(38%) sepia(64%) saturate(1003%) hue-rotate(206deg) brightness(104%) contrast(105%);
+                        filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
                     }
-
-                    /* .lucide-folder {
-                        color: #111827;
-                        fill: #111827;
-                    } */
                 }
 
                 .item-info {
@@ -107,17 +102,37 @@
                     overflow: hidden;
 
                     .item-title {
+                        font-family: "Poppins-SB";
                         font-size: 1rem;
-                        font-weight: 600;
                         color: #102E4A;
-                        white-space: nowrap;
-                        overflow: hidden;
-                        text-overflow: ellipsis;
+                        white-space: nowrap; 
+                        overflow: hidden; 
+                        text-overflow: ellipsis; 
+                        min-width: 0;
+                        max-width: 48vw;
                     }
 
                     .item-subtitle {
+                        font-family: "Poppins-M";
                         font-size: 0.875rem;
                         color: #102E4A;
+                    }
+                }
+
+                .icon-button {
+                    background: none;      /* Removes the gray background */
+                    border: none;          /* Removes the border */
+                    padding: 0;            /* Removes the default spacing */
+                    margin: 0;             /* Removes default margins */
+                    cursor: pointer;       /* Keeps the hand cursor */
+                    outline: none;         /* Optional: Removes the blue ring on click (focus) */
+
+                    .edit {
+                        filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+                    }
+
+                    .delete {
+                        filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
                     }
                 }
 
@@ -131,6 +146,7 @@
                     align-items: center ;
 
                     img {
+                        display: none;
                         width: 20px;
                         height: 20px;
                         filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
@@ -155,7 +171,7 @@ div.gallery-wrap{
         margin-bottom: 2rem;
 
         .section-title {
-            color: #0D1720;
+            color: #102E4A;
         }
     }
 
@@ -191,7 +207,7 @@ div.gallery-wrap{
             img {
                 width: 32px;
                 height: 32px;
-                filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
             }
         }
 
@@ -203,8 +219,7 @@ div.gallery-wrap{
 
             .fc-name {
                 font-size: 0.875rem;
-                font-weight: 600;
-                color: #1F2937; /* dark gray */
+                color: #102E4A; /* dark gray */
                 white-space: nowrap;
                 overflow: hidden;
                 text-overflow: ellipsis;
@@ -221,6 +236,7 @@ div.gallery-wrap{
                 img {
                     width: 16px;
                     height: 16px;
+                    filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
                 }
             }
         }
@@ -320,7 +336,7 @@ div.session-wrap{
         outline: none;         /* Optional: Removes the blue ring on click (focus) */
     }
 
-    .folder-header {
+    /* .folder-header {
         width: 100%;
         height: 360px;
         background-color: #f5f5f5;
@@ -398,6 +414,101 @@ div.session-wrap{
                 }
             }
         }
+    } */
+
+    .folder-container {
+        display: flex;
+        align-items: center;
+        flex-direction: column;
+        gap: 0.75rem;
+        color: #102E4A;
+
+        .folder-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            font-size: 22px;
+
+            .folder-name {
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                gap: 1rem;
+
+                .back-icon {
+                    width: 22px;
+                    height: 22px;
+                    filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+                    transform: scaleX(-1); 
+                }
+                
+                .folder-icon {
+                    width: 30px;
+                    height: 30px;
+                    filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+                }
+
+                .title {
+                    color: #102E4A;
+                    white-space: nowrap; 
+                    overflow: hidden; 
+                    text-overflow: ellipsis; 
+                    min-width: 0;
+                    max-width: 52vw;
+                }
+            }
+            
+            .info-icon {
+                width: 30px;
+                height: 30px;
+                /* filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%); */
+            }
+        }
+
+        .card-content {
+            display: flex;
+            align-items: center;
+            width: 100%;
+            border: 1px solid #ABBAD3;
+            border-radius: 6px;
+            padding: 1rem 1.75rem;
+
+            .folder-details {
+                display: flex;
+                flex-direction: column;
+                width: 100%;
+                gap: 0.5rem;
+
+                .specifics {
+
+                    .detail-value {
+                        font-family: "Poppins-M";
+                        width: 100%;
+                    }
+
+                    input {
+                        padding: 0.5rem 1rem;
+                        border: 1px solid #ABBAD3;
+                        border-radius: 6px;
+                        color: #102E4A;
+                        margin-top: 0.5rem;
+                    }
+
+                    input::placeholder {
+                        color: #ABBAD3;
+                    }
+
+                    &:last-child {
+                        padding-top: 1.5rem;
+                    }
+                }
+            }
+        }
+
+        .card-content.hidden {
+            display: none;
+        }
     }
 }
 
@@ -423,8 +534,8 @@ div.view-wrap {
             gap: 0.75rem; /* 12px */
 
             img {
-                width: 1.5rem; /* 24px */
-                height: 1.5rem; /* 24px */
+                width: 22px;
+                height: 22px;
                 filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
                 transform: scaleX(-1);  
             }
@@ -432,9 +543,13 @@ div.view-wrap {
             h1 {
                 font-size: 1.125rem; /* 18px */
                 line-height: 1.75rem; /* 28px */
-                font-weight: 600;
-                color: #0D1720;
+                color: #102E4A;
                 margin: 0;
+                white-space: nowrap; 
+                overflow: hidden; 
+                text-overflow: ellipsis; 
+                min-width: 0;
+                max-width: 48vw;
             }
         }
         
@@ -454,6 +569,7 @@ div.view-wrap {
             display: flex; /* To center icon */
             align-items: center;
             justify-content: center;
+
     
             &.back-button {
                 padding: 0.25rem; /* 4px */

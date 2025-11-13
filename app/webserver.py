@@ -81,10 +81,13 @@ def admin_page():
             .all()
         )
         gallery_list_for_json = [g.to_dict() for g in admin_galleries]
+        
+    
 
     return render_template(
         "admin.html",
         ws_port=BROWSER_WS_PORT,
+        prototype_ip=prototype_config.PROTOTYPE_IP,
         current_status=admin_status.get_field("status"),
         gallery_data=gallery_list_for_json
     )
@@ -243,6 +246,8 @@ def admin_start_host():
         status="HOSTING", 
         hosting_active=True
     )
+    session["gname"] = gallery_name
+    session["sname"] = session_name
     
     try:
         archive_path = os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
@@ -290,6 +295,8 @@ def endsession():
         
         # FOR NOW, CLOSEE
         archiver_manager.stop()
+        session.pop("gname", None)
+        session.pop("sname", None)
         
         print("[ADMIN] Admin End the session, status reset.")
         
@@ -613,6 +620,9 @@ def logout_page():
     
     if archiver_manager and archiver_manager.is_running():
         archiver_manager.stop()
+        
+    session.pop("gname", None)
+    session.pop("sname", None)
     
     return redirect(url_for("login_page"))
 

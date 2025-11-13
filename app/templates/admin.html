@@ -26,7 +26,6 @@
                     <!-- Form Header -->
                     <div class="status-block">
                         <h3>Status:</h3>
-                        <a href="{{ url_for('endsession') }}">End Session</a>
                     </div>
                 {% endif %}
 
@@ -104,12 +103,29 @@
                             <button class="btn btn-primary btn-full" id="start-stream-btn" type="submit">Start Stream</button>
                         </form>
                     {% endif %}
+
+                    <!-- Phase 1: After Successful connection -->
+                    {%if current_status == 'HOSTING' %}
+                        <p>Gallery: {{ session.gname }}</p>
+                        <p>Session: {{ session.sname }}</p>
+                    {% endif %}
                 </section>
             </div>
 
 
             <!-- Manage Galleries: Only when "HOSTING" -->
             {% if current_status == 'HOSTING' %}
+                <section class="manage-block">
+                    <h2 class="section-title">Manage:</h2>
+
+                    <a href="{{ url_for('endsession') }}">
+                        <button>End Session</button>
+                    </a>
+
+                </section>
+            {% endif %}
+            
+            {% if 1 == 0 %}
                 <section class="folders">
                     <h2 class="section-title">Manage:</h2>
 

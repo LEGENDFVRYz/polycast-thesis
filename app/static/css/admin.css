@@ -154,8 +154,8 @@
             padding: 24px 30px;
             /* box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); */
             border-radius: 8px;
+            border: 1px solid #ABBAD3;
             border-left: 8px solid #2E7CF6;
-            border: px solid #ABBAD3;
 
             /* Disabled style */
             &.disabled {
@@ -189,141 +189,32 @@
         }
 
         /* --- Status header: When Hosting only --- */
-        .status-block {
-            display: flex;
-            justify-content: space-between; 
-            align-items: center;   
-
-            h3 {
-                margin: 0; 
-                font-weight: 800; 
-                /* font-size: 1.75rem;  */
-                color: #2a2a2a;
-            }
+        section.manage-block {
 
             a {
                 background-color: #E63946; 
-                color: #FFFFFF;          
-                border-radius: 8px;     
                 
-                padding: 0.5rem 1rem;      
-                font-weight: 600;       
-                font-size: 0.8rem;         
-                text-decoration: none;   
-                
-                transition: background-color 0.2s ease-in-out;
+                button{
+                    background-color: #E63946; 
+                    color: #FFFFFF;          
+                    border-radius: 8px;
+                    border: 0;
+                    
+                    width: 100%;
+                    padding: 1rem 2rem;      
+                    font-weight: bold;       
+                    font-size: 1rem;  
 
-                &:hover {
-                    background-color: #D62839; 
-                    cursor: pointer; 
+                    text-decoration: none;   
+                    transition: background-color 0.2s ease-in-out;
+
+                    &:hover {
+                        background-color: #D62839; 
+                        cursor: pointer; 
+                    }
                 }
             }
         }
 
-        /* --- Cards & Display --- */
-        .folders {
-            margin-bottom: 2rem;
-
-            .folder-list {
-                display: grid;
-                gap: 0.75rem;
-
-                a {
-                    all: unset;      
-                    display: inline; 
-                    text-decoration: none;
-                    color: inherit;
-                    font: inherit;
-                    cursor: pointer; 
-                }
-
-                .icon-button {
-                    display: flex;
-                    justify-self: center;
-                    align-self: center;
-                    cursor: pointer;
-                }
-
-                .folder-item {
-                    display: flex;
-                    align-items: center;
-                    gap: 1rem;
-                    padding: 1rem;
-                    background-color: #FFFFFF; 
-                    border-radius: 0.75rem; 
-                    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-                    border: 1px solid #E5E7EB;
-
-                    .item-icon {
-                        display: flex;
-                        align-items: center;
-                        justify-content: center;
-                        flex-shrink: 0;
-                        width: 40px;
-                        height: 40px;
-                        background-color: #EFF6FF; 
-                        border-radius: 0.5rem; 
-
-                        img {
-                            width: 35px;
-                            height: 35px;
-                            filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-                        }
-                    }
-
-                    .item-info {
-                        flex-grow: 1;
-                        overflow: hidden; 
-
-                        .item-title {
-                            font-size: 1rem;
-                            font-weight: 600;
-                            color: #1F2937; 
-                            white-space: nowrap;
-                            overflow: hidden;
-                            text-overflow: ellipsis;
-                        }
-
-                        .item-subtitle {
-                            font-size: 0.875rem;
-                            color: #6B7280; 
-                        }
-                    }
-
-                    .item-menu {
-                        display: flex;
-                        justify-content: center;
-                        align-content: center;
-                        flex-shrink: 0;
-                        gap: 0.75rem;
-
-                        background: none;
-                        border: none;
-                        color: #6B7280;
-
-                        a, .icon-button {
-                            display: flex;
-                            justify-self: center;
-                            align-self: center;
-                            cursor: pointer;
-                        }
-                        
-                        form {
-                            margin: 0;
-                        }
-
-                        /* Special cases for button in delete */
-                        .icon-button {
-                            background: none;      /* Removes the gray background */
-                            border: none;          /* Removes the border */
-                            padding: 0;            /* Removes the default spacing */
-                            margin: 0;             /* Removes default margins */
-                            cursor: pointer;       /* Keeps the hand cursor */
-                            outline: none;         /* Optional: Removes the blue ring on click (focus) */
-                        }
-                    }
-                }
-            }
-        }
     }
 }

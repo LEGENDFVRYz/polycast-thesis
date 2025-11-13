@@ -289,7 +289,7 @@ def endsession():
         )
         
         # FOR NOW, CLOSEE
-        # archiver_manager.stop()
+        archiver_manager.stop()
         
         print("[ADMIN] Admin End the session, status reset.")
         
@@ -611,7 +611,8 @@ def logout_page():
     
     print("[ADMIN] Admin logged out, status reset.")
     
-    # archiver_manager.stop()
+    if archiver_manager and archiver_manager.is_running():
+        archiver_manager.stop()
     
     return redirect(url_for("login_page"))
 

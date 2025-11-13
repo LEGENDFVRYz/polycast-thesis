@@ -161,10 +161,10 @@
         DELETE CONFIRMATION MODAL
         ==========================================
         #}
-        {% call modal_shell(modal_id='deleteGalleryModal', modal_title='Confirm Deletion') %}
+        {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
             
             <p>Are you sure you want to move this gallery to the recycle bin?</p>
-            <p>This will also delete all associated sessions.</p>
+            <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
             
             <form id="deleteGalleryForm" method="POST" action="">
                 <div class="modal-footer">

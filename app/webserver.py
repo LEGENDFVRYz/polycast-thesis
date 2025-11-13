@@ -43,19 +43,26 @@ admin_status = AdminStatusManager()
 # ---------------------------------------------------------------------
 
 
-# GLOBAL VARIABLES
-@app.context_processor
-def check_if_login_admin():
-    
+# UTILITY FUNCTION
+def is_current_user_admin(admin_status):
+    """
+    Returns True if the current session user is the admin.
+    """
     admin_name = admin_status.get_field('admin_name') if admin_status else None
     current_user = session.get("user")
-
-    # Compare
-    is_admin = (admin_name is not None and current_user == admin_name)
-
-    return dict(is_admin=is_admin)
+    return admin_name is not None and current_user == admin_name
 
 
+# GLOBAL VARIABLES
+@app.context_processor
+def inject_is_admin():
+    return dict(is_admin=is_current_user_admin(admin_status))
+
+
+
+# ---------------------------------------------------------------------
+# ROUTES
+# ---------------------------------------------------------------------
 @app.route("/")
 def index():
     # --- MODIFIED: Check the real status ---
@@ -610,6 +617,10 @@ def login_page():
 @app.route("/logout")
 def logout_page():
     global archiver_manager
+    
+    if not is_current_user_admin(admin_status):
+        flash("You must be admin to view this page", "error")
+        return redirect(request.referrer) 
     
     session.pop("user", None)
     session.pop("id", None)

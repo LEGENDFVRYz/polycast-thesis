@@ -690,7 +690,8 @@ def gallery_page():
     for g in admin_galleries:
         folder_path = os.path.join(user_filepath, str(g.id))
         if os.path.isdir(folder_path):
-            eligible_folders.append(g.name)
+            # MODIFICATION: Append a dictionary with id and name
+            eligible_folders.append({'id': g.id, 'name': g.name})
 
     is_setup = admin_status.get_field("hosting_active")
 

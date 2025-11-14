@@ -143,17 +143,17 @@
                                         <p class="item-subtitle">BSCPE 4-3</p>
                                     </div>
                                     <div class="item-menu">
-                                        <button type="button" class="icon-button edit-gallery-btn" 
+                                        <button type="button" class="icon-button edit-session-btn" 
                                                 data-gallery-id="{{ gallery.id }}" 
                                                 data-gallery-name="{{ gallery.name }}"
                                                 data-modal-target="#editGalleryModal">
-                                            <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Pen Icon" width="21" height="21">
+                                            <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
                                         </button>
                                         
-                                        <button type="button" class="icon-button delete-gallery-btn"
+                                        <button type="button" class="icon-button delete-session-btn"
                                                 data-modal-target="#deleteGalleryModal"
                                                 data-delete-url="{{ url_for('delete_gallery', gallery_id=gallery.id) }}">
-                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" alt="Trash Icon" width="21" height="21">
+                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
                                         </button>
                                     </div>
                                 </div>

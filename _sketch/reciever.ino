@@ -43,15 +43,12 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, in
              "%02X:%02X:%02X:%02X:%02X:%02X",
              mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
+
     // ------------------------------
-    // PRINT IN PYTHON-FRIENDLY FORMAT
+    // PRINT IN PYTHON-FRIENDLY CSV FORMAT
     // ------------------------------
-    Serial.printf("From: %s | X: %.3f | Y: %.3f | FX: %.3f | FY: %.3f | "
-                  "QX: %.3f | QY: %.3f | QZ: %.3f | QW: %.3f | "
-                  "AX: %.3f | AY: %.3f | AZ: %.3f | TS: %u\n",
-                  macStr,
-                  myData.x, myData.y,
-                  myData.filtered_x, myData.filtered_y,
+    Serial.printf("%.3f,%.3f,%.3f,%.3f,%.6f,%.6f,%.6f,%.6f,%.3f,%.3f,%.3f,%lu\n",
+                  myData.x, myData.y, myData.filtered_x, myData.filtered_y,
                   myData.qx, myData.qy, myData.qz, myData.qw,
                   myData.ax, myData.ay, myData.az,
                   myData.timestamp);

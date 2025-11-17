@@ -1,5 +1,4 @@
 import serial
-import re
 import time
 import os
 import platform
@@ -7,52 +6,28 @@ import platform
 PORT = "COM3"
 BAUD = 115200
 
-# NEW REGEX FOR ALL SENSOR FIELDS
-pattern = re.compile(
-    r"From:\s*([0-9A-F:]+)\s*\|\s*"
-    r"X:\s*(-?[0-9.]+)\s*\|\s*"
-    r"Y:\s*(-?[0-9.]+)\s*\|\s*"
-    r"FX:\s*(-?[0-9.]+)\s*\|\s*"
-    r"FY:\s*(-?[0-9.]+)\s*\|\s*"
-    r"QX:\s*(-?[0-9.]+)\s*\|\s*"
-    r"QY:\s*(-?[0-9.]+)\s*\|\s*"
-    r"QZ:\s*(-?[0-9.]+)\s*\|\s*"
-    r"QW:\s*(-?[0-9.]+)\s*\|\s*"
-    r"AX:\s*(-?[0-9.]+)\s*\|\s*"
-    r"AY:\s*(-?[0-9.]+)\s*\|\s*"
-    r"AZ:\s*(-?[0-9.]+)\s*\|\s*"
-    r"TS:\s*([0-9]+)",
-    re.IGNORECASE
-)
-
+# Optional: clear screen function
 def clear_screen():
     os.system("cls" if platform.system() == "Windows" else "clear")
 
-def parse_line(line):
-    match = pattern.search(line)
-    if not match:
+def parse_csv_line(line):
+    # Split by comma
+    parts = line.strip().split(",")
+    if len(parts) != 12:  # 11 floats + 1 timestamp
         return None
-
-    (mac, x, y, fx, fy,
-     qx, qy, qz, qw,
-     ax, ay, az,
-     ts) = match.groups()
-
-    return {
-        "mac": mac,
-        "x": float(x),
-        "y": float(y),
-        "fx": float(fx),
-        "fy": float(fy),
-        "qx": float(qx),
-        "qy": float(qy),
-        "qz": float(qz),
-        "qw": float(qw),
-        "ax": float(ax),
-        "ay": float(ay),
-        "az": float(az),
-        "timestamp": int(ts)
-    }
+    try:
+        x, y, fx, fy = map(float, parts[0:4])
+        qx, qy, qz, qw = map(float, parts[4:8])
+        ax, ay, az = map(float, parts[8:11])
+        timestamp = int(parts[11])
+        return {
+            "x": x, "y": y, "fx": fx, "fy": fy,
+            "qx": qx, "qy": qy, "qz": qz, "qw": qw,
+            "ax": ax, "ay": ay, "az": az,
+            "timestamp": timestamp
+        }
+    except ValueError:
+        return None
 
 def main():
     print(f"Opening {PORT} @ {BAUD}")
@@ -61,7 +36,7 @@ def main():
 
     while True:
         line = ser.readline().decode(errors='ignore').strip()
-        data = parse_line(line)
+        data = parse_csv_line(line)
 
         if data:
             # clear_screen()

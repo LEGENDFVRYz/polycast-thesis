@@ -11,14 +11,14 @@
 #define WIFI_CHANNEL 1
 
 // Structure to send
-typedef struct struct_message {
-  char a[32];
-  int b;
-  float c;
-  bool d;
-} struct_message;
+typedef struct struct_sensor_data {
+  float x;
+  float y;
+  float filtered_x;
+  float filtered_y;
+} struct_sensor_data;
 
-struct_message myData;
+struct_sensor_data myData;
 
 // --------------------
 // IMPORTANT: 
@@ -29,7 +29,7 @@ uint8_t receiverMAC[] = {0x80, 0xF3, 0xDA, 0x55, 0x9F, 0x6C};
 
 esp_now_peer_info_t peerInfo;
 unsigned long lastSend = 0;
-unsigned long interval = 20; // 10ms -> ~50 packets/sec
+unsigned long interval = 100; // 
 
 // Callback for send status (CORRECTED Signature)
 // This function is called when a packet is sent.
@@ -92,11 +92,13 @@ void loop() {
   if (now - lastSend > interval) {
     lastSend = now;
 
-    // Fill the data
-    strcpy(myData.a, "FAST DATA");
-    myData.b = random(1, 100);
-    myData.c = 3.14;
-    myData.d = true;
+    // Generate random floats between 0.000 and 1.000 (like your example 0.450, 0.810)
+    myData.x = random(0, 1001) / 1000.0f;
+    myData.y = random(0, 1001) / 1000.0f;
+    
+    // Simulate filtered data (e.g., raw data + small random noise)
+    myData.filtered_x = myData.x + (random(-50, 51) / 1000.0f); 
+    myData.filtered_y = myData.y + (random(-50, 51) / 1000.0f);
 
     // Send the data
     esp_err_t result = esp_now_send(receiverMAC, (uint8_t*)&myData, sizeof(myData));

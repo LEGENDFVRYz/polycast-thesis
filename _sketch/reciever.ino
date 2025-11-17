@@ -1,5 +1,5 @@
 // ###########################################
-// RECEIVER (ESP32) - CORRECTED FOR NEW CORE
+// RECEIVER (ESP32) - REVISED FOR SENSOR DATA
 // ###########################################
 
 #include <esp_now.h>
@@ -7,24 +7,24 @@
 #include <esp_wifi.h> // Required for esp_wifi_set_channel
 
 // DEFINE THE WIFI CHANNEL (Must be 1-13)
-// BOTH SENDER AND RECEIVER MUST BE ON THE SAME CHANNEL
 #define WIFI_CHANNEL 1
 
-// Structure to receive
+// --------------------
+// ** NEW DATA STRUCTURE **
 // This MUST match the sender's structure
-typedef struct struct_message {
-  char a[32];
-  int b;
-  float c;
-  bool d;
-} struct_message;
+// --------------------
+typedef struct struct_sensor_data {
+  float x;
+  float y;
+  float filtered_x;
+  float filtered_y;
+} struct_sensor_data;
 
-struct_message myData;
+// Create an instance of the new data structure
+struct_sensor_data myData;
 
 // -----------------------------------------------------------------
-// CALLBACK FUNCTION - CORRECTED SIGNATURE
-//
-// The first argument is now 'const esp_now_recv_info_t * esp_now_info'
+// CALLBACK FUNCTION - Updated for new data
 // -----------------------------------------------------------------
 void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomingData, int len) {
   // Check if data length matches the structure size
@@ -44,12 +44,15 @@ void OnDataRecv(const esp_now_recv_info_t * esp_now_info, const uint8_t *incomin
   snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
            mac_addr[0], mac_addr[1], mac_addr[2], mac_addr[3], mac_addr[4], mac_addr[5]);
 
-  // Print the received data
+  // --------------------
+  // ** UPDATED PRINT LOGIC **
+  // Print the received data in a new format for the Python script
+  // --------------------
   Serial.printf("From: %s | ", macStr);
-  Serial.printf("Char: %s | ", myData.a);
-  Serial.printf("Int: %d | ", myData.b);
-  Serial.printf("Float: %.2f | ", myData.c);
-  Serial.printf("Bool: %s\n", myData.d ? "true" : "false");
+  Serial.printf("X: %.3f | ", myData.x);
+  Serial.printf("Y: %.3f | ", myData.y);
+  Serial.printf("F_X: %.3f | ", myData.filtered_x);
+  Serial.printf("F_Y: %.3f\n", myData.filtered_y);
 }
 
 void setup() {
@@ -83,7 +86,6 @@ void setup() {
   }
 
   // 5. Register the receive callback
-  // This will now match the expected function signature
   esp_now_register_recv_cb(OnDataRecv);
   
   Serial.printf("ESP-NOW receiver ready. Listening on Channel %d\n", WIFI_CHANNEL);

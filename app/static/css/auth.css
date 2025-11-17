@@ -88,7 +88,7 @@ html, body {
                             border: 1px solid #d1d5db;
                             border-radius: 0.5rem;
                             font-size: 1rem;
-                            font-family: 'Inter', sans-serif;
+                            /* font-family: 'Inter', sans-serif; */
 
                             &:focus {
                                 outline: 2px solid #1a2c47;

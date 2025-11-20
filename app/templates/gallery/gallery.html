@@ -1,4 +1,5 @@
 {% from 'shared/_modal.html' import modal_shell %}
+{% from "gallery/_render_folder_card.html" import render_folder_card %}
 
 {% extends "base.html" %}
 
@@ -95,61 +96,15 @@
 
 
             <div class="folder-list">
-                
-                <!-- Loop through all available folders -->
-                
                 {% if folders %}  
                     {% for folder in folders %}
-
-                            <div class="folder-item">
-                                <div class="item-icon">
-                                    <image src="../static/images/icons/folder1.svg">
-                                </div>
-                                <div class="item-info">
-                                    <a href="{{ url_for('session_page', galleryname=folder.name) }}" class="folder-link-wrapper">
-                                        <h3 class="item-title">{{ folder.name }}</h3>
-                                    </a>
-                                    <p class="item-subtitle">BSCPE 4-3</p>
-                                </div>
-
-                                <!-- This still exist for clients so it should be hidden for all non-admin users -->
-                                <!-- Still no button actions -->
-                                {% if active_view == 'all' %}
-                                    <button type="button" class="icon-button edit-session-btn" 
-                                            data-gallery-id="{{ folder.id }}" 
-                                            data-gallery-name="{{ folder.name }}"
-                                            data-modal-target="#editGalleryModal">
-                                        <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                    </button>
-                                    
-                                    <button type="button" class="icon-button delete-session-btn"
-                                            data-modal-target="#deleteGalleryModal"
-                                            data-delete-url="{{ url_for('delete_gallery', gallery_id=folder.id) }}">
-                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                    </button>
-
-                                {% elif active_view == 'trash' %}
-                                    <button type="button" class="icon-button recover-gallery-btn" 
-                                            data-gallery-id="{{ folder.id }}" 
-                                            data-modal-target="#recoverGalleryModal"
-                                            data-recover-url="{{ url_for('recover_gallery', gallery_id=folder.id) }}">
-                                        <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                    </button>
-                                    
-                                    <button type="button" class="icon-button force-delete-btn"
-                                            data-gallery-id="{{ folder.id }}"
-                                            data-modal-target="#forceDeleteGalleryModal"
-                                            data-force-url="{{ url_for('force_delete_gallery', gallery_id=folder.id) }}">
-                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                    </button>
-
-                                {% endif %}
-                            </div>
+                        {{ render_folder_card(folder, active_view) }}
                     {% endfor %}
                 {% else %}
-                    <p>No gallery folders found!</p>
+                    <div class="empty-state">
+                        <p>No items found in {{ active_view }}!</p>
+                    </div>
                 {% endif %}
-
             </div>
         </section>
 
@@ -174,7 +129,6 @@
         ==========================================
         #}
         {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
-            
             <p>Are you sure you want to move this gallery to the recycle bin?</p>
             <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
             
@@ -184,7 +138,6 @@
                     <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
                 </div>
             </form>
-
         {% endcall %}
 
         {# 
@@ -193,7 +146,6 @@
         ==========================================
         #}
         {% call modal_shell(modal_id='recoverGalleryModal', modal_title='CONFIRM RECOVERY') %}
-            
             <p>Are you sure you want to restore this gallery?</p>
             <p>It will be moved back to your active dashboard and sessions will be accessible again.</p>
             
@@ -203,7 +155,6 @@
                     <button type="submit" class="btn btn-success">Yes, Restore Gallery</button>
                 </div>
             </form> 
-
         {% endcall %}
 
         {# 
@@ -212,7 +163,6 @@
         ==========================================
         #}
         {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
-            
             <div class="alert alert-danger">
                 <strong>Warning:</strong> This action cannot be undone.
             </div>
@@ -225,14 +175,14 @@
                     <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
                 </div>
             </form>
-
         {% endcall %}
     </div>
 
 
+    <!-- QUICK ACTIONS SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- Quick Actions Button Navigation ---
+
             const iconButtons = document.querySelectorAll('.qa-button');
             const iconButtonsContainer = document.querySelector('.quick-actions');
 
@@ -247,13 +197,10 @@
 
                 // Add active class to the clicked button
                 clickedButton.classList.add('active');
-
-                // You could add logic here based on the clicked button
-                // const activeBtn = clickedButton.dataset.iconBtn;
-                // console.log('Active button:', activeBtn);
             });
         });
     </script>
+
 
     <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>

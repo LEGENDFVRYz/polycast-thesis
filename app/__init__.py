@@ -22,7 +22,7 @@ def create_app():
     db.init_app(app)
     
     # --- Import models so SQLAlchemy knows them ---
-    from app.models import admin, gallery, session
+    from app.models import admin, gallery, session, note
 
 
     return app

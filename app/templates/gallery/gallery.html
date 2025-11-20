@@ -136,9 +136,10 @@
                                         <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
                                     </button>
                                     
-                                    <button type="button" class="icon-button delete-session-btn"
-                                            data-modal-target="#deleteGalleryModal"
-                                            data-delete-url="{{ url_for('delete_gallery', gallery_id=folder.id) }}">
+                                    <button type="button" class="icon-button force-delete-btn"
+                                            data-gallery-id="{{ folder.id }}"
+                                            data-modal-target="#forceDeleteGalleryModal"
+                                            data-force-url="{{ url_for('force_delete_gallery', gallery_id=folder.id) }}">
                                         <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
                                     </button>
 
@@ -202,6 +203,28 @@
                     <button type="submit" class="btn btn-success">Yes, Restore Gallery</button>
                 </div>
             </form> 
+
+        {% endcall %}
+
+        {# 
+        ==========================================
+        FORCE DELETE CONFIRMATION MODAL (NEW)
+        ==========================================
+        #}
+        {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
+            
+            <div class="alert alert-danger">
+                <strong>Warning:</strong> This action cannot be undone.
+            </div>
+            <p>Are you sure you want to <strong>permanently delete</strong> this gallery?</p>
+            <p>All associated photos and data will be wiped from the database forever.</p>
+            
+            <form id="forceDeleteGalleryForm" method="POST" action="">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                    <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+                </div>
+            </form>
 
         {% endcall %}
     </div>
@@ -285,6 +308,26 @@
                     if (recoverForm) {
                         recoverForm.action = recoverUrl;
                     }
+                });
+            });
+
+            // Force buttons
+            const forceDeleteForm = document.getElementById('forceDeleteGalleryForm');
+
+            document.querySelectorAll('.force-delete-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation(); 
+
+                    // Get the force-delete URL
+                    const forceUrl = this.dataset.forceUrl;
+
+                    if (forceDeleteForm) {
+                        forceDeleteForm.action = forceUrl;
+                    }
+                    
+                    // Note: Your 'data-modal-target' attribute in HTML 
+                    // usually handles opening the modal via your modal.js, 
+                    // so we just need to update the form action here.
                 });
             });
         });

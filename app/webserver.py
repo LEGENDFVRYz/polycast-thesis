@@ -541,6 +541,68 @@ def recover_session(session_id):
 
     return redirect(request.referrer or url_for('admin_page'))
 
+@app.route("/gallery/<int:gallery_id>/force-delete", methods=['POST'])
+def force_delete_gallery(gallery_id):
+    # 1. Auth Check
+    if "user" not in session:
+        flash("You must be logged in to perform this action.", "error")
+        return redirect(url_for("login_page"))
+    
+    # 2. Find the gallery
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # 3. SECURITY CHECK: Ensure the gallery belongs to the current user
+    current_user_id = session['id']
+    if gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    try:
+        # 4. Perform Hard Delete
+        # Note: If you store actual image files (locally or S3), 
+        # you should call your file cleanup function here before deleting the DB row.
+        
+        db.session.delete(gallery) # This is the standard hard delete in SQLAlchemy
+        db.session.commit()
+        
+        flash('Gallery has been permanently deleted.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred during permanent deletion: {e}', 'danger')
+
+    # Redirect back to the Trash page (referrer)
+    return redirect(request.referrer or url_for('admin_page'))
+
+@app.route("/session/<int:session_id>/force-delete", methods=['POST'])
+def force_delete_session(session_id):
+    # 1. Auth Check
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+
+    # 2. Find the session
+    session_to_delete = Session.query.get_or_404(session_id)
+
+    # 3. SECURITY CHECK: Check ownership via the parent gallery
+    if session_to_delete.gallery.admin_id != current_user_id:
+        abort(403)
+
+    try:
+        # 4. Perform Hard Delete
+        # TODO: Add logic here to delete actual physical files associated with this session
+        
+        db.session.delete(session_to_delete)
+        db.session.commit()
+        
+        flash('Session has been permanently deleted.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred: {e}', 'danger')
+
+    return redirect(request.referrer or url_for('admin_page'))
+
 
 
 

@@ -13,7 +13,20 @@ class Session(db.Model, SoftDeleteMixin):
     name        = db.Column(db.String(80), nullable=False)
     created_at  = db.Column(db.DateTime, default=db.func.now(), nullable=False)
     
-
+    
+    # -------------------------------------------
+    # Relationships
+    # -------------------------------------------
+    notes = db.relationship(
+        'Note',
+        backref='session',
+        lazy='dynamic', 
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="Note.page_number" 
+    )
+    
+    
     #-------------------------------------------
     # Constraints
     #-------------------------------------------

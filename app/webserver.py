@@ -57,7 +57,9 @@ def is_current_user_admin(admin_status):
 # GLOBAL VARIABLES
 @app.context_processor
 def inject_is_admin():
-    return dict(is_admin=is_current_user_admin(admin_status))
+    admin_name = admin_status.get_field('admin_name') if admin_status else None
+    
+    return dict(is_admin=is_current_user_admin(admin_status), admin_operator=admin_name)
 
 
 
@@ -155,7 +157,7 @@ def admin_configure():
         flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
         
         prototype_config.PROTOTYPE_IP = None
-    
+
     return redirect(url_for("admin_page"))
 
 # Admin Configurantion Helper: API for scanning IP

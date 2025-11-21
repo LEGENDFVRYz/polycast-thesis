@@ -1,3 +1,5 @@
+{% from 'shared/_modal.html' import modal_shell %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <!-- Lucide Icons -->
     <!-- <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script> -->
 
@@ -23,15 +25,15 @@
     <!-- Header -->
     <header class="app-header">
         <a href="{{ url_for('index') }}">
-            <image class='header-logo' src="../../static/images/icons/polycast-blue.svg">
+            <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
         </a>
         <div class="right-header">
-            <img src="../../static/images/icons/profile1.svg" 
-                alt="Profile Picture" 
-                class="header-profile">
-            <a href="{{ url_for('logout_page') }}">
-                <image class="logout" src="../../static/images/icons/exit.svg">
-            </a>
+            <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                 alt="Profile Picture" 
+                 class="header-profile"
+                 id="profileBtn"
+                 data-modal-target="#profileModal"
+                 style="cursor: pointer;">
         </div>
     </header>
 
@@ -47,7 +49,8 @@
                 Gallery
             </a>
     </nav>
-
+    
+    <!-- Flash Message Popups -->
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             <div id="flash-container">
@@ -69,42 +72,77 @@
         {% endblock %}
     </main>
     
+    
+    {# 
+    ==========================================
+    PROFILE MENU MODAL
+    ==========================================
+    #}
+    {% call modal_shell(modal_id='profileModal', modal_title='User Profile') %}
+
+        <div class="profile-center-block">
+            <!-- Profile Picture -->
+            <img 
+                src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                alt="Profile"
+                class="profile-avatar"
+            >
+
+            <div class="profile-name">
+                {{ admin_operator if is_admin else 'Guest' }}
+            </div>
+            <div class="profile-role">
+                {{ 'Admin' if is_admin else 'Client' }} Role
+            </div>
+        </div>
+
+        {% if is_admin %}
+            <div class="modal-actions">
+                <button type="button" class="btn btn-primary modal-btn" style="width: 100%;">
+                    Settings
+                </button>
+
+                <form action="{{ url_for('logout_page') }}" method="GET" style="width: 100%; margin-top: 10px;">
+                    <button type="submit" class="btn-danger modal-btn" style="width: 100%;">
+                        Logout
+                    </button>
+                </form>
+            </div>
+        {% endif %}
+    {% endcall %}
 
 </body>
 
-    <!-- 
-    HIDDING FLASH MESSAGE
-    -->
-    <script>
-        // Wait for the document to be fully loaded
-        document.addEventListener('DOMContentLoaded', (event) => {
+<!-- HIDDING FLASH MESSAGE -->
+<script>
+    document.addEventListener('DOMContentLoaded', (event) => {
+        const flashContainer = document.getElementById('flash-container');
+        if (flashContainer) {
             
-            // Find the flash container
-            const flashContainer = document.getElementById('flash-container');
-            if (flashContainer) {
-                // Get all messages inside
-                const messages = flashContainer.querySelectorAll('.flash-message');
-                
-                messages.forEach((message, index) => {
-                    // Set a timeout to fade out the message
-                    // We can stagger them slightly for a nice effect, or just use one duration
-                    const fadeOutDelay = 3000 + (index * 500); // 3s delay, plus 0.5s for each
-                    const removeDelay = fadeOutDelay + 500; // 0.5s for fade-out transition
+            const messages = flashContainer.querySelectorAll('.flash-message');
+            
+            messages.forEach((message, index) => {
+                // Set a timeout to fade out the message
+                const fadeOutDelay = 3000 + (index * 500); 
+                const removeDelay = fadeOutDelay + 500; 
 
-                    setTimeout(() => {
-                        message.classList.add('fade-out');
-                    }, fadeOutDelay);
-                    
-                    // Set another timeout to remove the element from the DOM
-                    setTimeout(() => {
-                        message.remove();
-                        // If the container is empty, remove it too
-                        if (flashContainer.children.length === 0) {
-                            flashContainer.remove();
-                        }
-                    }, removeDelay);
-                });
-            }
-        });
-    </script>
+                setTimeout(() => {
+                    message.classList.add('fade-out');
+                }, fadeOutDelay);
+                
+                // Set another timeout to remove the element from the DOM
+                setTimeout(() => {
+                    message.remove();
+                    if (flashContainer.children.length === 0) {
+                        flashContainer.remove();
+                    }
+                }, removeDelay);
+            });
+        }
+    });
+</script>
+
+<!-- PROFILE MENU MODAL -->
+<script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+
 </html>

@@ -1,52 +1,63 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8" />
-    <title>Real-Time Notes</title>
-    <style>
-        body {
-            background:#111;color:#eee;font-family:system-ui,Segoe UI,Roboto;
-            display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;
-        }
-        img { border:2px solid #333; box-shadow:0 6px 18px rgba(0,0,0,.5); }
-            .status { font-size:14px; }
-    </style>
-</head>
-<body>
-    <h2>🧭 Real-Time Notes Stream</h2>
-    <div class="status" id="status">Status: disconnected</div>
-    <img id="stream" src="/video_feed" width="800" height="600" alt="Live stream">
-    <div id="debug">X=0 | Y=0 | P=0</div>
+{% extends "base.html" %}
 
-    <script>
-        const wsPort = {{ ws_port }};
-        const wsUrl = `ws://${location.hostname}:${wsPort}/`;
-        const statusEl = document.getElementById('status');
-        const debugEl = document.getElementById('debug');
-        let ws;
+{% block extra_css %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/stream.css') }}">
+{% endblock %}
 
-        function connect() {
-            ws = new WebSocket(wsUrl);
-            ws.onopen = () => {
-                statusEl.textContent = "Status: connected";
-                console.log("[browser ws] connected");
-            };
-            ws.onmessage = ev => {
-                try {
-                const {x,y,p} = JSON.parse(ev.data);
-                debugEl.textContent = `X=${x} | Y=${y} | P=${p}`;
-                } catch {}
-            };
-            ws.onerror = e => {
-                console.warn("[browser ws] error", e);
-                statusEl.textContent = "Status: error";
-            };
-            ws.onclose = () => {
-                statusEl.textContent = "Status: disconnected — reconnecting…";
-                setTimeout(connect, 1500);
-            };
-        }
-        connect();
-    </script>
-</body>
-</html>
+{% block content %}
+    <div class="stream-ctn">
+        <div class="stream-wrapper">
+            {% include "stream/_navigation.html" %}
+
+            <!-- Content -->
+            <div class="stream-header">
+                <h1 class="header-title">
+                    <i class="fas fa-video header-icon"></i>
+                    Live Streaming
+                </h1>
+                <div class="status-pill">
+                    Status: <span id="status-state">Connecting...</span>
+                </div>
+            </div>
+
+            <div class="video-wrapper">
+                <img id="stream" src="/video_feed" alt="Live stream" width="800" height="600">   
+            </div>
+
+            <div id="debug"></div>
+
+        </div>
+
+        <!-- FETCH LATEST FRAMES -->
+        <script>
+            const wsPort = {{ ws_port }};
+            const wsUrl = `ws://${location.hostname}:${wsPort}/`;
+            const statusEl = document.getElementById('status');
+            const debugEl = document.getElementById('debug');
+            let ws;
+
+            function connect() {
+                ws = new WebSocket(wsUrl);
+                ws.onopen = () => {
+                    statusEl.textContent = "Status: connected";
+                    console.log("[browser ws] connected");
+                };
+                ws.onmessage = ev => {
+                    try {
+                    const {x,y,p} = JSON.parse(ev.data);
+                    debugEl.textContent = `X=${x} | Y=${y} | P=${p}`;
+                    } catch {}
+                };
+                ws.onerror = e => {
+                    console.warn("[browser ws] error", e);
+                    statusEl.textContent = "Status: error";
+                };
+                ws.onclose = () => {
+                    statusEl.textContent = "Status: disconnected — reconnecting…";
+                    setTimeout(connect, 1500);
+                };
+            }
+            connect();
+        </script>
+    </div>
+{% endblock %}

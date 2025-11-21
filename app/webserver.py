@@ -824,7 +824,7 @@ def gallery_page():
     admin_galleries = base_query.order_by(Gallery.name).all()
 
     # Check if gallery folder exists on disk
-    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
+    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.id))
     for g in admin_galleries:
         folder_path = os.path.join(user_filepath, str(g.id))
         if os.path.isdir(folder_path):
@@ -870,7 +870,7 @@ def session_page(galleryname):
         return "Gallery not found or deleted", 404
 
     # Path to the gallery folder using gallery ID
-    gallery_filepath = os.path.join(GALLERY_PATH, admin_name, str(gallery.id))
+    gallery_filepath = os.path.join(GALLERY_PATH, str(current_admin.id), str(gallery.id))
 
     # FETCH sessions from database, only not soft-deleted
     sessions_db = Session.query.filter_by(gallery_id=gallery.id) \
@@ -899,7 +899,6 @@ def folderview_page(galleryname, sessionname):
     """
     image_extensions = {'.jpg', '.png'}
     foldername = secure_filename(sessionname)
-    admin_name = str(admin_status.get_field('admin_name'))
     
     # FETCH ADMIN using admin_name from admin_status
     admin_name = str(admin_status.get_field('admin_name'))
@@ -923,7 +922,7 @@ def folderview_page(galleryname, sessionname):
         return "Session not found or deleted", 404
     
     # Path to the session folder using IDs
-    folder_path = os.path.join(GALLERY_PATH, admin_name, str(gallery.id), str(session_obj.id))
+    folder_path = os.path.join(GALLERY_PATH, str(current_admin.id), str(gallery.id), str(session_obj.id))
 
     if not os.path.isdir(folder_path):
         print("FOLDER: Does not exist")
@@ -940,7 +939,7 @@ def folderview_page(galleryname, sessionname):
         print("FOLDER: Access Error")
         return redirect(url_for("gallery_page"))
     
-    base_url = f"{admin_name}/{gallery.id}/{session_obj.id}"
+    base_url = f"{current_admin.id}/{gallery.id}/{session_obj.id}"
     
     return render_template(
         "gallery/view.html",
@@ -957,7 +956,7 @@ def folderview_page(galleryname, sessionname):
 def serve_gallery_image(filename):
     """
     Serve dynamically generated images from archive.
-    filename: relative path inside <admin_name>/<gallery>/<session>/<image>
+    filename: relative path inside <admin_id>/<gallery>/<session>/<image>
     """
     
 

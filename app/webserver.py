@@ -608,7 +608,25 @@ def force_delete_session(session_id):
 
 @app.route("/client")
 def client_page():
-    return render_template("client.html", ws_port=BROWSER_WS_PORT)
+    current_status = admin_status.get_field("status")
+    current_admin = admin_status.get_field("admin_name")
+    
+    # Default fallback
+    image_number = 1 
+
+    if current_status == "IDLE":
+        image_number = 2 if current_admin else 1
+    elif current_status == "CONFIGURING":
+        image_number = 3
+    elif current_status == "CONFIGURED":
+        image_number = 4
+    elif current_status == "STARTING":
+        image_number = 5
+    elif current_status == "HOSTING":
+        image_number = 6
+    
+    return render_template("client.html", initial_image=f"{image_number}.png", ws_port=BROWSER_WS_PORT)
+
 
 # --- Server-Sent Events (SSE) route for status updates ---
 @app.route("/status_updates")

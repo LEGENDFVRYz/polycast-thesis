@@ -717,7 +717,6 @@ def register_page():
     # On a GET request or if an error occurred during POST, render the register page
     return render_template("auth/register.html", error=error)
 
-
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     error = None
@@ -751,7 +750,6 @@ def login_page():
                 error = "An unexpected error occurred. Please try again."
     return render_template("auth/login.html", error=error)
 
-
 @app.route("/logout")
 def logout_page():
     global archiver_manager
@@ -778,6 +776,29 @@ def logout_page():
     session.pop("sname", None)
     
     return redirect(url_for("login_page"))
+
+@app.before_request
+def check_admin_sync():
+    if "user" not in session:
+        return
+
+    current_session_user = session["user"]
+    server_side_admin = admin_status.get_field("admin_name")
+
+    if server_side_admin is None:
+        # SCENARIO: Server Restarted
+        print(f"[SYNC] Server was restarted. Re-locking for {current_session_user}")
+        admin_status.login(current_session_user)
+    
+    
+    elif server_side_admin != current_session_user:
+        # SCENARIO: There is new admin login
+        print(f"[SYNC] Conflict. Server has {server_side_admin}, you are {current_session_user}. Logging out.")
+        session.clear()
+        flash("Session expired or another admin is active.", "error")
+        return redirect(url_for("login_page"))
+
+    admin_status.update_activity()
 
 
 

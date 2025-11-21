@@ -5,14 +5,15 @@ import time
 class AdminStatusManager:
     def __init__(self):
         self._status = {
-            "admin_name": None,     # If none, "NO ADMIN YET"
-            "status": "IDLE",       # IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
-            "hosting_active": False
+            "admin_name": None,             # If none, "NO ADMIN YET"
+            "status": "IDLE",               # IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
+            "hosting_active": False,
+            "last_activity": 0              # Track timestamp
         }
         
         self._lock = threading.Lock()
         self.status_changed = threading.Event()     # Signals when status changes
-
+        self.TIMEOUT_SECONDS = 300                  # 5 minutes timeout
     
     # ------------------------------
     # READ operations
@@ -79,6 +80,15 @@ class AdminStatusManager:
             hosting_active=False
         )
         return True
+    
+    
+    def update_activity(self):
+        """
+        Update time for every request to keep session alive.
+        """
+        with self._lock:
+            self._status["last_activity"] = time.time()
+    
     
     def reset(self):
         """

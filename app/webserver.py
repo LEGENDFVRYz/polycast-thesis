@@ -1,7 +1,5 @@
 import os
-import time  # <-- ADDED: For simulating delays
-import json  # <-- ADDED: For sending SSE data
-import threading
+import json
 from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash, send_from_directory, abort
 from pytest import Session
 from werkzeug.utils import secure_filename
@@ -870,7 +868,7 @@ def session_page(galleryname):
     List all sessions within the selected gallery
     """
     
-    # FETCH ADMIN
+    current_view = request.args.get('view', 'all')
     admin_name = str(admin_status.get_field('admin_name'))
     
     current_admin = Admin.query.filter_by(username=admin_name).first()
@@ -893,10 +891,18 @@ def session_page(galleryname):
     # Path to the gallery folder using gallery ID
     gallery_filepath = os.path.join(GALLERY_PATH, str(current_admin.id), str(gallery.id))
 
-    # FETCH sessions from database, only not soft-deleted
-    sessions_db = Session.query.filter_by(gallery_id=gallery.id) \
-                               .filter(Session.deleted_at.is_(None)) \
-                               .all()
+    # BUILD BASE QUERY
+    base_query = Session.query.filter_by(gallery_id=gallery.id)
+    
+    # 3. APPLY VIEW FILTER
+    if current_view == 'trash':
+        # Show only soft-deleted items
+        sessions_db = base_query.filter(Session.deleted_at.is_not(None)).all()
+    else:
+        # Default: Show only active items
+        current_view = 'all'
+        sessions_db = base_query.filter(Session.deleted_at.is_(None)).all()
+    
 
     # Only include sessions whose folders exist on disk
     sessions = []
@@ -909,6 +915,7 @@ def session_page(galleryname):
         "gallery/session.html",
         selected_gallery=gallery.name,
         sessions=sessions,
+        active_view=current_view,
         is_current_user=is_current_user
     )
 

@@ -56,7 +56,21 @@
 
         <!-- Session Folders -->
         <section class="folders">
-            <h2 class="section-title">Sessions ({{ sessions|length }}):</h2>
+            <div class="folder-header">
+                <h2 class="section-title">
+                    {% if active_view == 'trash' %}Deleted {% endif %}Sessions ({{ sessions|length }}):
+                </h2>
+
+                {% if active_view == 'all' %}
+                    <a href="{{ url_for('session_page', galleryname=selected_gallery, view='trash') }}" title="Go to Recycle Bin">
+                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" alt="Recycle Icon" width="21" height="21">
+                    </a>
+                {% else %}
+                    <a href="{{ url_for('session_page', galleryname=selected_gallery, view='all') }}" title="Back to Active Sessions">
+                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" style="filter: invert(16%) sepia(96%) saturate(6821%) hue-rotate(357deg) brightness(96%) contrast(114%);" alt="Recycle Icon" width="21" height="21">
+                    </a>
+                {% endif %}
+            </div>
             <div class="folder-list">
                 
                 <!-- Loop through all available folders -->
@@ -76,18 +90,22 @@
                                 </div>
 
                             {% if is_current_user %}
-                                <button type="button" class="icon-button edit-session-btn"
-                                        data-modal-target="#editSessionModal"
-                                        data-session-id="{{ session.id }}"
-                                        data-session-name="{{ session.name }}">
-                                    <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                </button>
+                                {% if active_view == 'all' %}
+                                    <button type="button" class="icon-button edit-session-btn"
+                                            data-modal-target="#editSessionModal"
+                                            data-session-id="{{ session.id }}"
+                                            data-session-name="{{ session.name }}">
+                                        <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
+                                    </button>
 
-                                <button type="button" class="icon-button delete-session-btn"
-                                        data-modal-target="#deleteSessionModal"
-                                        data-delete-url="{{ url_for('delete_session', session_id=session.id) }}">
-                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                </button>
+                                    <button type="button" class="icon-button delete-session-btn"
+                                            data-modal-target="#deleteSessionModal"
+                                            data-delete-url="{{ url_for('delete_session', session_id=session.id) }}">
+                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
+                                    </button>
+                                {% else %}
+                                    
+                                {% endif %}
                             {% endif %}
                         </div>
                     {% endfor %}
@@ -99,9 +117,12 @@
         </section>
     </div>
 
-    <!-- Delete Modal -->
+    {# 
+    ==========================================
+    DELETE CONFIRMATION MODAL (SESSION)
+    ==========================================
+    #}
     {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
-        
         <p>Are you sure you want to move this session to the recycle bin?</p>
         
         <form id="deleteSessionForm" method="POST" action="">
@@ -110,12 +131,14 @@
                 <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
             </div>
         </form>
-
     {% endcall %}
     
-    <!-- Update Modal -->
+    {# 
+    ==========================================
+    UPDATE CONFIRMATION MODAL (SESSION)
+    ==========================================
+    #}
     {% call modal_shell(modal_id='editSessionModal', modal_title='EDIT SESSION NAME') %}
-        
         <form id="editSessionForm" method="POST" action=""> 
             <div class="form-group">
                 <label for="new_session_name">Session Name:</label>
@@ -126,16 +149,27 @@
                 <button type="submit" class="btn btn-primary">Update Name</button>
             </div>
         </form>
-
     {% endcall %}
-
     
+
+
+    <!-- DETAILS TOGGLE SCRIPT -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const toggleButton = document.getElementById('detailsToggle');
+            const cardContent = document.querySelector('.card-content'); 
+            toggleButton.addEventListener('click', function(event) {
+                event.preventDefault(); 
+                cardContent.classList.toggle('hidden');
+            });
+        });
+    </script>
+
 
     <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
     <script>
-
         document.addEventListener('DOMContentLoaded', function() {
 
             // ===========================================
@@ -171,17 +205,6 @@
                     }
                 });
             });
-
         });
-
-        document.addEventListener('DOMContentLoaded', function() {
-        const toggleButton = document.getElementById('detailsToggle');
-        const cardContent = document.querySelector('.card-content'); 
-        toggleButton.addEventListener('click', function(event) {
-            event.preventDefault(); 
-            cardContent.classList.toggle('hidden');
-        });
-    });
     </script>
-
 {% endblock %}

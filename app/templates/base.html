@@ -22,33 +22,35 @@
 </head>
 <body>
 
-    <!-- Header -->
-    <header class="app-header">
-        <a href="{{ url_for('index') }}">
-            <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
-        </a>
-        <div class="right-header">
-            <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
-                 alt="Profile Picture" 
-                 class="header-profile"
-                 id="profileBtn"
-                 data-modal-target="#profileModal"
-                 style="cursor: pointer;">
+    <header class="app-wrapper">
+        <!-- Header -->
+        <div class="app-header">
+            <a href="{{ url_for('index') }}">
+                <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
+            </a>
+            <div class="right-header">
+                <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                     alt="Profile Picture" 
+                     class="header-profile"
+                     id="profileBtn"
+                     data-modal-target="#profileModal"
+                     style="cursor: pointer;">
+            </div>
         </div>
+        <!-- Navigation Tabs -->
+        <nav class="app-navigation">
+                <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
+                   href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
+                    Stream
+                </a>
+    
+                <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
+                   href="{{ url_for('gallery_page') }}">
+                    Gallery
+                </a>
+        </nav>
     </header>
 
-    <!-- Navigation Tabs -->
-    <nav class="app-navigation">
-            <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
-               href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
-                Stream
-            </a>
-
-            <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
-               href="{{ url_for('gallery_page') }}">
-                Gallery
-            </a>
-    </nav>
     
     <!-- Flash Message Popups -->
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -63,12 +65,12 @@
             </div>
         {% endif %}
     {% endwith %}
-
+    
     <!-- Main content -->
     <main class="main-content">
         {% block content %}
             <!-- Page-specific content will go here -->
-
+            
         {% endblock %}
     </main>
     

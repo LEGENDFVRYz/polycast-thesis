@@ -79,6 +79,8 @@ header.app-wrapper {
         width: 100%;
         max-width: 1000px;
         margin: 0 auto;
+
+        position: relative;
         
         .app-tab {
             width: 7em;
@@ -98,7 +100,7 @@ header.app-wrapper {
         .app-tab.active {
             color: #2E7CF6; 
             
-            &::after {
+            /* &::after {
                 content: "";
                 position: absolute;
                 bottom: 0;
@@ -107,7 +109,19 @@ header.app-wrapper {
                 height: 4px;
                 background-color: #2E7CF6;
                 border-radius: 99px 99px 0 0;
-            }
+            } */
+        }
+
+        .nav-marker {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 4px;
+            background-color: #2E7CF6;
+            border-radius: 99px 99px 0 0;
+            transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); 
+            pointer-events: none; 
+            z-index: 1;
         }
     }
 }

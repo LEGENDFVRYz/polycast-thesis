@@ -125,45 +125,6 @@
                 </section>
             {% endif %}
             
-            {% if 1 == 0 %}
-                <section class="folders">
-                    <h2 class="section-title">Manage:</h2>
-
-                    <div class="folder-list">
-                        {% if gallery_data %}  
-                            {% for gallery in gallery_data %}
-                                <div class="folder-item">
-                                    <div class="item-icon">
-                                        <image src="../static/images/icons/folder1.svg">
-                                    </div>
-                                    <div class="item-info">
-                                        <a href="{{ url_for('session_page', galleryname=gallery.name) }}">
-                                            <h3 class="item-title">{{ gallery.name }}</h3>
-                                        </a>
-                                        <p class="item-subtitle">BSCPE 4-3</p>
-                                    </div>
-                                    <div class="item-menu">
-                                        <button type="button" class="icon-button edit-session-btn" 
-                                                data-gallery-id="{{ gallery.id }}" 
-                                                data-gallery-name="{{ gallery.name }}"
-                                                data-modal-target="#editGalleryModal">
-                                            <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                        </button>
-                                        
-                                        <button type="button" class="icon-button delete-session-btn"
-                                                data-modal-target="#deleteGalleryModal"
-                                                data-delete-url="{{ url_for('delete_gallery', gallery_id=gallery.id) }}">
-                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                        </button>
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No gallery folders found!</p>
-                        {% endif %}
-                    </div>
-                </section>
-            {% endif %}
         </div>
 
         {# 

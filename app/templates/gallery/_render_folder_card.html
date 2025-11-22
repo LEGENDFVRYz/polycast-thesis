@@ -27,6 +27,21 @@
             </button>
 
         {% else %}
+            <button type="button" 
+                    class="icon-button favorite-gallery-btn" 
+                    data-gallery-id="{{ folder.id }}"
+                    data-favorite-url="{{ url_for('toggle_gallery_favorite', gallery_id=folder.id) }}"
+                    data-modal-target="#favoriteGalleryModal"
+                    title="{{ 'Remove from Favorites' if folder.is_favorite else 'Add to Favorites' }}">
+                
+                {# Logic to switch icons #}
+                {% if folder.is_favorite %}
+                    <img src="{{ url_for('static', filename='images/icons/star-filled.svg') }}" width="21" height="21">
+                {% else %}
+                    <img src="{{ url_for('static', filename='images/icons/star.svg') }}" width="21" height="21">
+                {% endif %}
+            </button>
+
             <button type="button" class="icon-button edit-session-btn" 
                     data-gallery-id="{{ folder.id }}" 
                     data-gallery-name="{{ folder.name }}"

@@ -603,6 +603,38 @@ def force_delete_session(session_id):
 
     return redirect(request.referrer or url_for('admin_page'))
 
+@app.route("/gallery/<int:gallery_id>/favorite", methods=['POST'])
+def toggle_gallery_favorite(gallery_id):
+    
+    if "user" not in session:
+        flash("You must be admin in to perform this action.", "error")
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # Security Check
+    if gallery.admin_id != current_user_id:
+        abort(403)
+
+    try:
+        # Toggle the value
+        gallery.is_favorite = not gallery.is_favorite
+        db.session.commit()
+
+        # 5. Feedback
+        if gallery.is_favorite:
+            flash(f'"{gallery.name}" added to favorites.', 'success')
+        else:
+            flash(f'"{gallery.name}" removed from favorites.', 'info')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error updating favorite status: {e}', 'danger')
+
+    return redirect(request.referrer or url_for('admin_page'))
+
+
 
 
 
@@ -868,7 +900,7 @@ def gallery_page():
         folder_path = os.path.join(user_filepath, str(g.id))
         if os.path.isdir(folder_path):
             # MODIFICATION: Append a dictionary with id and name
-            eligible_folders.append({'id': g.id, 'name': g.name})
+            eligible_folders.append({'id': g.id, 'name': g.name, 'is_favorite': g.is_favorite})
 
     is_setup = admin_status.get_field("hosting_active")
 

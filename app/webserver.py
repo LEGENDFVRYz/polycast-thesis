@@ -348,7 +348,7 @@ def delete_gallery(gallery_id):
         db.session.rollback()
         flash(f'An error occurred while moving to bin: {e}', 'danger')
 
-    return redirect(url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/gallery/<int:gallery_id>/update", methods=['POST'])
 def update_gallery_name(gallery_id):
@@ -391,7 +391,7 @@ def update_gallery_name(gallery_id):
         db.session.rollback()
         flash(f'An error occurred while updating the name: {e}', 'danger')
 
-    return redirect(url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/delete", methods=['POST'])
 def delete_session(session_id):
@@ -418,7 +418,7 @@ def delete_session(session_id):
 
     # 4. Redirect back to the page the user was on
     # request.referrer is the URL they just came from (the session list)
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/update", methods=['POST'])
 def update_session_name(session_id):
@@ -465,7 +465,7 @@ def update_session_name(session_id):
         flash(f'An error occurred: {e}', 'danger')
 
     # Redirect back to the session list page
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/gallery/<int:gallery_id>/recover", methods=['POST'])
 def recover_gallery(gallery_id):
@@ -501,7 +501,7 @@ def recover_gallery(gallery_id):
         flash(f'An error occurred while recovering: {e}', 'danger')
 
     # Redirect to the Recycle Bin page or Admin page
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/recover", methods=['POST'])
 def recover_session(session_id):
@@ -539,7 +539,7 @@ def recover_session(session_id):
         db.session.rollback()
         flash(f'An error occurred: {e}', 'danger')
 
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/gallery/<int:gallery_id>/force-delete", methods=['POST'])
 def force_delete_gallery(gallery_id):
@@ -571,7 +571,7 @@ def force_delete_gallery(gallery_id):
         flash(f'An error occurred during permanent deletion: {e}', 'danger')
 
     # Redirect back to the Trash page (referrer)
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/force-delete", methods=['POST'])
 def force_delete_session(session_id):
@@ -601,7 +601,7 @@ def force_delete_session(session_id):
         db.session.rollback()
         flash(f'An error occurred: {e}', 'danger')
 
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/gallery/<int:gallery_id>/favorite", methods=['POST'])
 def toggle_gallery_favorite(gallery_id):
@@ -632,7 +632,7 @@ def toggle_gallery_favorite(gallery_id):
         db.session.rollback()
         flash(f'Error updating favorite status: {e}', 'danger')
 
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 
 
@@ -825,7 +825,7 @@ def logout_page():
     session.pop("gname", None)
     session.pop("sname", None)
     
-    return redirect(url_for("login_page"))
+    return redirect(url_for("index"))
 
 @app.before_request
 def check_admin_sync():

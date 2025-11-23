@@ -7,26 +7,39 @@ import signal
 import sys
 
 # ==========================================
-# CONFIGURATION
+# CONFIGURATION - v3.2 "Robust Defense"
 # ==========================================
 CONFIG = {
-    'serial_port': 'COM2',       # Update this for your machine
+    'serial_port': 'COM2',       
     'baud_rate': 115200,
     
-    # --- Tuning Parameters ---
-    'accel_deadband': 0.15,      # Ignore accel below this (m/s^2)
-    'stationary_thresh': 0.25,   # Threshold to trigger ZUPT (Zero Velocity)
-    'friction': 0.95,            # Damping factor for velocity when coasting
+    # --- LAYER 1: SPIKE EATER SETTINGS ---
+    'uwb_window_size': 5,        # Number of samples for Median Filter (odd numbers best)
     
-    # --- Kalman Filter Noise Profiles ---
-    # Process Noise (How much we trust the physics prediction)
-    'process_pos_var': 1e-6,
-    'process_vel_var': 1e-3,
-    'accel_noise_var': 0.5,      # How noisy is the IMU acceleration?
+    # --- LAYER 2: PHYSICS GATE SETTINGS ---
+    'max_accel': 3.0,            # Max allowed acceleration (m/s^2). Clips handling noise.
+    'warmup_packets': 50,        # Ignore first ~1 sec of data to skip "pickup" noise.
     
-    # Measurement Noise (How much we trust the UWB)
-    'uwb_noise_std': 0.05,       # 5cm standard deviation
-    'uwb_jump_thresh': 0.5       # Outlier rejection threshold (meters)
+    # --- VIRTUAL WHITEBOARD BOUNDS (Meters) ---
+    # Adjust these to match your actual wall drawing area
+    'bounds_x_min': 0.2,
+    'bounds_x_max': 3,
+    'bounds_y_min': -0.1,
+    'bounds_y_max': 2.5,
+    
+    # --- TUNING PARAMETERS ---
+    'accel_deadband': 0.12,      
+    'stationary_thresh': 0.30,   
+    'friction': 0.90,            
+    
+    # --- KALMAN FILTER NOISE ---
+    'process_pos_var': 1e-5,     
+    'process_vel_var': 0.005,    
+    'accel_noise_var': 0.2,      
+    'uwb_noise_std': 0.15,       
+    
+    # --- LAYER 3: STATISTICAL GATE SETTINGS ---
+    'uwb_jump_thresh': 0.60      # Max allowed jump (meters) per update
 }
 
 # ==========================================
@@ -38,28 +51,23 @@ class KalmanFilter2D:
     State Vector x = [px, py, vx, vy]
     """
     def __init__(self, initial_pos):
-        # Initial State: [x, y, vx, vy]
         self.x = np.array([initial_pos[0], initial_pos[1], 0.0, 0.0], dtype=float)
         
-        # Initial Covariance (P): High uncertainty in velocity, low in pos
+        # Initial Covariance (P)
         self.P = np.diag([0.1**2, 0.1**2, 1.0**2, 1.0**2])
         
-        # Measurement Matrix (H): We only measure Position [px, py]
+        # Measurement Matrix (H)
         self.H = np.array([
             [1.0, 0.0, 0.0, 0.0],
             [0.0, 1.0, 0.0, 0.0]
         ])
         
-        # Measurement Noise Covariance (R)
+        # Default Measurement Noise (R)
         std = CONFIG['uwb_noise_std']
         self.R_default = np.diag([std**2, std**2])
 
     def predict(self, ax, ay, dt):
-        """
-        Prediction Step: Moves state forward using physics + IMU acceleration.
-        x = Fx + Bu
-        """
-        # State Transition Matrix (F) - Kinematics
+        """ Prediction Step: x = Fx + Bu """
         F = np.array([
             [1.0, 0.0, dt,  0.0],
             [0.0, 1.0, 0.0, dt ],
@@ -67,7 +75,6 @@ class KalmanFilter2D:
             [0.0, 0.0, 0.0, 1.0]
         ])
 
-        # Control Matrix (B) - How Accel affects Pos and Vel
         half_dt2 = 0.5 * dt * dt
         B = np.array([
             [half_dt2, 0.0],
@@ -82,7 +89,6 @@ class KalmanFilter2D:
         self.x = F.dot(self.x) + B.dot(u)
 
         # 2. Predict Covariance
-        # Q involves continuous process noise + accel noise injection
         Q_accel = B.dot(np.eye(2) * CONFIG['accel_noise_var']).dot(B.T)
         Q_base = np.diag([
             CONFIG['process_pos_var'], CONFIG['process_pos_var'],
@@ -93,34 +99,22 @@ class KalmanFilter2D:
         self.P = F.dot(self.P).dot(F.T) + Q
 
     def update(self, z_meas, R_override=None):
-        """
-        Update Step: Corrects state using UWB measurement.
-        """
+        """ Update Step: Corrects state using UWB measurement. """
         R = R_override if R_override is not None else self.R_default
         
-        # Residual (y) = Measurement - Prediction
-        y = z_meas - self.H.dot(self.x)
-        
-        # Kalman Gain (K)
+        y = z_meas - self.H.dot(self.x) # Residual
         S = self.H.dot(self.P).dot(self.H.T) + R
-        K = self.P.dot(self.H.T).dot(np.linalg.inv(S))
+        K = self.P.dot(self.H.T).dot(np.linalg.inv(S)) # Kalman Gain
         
-        # Update State
         self.x = self.x + K.dot(y)
         
-        # Update Covariance
         I = np.eye(4)
         self.P = (I - K.dot(self.H)).dot(self.P)
 
     def apply_zupt(self):
-        """
-        Zero Velocity Update: Forces velocity to 0 and reduces uncertainty.
-        Crucial for stopping drift when the pen stops.
-        """
+        """ Zero Velocity Update: Forces velocity to 0. """
         self.x[2] = 0.0 # vx
         self.x[3] = 0.0 # vy
-        
-        # Trust this "stop" heavily -> reduce velocity covariance
         self.P[2,2] = min(self.P[2,2], 1e-4)
         self.P[3,3] = min(self.P[3,3], 1e-4)
 
@@ -133,90 +127,120 @@ class StrokeTracker:
         self.prev_ts_micros = 0
         self.prev_uwb = None
         
-        # Data storage for plotting
+        # --- Data Storage ---
         self.path_x = []
         self.path_y = []
         self.uwb_raw_x = []
         self.uwb_raw_y = []
+        
+        # --- State Flags ---
+        self.is_drawing = False 
+        self.packet_count = 0 
+        
+        # --- LAYER 1: MEDIAN FILTER BUFFERS ---
+        self.uwb_window_x = []
+        self.uwb_window_y = []
+
+    def is_in_bounds(self, x, y):
+        """Geofencing: Check if coordinate is inside the Virtual Whiteboard."""
+        return (x >= CONFIG['bounds_x_min'] and 
+                x <= CONFIG['bounds_x_max'] and 
+                y >= CONFIG['bounds_y_min'] and 
+                y <= CONFIG['bounds_y_max'])
 
     def process_packet(self, line_bytes):
         try:
             parts = line_bytes.decode('utf-8').strip().split(',')
             vals = [float(x) for x in parts]
         except:
-            return # Bad packet
+            return # Bad packet/encoding
             
         if len(vals) < 10: return
 
-        # --- 1. Parse UWB ---
-        uwb_pos = np.array([vals[0], vals[1]])
-        self.uwb_raw_x.append(uwb_pos[0])
-        self.uwb_raw_y.append(uwb_pos[1])
+        # Increment packet counter for Warmup Logic
+        self.packet_count += 1
 
-        # Simple smoothing for UWB (Low Pass Filter)
+        # =========================================================
+        # LAYER 1: THE SPIKE EATER (Median Filter)
+        # =========================================================
+        raw_x, raw_y = vals[0], vals[1]
+        
+        # 1. Add new value to window
+        self.uwb_window_x.append(raw_x)
+        self.uwb_window_y.append(raw_y)
+        
+        # 2. Maintain window size (Slide the window)
+        if len(self.uwb_window_x) > CONFIG['uwb_window_size']:
+            self.uwb_window_x.pop(0)
+            self.uwb_window_y.pop(0)
+            
+        # 3. Calculate Median (This rejects the single-point glitches)
+        uwb_clean_x = np.median(self.uwb_window_x)
+        uwb_clean_y = np.median(self.uwb_window_y)
+        
+        uwb_pos = np.array([uwb_clean_x, uwb_clean_y])
+
+        # Store RAW data for comparison in plot, but use CLEAN data for math
+        self.uwb_raw_x.append(raw_x)
+        self.uwb_raw_y.append(raw_y)
+
+        # Simple exponential smoothing (Low Pass) on the CLEAN data
         alpha = 0.4
         if self.prev_uwb is None:
             self.prev_uwb = uwb_pos
         else:
             self.prev_uwb = alpha * uwb_pos + (1.0 - alpha) * self.prev_uwb
 
-        # --- 2. Initialize KF on first run ---
+        # --- Initialize KF on first run ---
         if self.kf is None:
             self.kf = KalmanFilter2D(uwb_pos)
-            # Set initial timestamp from the first IMU sample in packet
-            self.prev_ts_micros = vals[6 + 7] 
-            self.path_x.append(self.kf.x[0])
-            self.path_y.append(self.kf.x[1])
+            self.prev_ts_micros = vals[13] 
             return
 
-        # --- 3. Iterate through IMU Batch (10 samples) ---
-        # Protocol assumes: UWB_X, UWB_Y, [Qx, Qy, Qz, Qw, Ax, Ay, Az, TS] x 10
+        # =========================================================
+        # LAYER 2 (Part A): WARMUP LOGIC
+        # =========================================================
+        # If we are just starting, run the math but do NOT draw/record.
+        is_warming_up = self.packet_count < CONFIG['warmup_packets']
+
+        # --- Iterate through IMU Batch ---
         offset = 6
         stride = 8
-        
         has_predicted = False
 
         for i in range(10):
             idx = offset + (i * stride)
             if idx + 7 >= len(vals): break
 
-            # Extract Raw Data
             qx, qy, qz, qw = vals[idx : idx+4]
             ax, ay, az     = vals[idx+4 : idx+7]
             ts_micros      = int(vals[idx+7])
 
-            # Calculate DT
             dt = (ts_micros - self.prev_ts_micros) / 1_000_000.0
             self.prev_ts_micros = ts_micros
-            
-            # Sanity check dt
-            if dt <= 0 or dt > 0.2:
-                dt = 0.01 # fallback nominal
+            if dt <= 0 or dt > 0.2: dt = 0.01
 
-            # Coordinate Transform: Body -> World
+            # Transform & Gravity Removal
             q = Quaternion(qw, qx, qy, qz)
             acc_world = q.rotate(np.array([ax, ay, az]))
+            lin_acc = acc_world - np.array([0.0, 0.0, 9.80665])
             
-            # Remove Gravity (Assume Z is up/down)
-            gravity = np.array([0.0, 0.0, 9.80665])
-            lin_acc = acc_world - gravity
-            
-            # We only care about Wall Plane (X, Y)
-            input_acc = np.array([lin_acc[0], lin_acc[1]])
+            # =========================================================
+            # LAYER 2 (Part B): PHYSICS GATE (Input Clamping)
+            # =========================================================
+            # Clip acceleration to realistic handwriting limits
+            limit = CONFIG['max_accel']
+            input_acc_x = np.clip(lin_acc[0], -limit, limit)
+            input_acc_y = np.clip(lin_acc[1], -limit, limit)
+            input_acc = np.array([input_acc_x, input_acc_y])
 
-            # --- Heuristic: Deadband ---
-            # If accel is tiny, assume it's sensor noise and clamp to 0
+            # Deadband & ZUPT Check
             if np.linalg.norm(input_acc) < CONFIG['accel_deadband']:
                 input_acc[:] = 0.0
-            
-            # --- Heuristic: ZUPT ---
-            # If totally stationary, tell KF to stop velocity
             is_stationary = np.linalg.norm(input_acc) < CONFIG['stationary_thresh']
 
-            # --- KF Predict ---
+            # KF Predict
             self.kf.predict(input_acc[0], input_acc[1], dt)
-            
-            # Apply Friction (prevents velocity from persisting forever)
             self.kf.x[2] *= CONFIG['friction']
             self.kf.x[3] *= CONFIG['friction']
 
@@ -225,27 +249,37 @@ class StrokeTracker:
 
             has_predicted = True
             
-            # Store path (Predicted)
-            self.path_x.append(self.kf.x[0])
-            self.path_y.append(self.kf.x[1])
+            # --- VIRTUAL PEN / GEOFENCING ---
+            if is_warming_up:
+                continue # Skip recording
 
-        # --- 4. KF Update (UWB Correction) ---
-        # We update once per batch using the smoothed UWB value
+            curr_x, curr_y = self.kf.x[0], self.kf.x[1]
+            if self.is_in_bounds(curr_x, curr_y):
+                self.path_x.append(curr_x)
+                self.path_y.append(curr_y)
+                self.is_drawing = True
+            else:
+                if self.is_drawing:
+                    self.path_x.append(np.nan) # Break the line
+                    self.path_y.append(np.nan)
+                    self.is_drawing = False
+
+        # =========================================================
+        # LAYER 3: STATISTICAL GATE (Innovation Gating)
+        # =========================================================
         if has_predicted:
-            # Outlier Rejection Check
             pred_pos = self.kf.x[:2]
-            jump = np.linalg.norm(self.prev_uwb - pred_pos)
             
-            R_current = None
-            if jump > CONFIG['uwb_jump_thresh']:
-                # If UWB jump is massive, trust it less (high variance)
-                R_current = np.diag([1.0, 1.0]) 
+            # How far is the UWB measurement from where physics says we are?
+            innovation = np.linalg.norm(self.prev_uwb - pred_pos)
             
-            self.kf.update(self.prev_uwb, R_override=R_current)
-
-            # Correct the last point in the path list with the updated position
-            self.path_x[-1] = self.kf.x[0]
-            self.path_y[-1] = self.kf.x[1]
+            if innovation > CONFIG['uwb_jump_thresh']:
+                # REJECT: The jump is physically impossible for this dt
+                print(f"Update REJECTED. Jump: {innovation:.2f}m")
+                pass 
+            else:
+                # ACCEPT: Update filter
+                self.kf.update(self.prev_uwb)
 
 # ==========================================
 # MAIN EXECUTION
@@ -259,15 +293,13 @@ def signal_handler(sig, frame):
 
 def main():
     signal.signal(signal.SIGINT, signal_handler)
-    
     tracker = StrokeTracker()
     
     print(f"Opening {CONFIG['serial_port']}...")
     try:
         ser = serial.Serial(CONFIG['serial_port'], CONFIG['baud_rate'], timeout=1)
         ser.flushInput()
-        
-        print("System Ready. Draw on the wall.")
+        print("System Ready. (Warmup active for first ~1s)")
         
         while is_running:
             try:
@@ -276,14 +308,12 @@ def main():
                     tracker.process_packet(line)
             except serial.SerialException:
                 break
-                
     except Exception as e:
         print(f"Error: {e}")
     finally:
         if 'ser' in locals() and ser.is_open:
             ser.close()
         
-        # --- Plotting Results ---
         if len(tracker.path_x) > 0:
             plt.figure(figsize=(8, 8))
             
@@ -309,9 +339,9 @@ def main():
                 label='Fused Track'
             )
             
-            plt.title("v2.0: Linear Kalman Filter (KF)")
-            plt.xlabel("X Position (m)")
-            plt.ylabel("Y Position (m)")
+            plt.title("v3.2.1: Robust Fusion (Median + Clamped + Gated)")
+            plt.xlabel("X (m)")
+            plt.ylabel("Y (m)")
             plt.axis('equal')
             plt.grid(True)
             plt.legend()

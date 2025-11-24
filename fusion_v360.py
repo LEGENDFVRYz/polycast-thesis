@@ -14,7 +14,7 @@ from scipy.optimize import least_squares
 from trilateration import solve_position_from_distances
 
 # ==============================================================================
-#   MANUFACTURER LOGIC + CALIBRATION OFFSETS
+#   "v4.2.1: Non-Linear Least Squares (NLLS) optimization"
 # ==============================================================================
 #   
 #   UPDATED LOGIC:
@@ -71,55 +71,58 @@ CONFIG = {
 # ==========================================
 # MANUFACTURER TRILATERATION LOGIC
 # ==========================================
-def trilaterate(distances, anchors):
+# ==========================================
+# NEW: NON-LINEAR LEAST SQUARES TRILATERATION
+# ==========================================
+def trilaterate_nlls(distances, anchors):
     """
-    PORTED EXACTLY FROM REFERENCE CODE (trilaterate_2d)
-    Uses linear algebra (intersection of radical axes) instead of optimization.
+    Solves for position using Non-Linear Least Squares optimization.
+    Minimizes the error: sum(|x - Ai| - di)^2
+    Includes Bounds to force Z near 0 (Wall mode).
     """
     
-    # 1. Format data to match reference structure: [(x, y, dist), ...]
-    valid_data = []
-    for i in range(len(distances)):
-        # We assume 2D for this logic (taking only X and Y of anchors)
-        if distances[i] > 0:
-            valid_data.append((anchors[i][0], anchors[i][1], distances[i]))
-
-    # Reference requires at least 3 valid anchors
-    if len(valid_data) < 3:
+    # 1. Filter out invalid distances (Reference code treats 0.0 as error)
+    distances = np.array(distances)
+    valid_mask = distances > 0
+    
+    # We need at least 3 anchors for a solid fix, but NLLS can attempt with fewer
+    # given the bounds, though 3 is recommended.
+    if np.sum(valid_mask) < 3:
         return None
 
-    # 2. Set Reference Anchor (First valid one)
-    x1, y1, r1 = valid_data[0]
-    A = []
-    b = []
+    active_anchors = anchors[valid_mask]
+    active_dists = distances[valid_mask]
 
-    # 3. Build Linear System
-    # Formula: 2(xi - x1)x + 2(yi - y1)y = ri^2 - r1^2 - xi^2 + x1^2 - yi^2 + y1^2
-    for i in range(1, len(valid_data)):
-        xi, yi, ri = valid_data[i]
-        
-        # A Matrix terms
-        A.append([2*(xi - x1), 2*(yi - y1)])
-        
-        # B Vector terms (Strict copy of reference formula)
-        b_val = ri**2 - r1**2 - xi**2 + x1**2 - yi**2 + y1**2
-        b.append(b_val)
+    # 2. Define the Residual Function (The error to minimize)
+    def residuals(x, anchors, measured_dists):
+        # x is the guessed position [x, y, z]
+        # np.linalg.norm(anchors - x, axis=1) calculates distance from guess to each anchor
+        estimated_dists = np.linalg.norm(anchors - x, axis=1)
+        return estimated_dists - measured_dists
 
-    # 4. Solve using Cramer's Rule / Determinant (if we have at least 2 equations)
-    if len(A) >= 2:
-        # Reference only uses the first two equations generated
-        det = A[0][0]*A[1][1] - A[0][1]*A[1][0]
-        
-        if abs(det) < 1e-6:
-            return None
-            
-        # Strict copy of reference solution signs
-        x = -(b[0]*A[1][1] - b[1]*A[0][1]) / det
-        y = -(A[0][0]*b[1] - A[1][0]*b[0]) / det
-        
-        return np.array([x, y, 0.0]) # Return as 3D array with Z=0
+    # 3. Initial Guess (Centroid of anchors is a safe starting point)
+    x0 = np.mean(active_anchors, axis=0)
 
-    return None
+    # 4. Optimization with Bounds (Option B from your notes)
+    # Since we are writing on a wall, we constrain Z heavily.
+    # X/Y bounds can be loose (room size). Z bounds are tight (-0.2 to 0.2).
+    bounds_min = [-10.0, -10.0, -0.2]
+    bounds_max = [ 10.0,  10.0,  0.2]
+
+    try:
+        res = least_squares(
+            residuals, 
+            x0, 
+            bounds=(bounds_min, bounds_max),
+            args=(active_anchors, active_dists),
+            loss='soft_l1', # Robust loss: reduces effect of gross outliers
+            f_scale=0.5     # Sensitivity of the robust loss
+        )
+        return res.x # Returns [x, y, z]
+    except Exception as e:
+        # Fallback or logging if solver fails
+        return None
+
 
 # ==========================================
 # CLASS: KALMAN FILTER
@@ -244,7 +247,7 @@ class StrokeTracker:
         # ====================================================
         #    PIPELINE A: MANUALLY COMPUTED UWB (RED DATA)
         # ====================================================
-        comp_pos_3d = trilaterate([d0, d1, d2], CONFIG['anchors'])
+        comp_pos_3d = trilaterate_nlls([d0, d1, d2], CONFIG['anchors'])
         
         has_comp_data = False
         
@@ -479,7 +482,7 @@ def main():
     line_fused_comp, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#2A2A94",
                            label='Fused (Computed)')
 
-    ax.set_title("v4.2: DUAL FUSION MONITOR")
+    ax.set_title("v4.2.1: Non-Linear Least Squares (NLLS) optimization")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.axis('equal')

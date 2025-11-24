@@ -2,27 +2,49 @@ import serial
 import time
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.pyplot as plt
 from pyquaternion import Quaternion
 import signal
 import sys
 
-# ==========================================
-# CONFIGURATION - v5.0 "Production Ready"
-# ==========================================
+# ==============================================================================
+#   v5.1: LEVER ARM CORRECTION (Current Status & Future Optimization)
+# ==============================================================================
+#
+#   CURRENT SITUATION (Testing Phase):
+#   - We are currently testing with the pen held PERPENDICULAR to the wall
+#     (hovering/robot-arm style). 
+#   - In this specific case, the "Lever Arm" effect is just a constant offset.
+#   - The IMU acceleration matches the Tip acceleration because there is 
+#     no wrist rotation.
+#
+#   THE PROBLEM (Real Handwriting):
+#   - Real handwriting involves pivoting the wrist.
+#   - PROBLEM A: The sensor moves in an arc even when the tip is stationary.
+#     -> FIXED by the 'tip_offset' logic below (Transforming Sensor -> Tip).
+#   - PROBLEM B: The IMU measures "Centripetal Acceleration" from the rotation.
+#     -> PENDING: Future optimization will need to subtract these forces
+#        using Gyroscope data in the Kalman Filter prediction step.
+#
+# ==============================================================================
+
 plt.ion()
 
 CONFIG = {
     'serial_port': 'COM2',       
     'baud_rate': 115200,
     
+    # --- PHYSICAL SETUP (CRITICAL) ---
+    # Vector from Sensor Center -> Pen Tip (in meters)
+    # [x, y, z] relative to the sensor board (Local Frame).
+    #
+    # ACTION: Measure your hardware! 
+    # Usually, the sensor axis pointing to the tip is ~0.14m.
+    # If mounted sideways, it might be Y or Z.
+    'tip_offset': [0.14, 0.0, 0.0], 
+    
     # --- LAYERS 1 & 2 (Defense) ---
-    'uwb_window_size': 5,        # Median filter size
-    
-    # [FIX] Tighter Clamp to catch the 2.93 spike
+    'uwb_window_size': 5,        
     'max_accel': 2.0,            
-    
-    # [FIX] REMOVED WARMUP PACKETS (Was 50, now effectively 0)
     
     # --- VIRTUAL WHITEBOARD BOUNDS ---
     'bounds_x_min': 0.2, 'bounds_x_max': 3.0,
@@ -48,12 +70,15 @@ CONFIG = {
 # ==========================================
 class KalmanFilter2D:
     def __init__(self, initial_pos):
+        # State: [x, y, vx, vy] of the TIP
         self.x = np.array([initial_pos[0], initial_pos[1], 0.0, 0.0], dtype=float)
         self.P = np.diag([0.1**2, 0.1**2, 1.0**2, 1.0**2])
         self.H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
         self.R_default = np.diag([CONFIG['uwb_noise_std']**2, CONFIG['uwb_noise_std']**2])
 
     def predict(self, ax, ay, dt):
+        # NOTE: Ideally we would add Coriolis terms here using Gyro, 
+        # but for handwriting speeds, assuming a_tip ≈ a_sensor is acceptable.
         F = np.array([
             [1.0, 0.0, dt,  0.0],
             [0.0, 1.0, 0.0, dt ],
@@ -99,33 +124,26 @@ class StrokeTracker:
     def __init__(self):
         self.kf = None
         self.prev_ts_micros = 0
-        self.prev_uwb = None
+        self.prev_uwb_tip = None # Track the TIP, not the sensor
         
-        # Buffers
         self.path_x = []
         self.path_y = []
         self.uwb_raw_x = []
         self.uwb_raw_y = []
         
-        # State
         self.is_drawing = False 
-        
-        # [FIX] Added Rescue Counter
         self.consecutive_rejects = 0
         
-        # Filters
         self.uwb_window_x = []
         self.uwb_window_y = []
         
-        # [FIX] Added Windowed ZUPT Buffer
-        self.accel_window = [] 
-        # --- NEW: ZUPT Buffer ---
         self.accel_magnitudes = [] 
         self.ZUPT_WINDOW_SIZE = 10
+        
+        # Pre-compute offset vector
+        self.offset_local = np.array(CONFIG['tip_offset'])
 
     def is_in_bounds(self, x, y):
-        # NOTE: Once you have a pressure sensor, replace this function
-        # with a simple "return True" or "return pressure > threshold" check.
         return (x >= CONFIG['bounds_x_min'] and 
                 x <= CONFIG['bounds_x_max'] and 
                 y >= CONFIG['bounds_y_min'] and 
@@ -140,35 +158,48 @@ class StrokeTracker:
             
         if len(vals) < 10: return
 
-        # --- LAYER 1: MEDIAN FILTER ---
+        # --- EXTRACT QUATERNION FIRST (Needed for Position Transform) ---
+        # We grab the FIRST available quaternion in the batch to correct the UWB position
+        # (Technically UWB happened before these IMU samples, but it's the closest estimate)
+        idx_first = 6 
+        qx_init, qy_init, qz_init, qw_init = vals[idx_first : idx_first+4]
+        q_init = Quaternion(qw_init, qx_init, qy_init, qz_init)
+
+        # --- LAYER 1: MEDIAN FILTER (Raw UWB Sensor) ---
         self.uwb_window_x.append(vals[0])
         self.uwb_window_y.append(vals[1])
         if len(self.uwb_window_x) > CONFIG['uwb_window_size']:
             self.uwb_window_x.pop(0)
             self.uwb_window_y.pop(0)
             
-        uwb_clean_x = np.median(self.uwb_window_x)
-        uwb_clean_y = np.median(self.uwb_window_y)
-        uwb_pos = np.array([uwb_clean_x, uwb_clean_y])
+        uwb_sensor_clean_x = np.median(self.uwb_window_x)
+        uwb_sensor_clean_y = np.median(self.uwb_window_y)
         
+        # --- LAYER 1.5: TRANSFORM SENSOR -> TIP ---
+        # Rotate the offset vector into world frame
+        offset_world = q_init.rotate(self.offset_local)
+        
+        # Calculate where the TIP is
+        tip_x = uwb_sensor_clean_x + offset_world[0]
+        tip_y = uwb_sensor_clean_y + offset_world[1]
+        uwb_tip_pos = np.array([tip_x, tip_y])
+
+        # Store Raw Sensor data for debug plotting
         self.uwb_raw_x.append(vals[0])
         self.uwb_raw_y.append(vals[1])
 
-        # # UWB Smoothing
+        # UWB Smoothing (Applied to the TIP position)
         alpha = 0.3
-        if self.prev_uwb is None:
-            self.prev_uwb = uwb_pos
+        if self.prev_uwb_tip is None:
+            self.prev_uwb_tip = uwb_tip_pos
         else:
-            self.prev_uwb = alpha * uwb_pos + (1.0 - alpha) * self.prev_uwb
-
+            self.prev_uwb_tip = alpha * uwb_tip_pos + (1.0 - alpha) * self.prev_uwb_tip
 
         # --- INITIALIZATION ---
         if self.kf is None:
-            self.kf = KalmanFilter2D(uwb_pos)
+            self.kf = KalmanFilter2D(uwb_tip_pos)
             self.prev_ts_micros = vals[13] 
             return
-
-        # [FIX] Warmup check removed. We process everything immediately.
 
         # --- IMU BATCH PROCESSING ---
         offset = 6
@@ -187,9 +218,6 @@ class StrokeTracker:
             self.prev_ts_micros = ts_micros
             if dt <= 0 or dt > 0.2: dt = 0.01
 
-            # [FIX] GRAVITY BUG REMOVED
-            # We assume sensor provides Linear Acceleration (Gravity removed internally)
-            # So we only rotate, we do NOT subtract 9.81 again.
             q = Quaternion(qw, qx, qy, qz)
             lin_acc = q.rotate(np.array([ax, ay, az]))
             
@@ -199,83 +227,69 @@ class StrokeTracker:
             input_acc_y = np.clip(lin_acc[1], -limit, limit)
             input_acc = np.array([input_acc_x, input_acc_y])
 
-            # Deadband
             if np.linalg.norm(input_acc) < CONFIG['accel_deadband']:
                 input_acc[:] = 0.0
 
-            # --- WINDOWED ZUPT ---
-
-            # --- NEW ROBUST ZUPT LOGIC ---
-            # 1. Calculate magnitude of current acceleration
+            # --- ROBUST ZUPT LOGIC ---
             acc_mag = np.linalg.norm(input_acc)
             self.accel_magnitudes.append(acc_mag)
             
-            # Keep window size fixed
             if len(self.accel_magnitudes) > self.ZUPT_WINDOW_SIZE:
                 self.accel_magnitudes.pop(0)
 
-            # 2. Check if we are stationary
             is_stationary = False
             if len(self.accel_magnitudes) == self.ZUPT_WINDOW_SIZE:
-                # Calculate mean (how much force?) and variance (how much shaking?)
                 avg_acc = np.mean(self.accel_magnitudes)
                 var_acc = np.var(self.accel_magnitudes)
-                
-                # TUNING: 
-                # thresh 0.2 means "very little movement"
-                # var 0.05 means "steady hand"
                 if avg_acc < CONFIG['stationary_thresh'] and var_acc < 0.05:
                     is_stationary = True
 
-            # Predict
+            # Predict (The KF now tracks TIP state)
+            # Assumption: Tip Acceleration ~= Sensor Acceleration (ignoring rotational terms)
             self.kf.predict(input_acc[0], input_acc[1], dt)
             
-            # Apply Friction
             self.kf.x[2] *= CONFIG['friction']
             self.kf.x[3] *= CONFIG['friction']
 
             if is_stationary:
                 self.kf.apply_zupt()
-                # OPTIONAL: If we are truly stationary, we can force the Velocity to 0
                 self.kf.x[2] = 0.0
                 self.kf.x[3] = 0.0
             
             has_predicted = True
-            # ... rest of code ...
             
             # --- RECORD PATH ---
-            # No warmup check here anymore. 
+            # The KF state is already the TIP position
             curr_x, curr_y = self.kf.x[0], self.kf.x[1]
             
-            # Virtual Pen / Geofencing
             if self.is_in_bounds(curr_x, curr_y):
                 self.path_x.append(curr_x)
                 self.path_y.append(curr_y)
                 self.is_drawing = True
             else:
                 if self.is_drawing:
-                    self.path_x.append(np.nan) # Break the line
+                    self.path_x.append(np.nan)
                     self.path_y.append(np.nan)
                     self.is_drawing = False
 
         # --- UPDATE + RESCUE LOGIC ---
         if has_predicted:
             pred_pos = self.kf.x[:2]
-            innovation = np.linalg.norm(self.prev_uwb - pred_pos)
+            # Innovation is now: (Smoothed UWB TIP) - (Predicted KF TIP)
+            innovation = np.linalg.norm(self.prev_uwb_tip - pred_pos)
             
             if innovation > CONFIG['uwb_jump_thresh']:
                 self.consecutive_rejects += 1
-                # [FIX] Rescue: If 5 packets rejected, assume filter is lost -> FORCE RESET
                 if self.consecutive_rejects >= 5:
                     print(f"Rescue: Resetting Filter (Diff {innovation:.2f}m)")
-                    self.kf.x[0] = self.prev_uwb[0]
-                    self.kf.x[1] = self.prev_uwb[1]
+                    self.kf.x[0] = self.prev_uwb_tip[0]
+                    self.kf.x[1] = self.prev_uwb_tip[1]
                     self.kf.x[2] = 0.0 
                     self.kf.x[3] = 0.0
                     self.kf.P = np.diag([0.5, 0.5, 1.0, 1.0])
                     self.consecutive_rejects = 0
             else:
-                self.kf.update(self.prev_uwb)
+                self.kf.update(self.prev_uwb_tip)
                 self.consecutive_rejects = 0
 
 # ==========================================
@@ -295,12 +309,12 @@ def main():
     print(f"Opening {CONFIG['serial_port']}...")
 
     # =====================================================
-    #        LIVE PLOT – CREATED ONLY ONCE
+    #        LIVE PLOT
     # =====================================================
     plt.ion()
     fig, ax = plt.subplots(figsize=(8, 8))
 
-    # Raw UWB (Orange dashed line with dots)
+    # Raw UWB (Orange dashed line) - SENSOR Position
     line_raw, = ax.plot(
         [], [],
         linestyle='--',
@@ -308,19 +322,19 @@ def main():
         markersize=2,
         alpha=0.6,
         color='orange',
-        label='Raw UWB'
+        label='Raw UWB (Sensor)'
     )
 
-    # Filtered Path (Blue solid line)
+    # Filtered Path (Blue solid line) - TIP Position
     line_fused, = ax.plot(
         [], [],
         linestyle='-',
         linewidth=1.5,
         color="#3F92E6",
-        label='Fused Track'
+        label='Fused Track (Tip)'
     )
 
-    ax.set_title("v5.0: Live Tracking")
+    ax.set_title("v5.1: Lever Arm Corrected")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.axis('equal')
@@ -328,9 +342,6 @@ def main():
     ax.legend()
     plt.show()
 
-    # =====================================================
-    #           START SERIAL CAPTURE LOOP
-    # =====================================================
     try:
         ser = serial.Serial(CONFIG['serial_port'], CONFIG['baud_rate'], timeout=1)
         ser.flushInput()
@@ -350,14 +361,10 @@ def main():
                     line_fused.set_xdata(tracker.path_x)
                     line_fused.set_ydata(tracker.path_y)
 
-                # Update limits dynamically (optional)
                 ax.relim()
                 ax.autoscale_view()
-
                 fig.canvas.draw()
                 fig.canvas.flush_events()
-                # Optional: smooth CPU use
-                # time.sleep(0.001)
 
     except Exception as e:
         print(f"Error: {e}")
@@ -365,11 +372,9 @@ def main():
     finally:
         if 'ser' in locals() and ser.is_open:
             ser.close()
-        
         print("Capture finished.")
         plt.ioff()
         plt.show()
-
 
 if __name__ == "__main__":
     main()

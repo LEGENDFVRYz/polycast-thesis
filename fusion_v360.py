@@ -178,31 +178,40 @@ class KalmanFilter2D:
 # ==========================================
 class StrokeTracker:
     def __init__(self):
+        # --- FILTER 1: Standard Hardware Fused (Light Blue) ---
         self.kf = None
-        self.prev_ts_micros = 0
         self.prev_uwb_tip = None 
-        
-        # Paths
-        self.path_x = []         # Blue (Fused Tip)
+        self.path_x = []         
         self.path_y = []
-        self.uwb_hw_x = []       # Orange (Hardware Filtered)
+        self.consecutive_rejects = 0
+
+        # --- FILTER 2: Computed/Manual Fused (Dark Blue) ---
+        self.kf_comp = None
+        self.prev_uwb_comp_tip = None
+        self.path_comp_fused_x = []
+        self.path_comp_fused_y = []
+        self.consecutive_rejects_comp = 0
+
+        # --- General State ---
+        self.prev_ts_micros = 0
+        self.is_drawing = False 
+        
+        # Debugging/Raw Lines
+        self.uwb_hw_x = []       # Orange
         self.uwb_hw_y = []
-        self.uwb_computed_x = [] # Red (Computed + Imitated Filter)
+        self.uwb_computed_x = [] # Red
         self.uwb_computed_y = []
         
-        # --- NEW: IMITATION FILTER STATE ---
-        # We need to remember the previous value, just like the Arduino does.
+        # Imitation Filter State
         self.sim_filter_x = 0.0
         self.sim_filter_y = 0.0
         self.sim_initialized = False
-        # -----------------------------------
 
-        self.is_drawing = False 
-        self.consecutive_rejects = 0
-        
+        # Median Filter Window
         self.uwb_window_x = []
         self.uwb_window_y = []
         
+        # ZUPT
         self.accel_magnitudes = [] 
         self.ZUPT_WINDOW_SIZE = 10
         
@@ -225,46 +234,43 @@ class StrokeTracker:
         if len(vals) < 10: return
 
         # 1. EXTRACT DATA
-        # Hardware filtered position (Orange)
         hw_x, hw_y = vals[0], vals[1]
-        
-        # Raw Distances 
         d0, d1, d2 = vals[2], vals[3], vals[4]
         
-        # Quaternion
         idx_first = 6 
         qx_init, qy_init, qz_init, qw_init = vals[idx_first : idx_first+4]
         q_init = Quaternion(qw_init, qx_init, qy_init, qz_init)
 
-        # 2. COMPUTE "RED LINE" (With Imitation Filter)
+        # ====================================================
+        #    PIPELINE A: MANUALLY COMPUTED UWB (RED DATA)
+        # ====================================================
         comp_pos_3d = trilaterate([d0, d1, d2], CONFIG['anchors'])
-        # comp_pos_3d = solve_position_from_distances([d0, d1, d2])
+        
+        has_comp_data = False
         
         if comp_pos_3d is not None:
             raw_x = comp_pos_3d[0]
             raw_y = comp_pos_3d[1]
 
-            # --- APPLY THE "IMITATION" FILTER ---
-            # This replicates the Arduino logic: uwbXf = 0.8*old + 0.2*new
-            
+            # Imitation Filter (Matches Arduino)
             if not self.sim_initialized:
-                # Initialize with the first raw value to prevent flying in from 0,0
                 self.sim_filter_x = raw_x
                 self.sim_filter_y = raw_y
                 self.sim_initialized = True
             else:
-                # EXACT ARDUINO FORMULA
-                self.sim_filter_x = (0.80 * self.sim_filter_x) + (0.20 * raw_x)
-                self.sim_filter_y = (0.80 * self.sim_filter_y) + (0.20 * raw_y)
+                self.sim_filter_x = (0.75 * self.sim_filter_x) + (0.25 * raw_x)
+                self.sim_filter_y = (0.75 * self.sim_filter_y) + (0.25 * raw_y)
 
             self.uwb_computed_x.append(self.sim_filter_x)
             self.uwb_computed_y.append(self.sim_filter_y)
+            has_comp_data = True
         
-        # 3. USE HARDWARE DATA FOR FILTERING
+        # ====================================================
+        #    PIPELINE B: HARDWARE UWB (ORANGE DATA)
+        # ====================================================
         self.uwb_hw_x.append(hw_x)
         self.uwb_hw_y.append(hw_y)
 
-        # Median Filter on Hardware Data
         self.uwb_window_x.append(hw_x)
         self.uwb_window_y.append(hw_y)
         if len(self.uwb_window_x) > CONFIG['uwb_window_size']:
@@ -274,26 +280,50 @@ class StrokeTracker:
         uwb_sensor_clean_x = np.median(self.uwb_window_x)
         uwb_sensor_clean_y = np.median(self.uwb_window_y)
         
-        # 4. TRANSFORM SENSOR -> TIP (Lever Arm)
+        # ====================================================
+        #    TRANSFORM BOTH TO TIP SPACE
+        # ====================================================
         offset_world = q_init.rotate(self.offset_local)
-        tip_x = uwb_sensor_clean_x + offset_world[0]
-        tip_y = uwb_sensor_clean_y + offset_world[1]
-        uwb_tip_pos = np.array([tip_x, tip_y])
 
-        # UWB Smoothing
+        # 1. Hardware Tip
+        tip_hw_x = uwb_sensor_clean_x + offset_world[0]
+        tip_hw_y = uwb_sensor_clean_y + offset_world[1]
+        uwb_tip_pos_hw = np.array([tip_hw_x, tip_hw_y])
+
+        # 2. Computed Tip (From Manual Trilateration)
+        # We use self.sim_filter_x/y which is the smoothed RED data
+        tip_comp_x = self.sim_filter_x + offset_world[0]
+        tip_comp_y = self.sim_filter_y + offset_world[1]
+        uwb_tip_pos_comp = np.array([tip_comp_x, tip_comp_y])
+
+        # UWB Smoothing (Low Pass) for both inputs
         alpha = 0.3
+        
+        # Hardware Smoothing
         if self.prev_uwb_tip is None:
-            self.prev_uwb_tip = uwb_tip_pos
+            self.prev_uwb_tip = uwb_tip_pos_hw
         else:
-            self.prev_uwb_tip = alpha * uwb_tip_pos + (1.0 - alpha) * self.prev_uwb_tip
+            self.prev_uwb_tip = alpha * uwb_tip_pos_hw + (1.0 - alpha) * self.prev_uwb_tip
 
-        # 5. INITIALIZATION
+        # Computed Smoothing
+        if self.prev_uwb_comp_tip is None:
+            self.prev_uwb_comp_tip = uwb_tip_pos_comp
+        else:
+            self.prev_uwb_comp_tip = alpha * uwb_tip_pos_comp + (1.0 - alpha) * self.prev_uwb_comp_tip
+
+
+        # ====================================================
+        #    INITIALIZATION
+        # ====================================================
         if self.kf is None:
-            self.kf = KalmanFilter2D(uwb_tip_pos)
+            self.kf = KalmanFilter2D(uwb_tip_pos_hw) # Filter 1
+            self.kf_comp = KalmanFilter2D(uwb_tip_pos_comp) # Filter 2 (New)
             self.prev_ts_micros = vals[13] 
             return
 
-        # 6. IMU BATCH PROCESSING
+        # ====================================================
+        #    IMU BATCH PREDICTION (Shared by both filters)
+        # ====================================================
         offset = 6
         stride = 8
         has_predicted = False
@@ -309,6 +339,8 @@ class StrokeTracker:
             dt = (ts_micros - self.prev_ts_micros) / 1_000_000.0
             self.prev_ts_micros = ts_micros
             if dt <= 0 or dt > 0.2: dt = 0.01
+
+
 
             q = Quaternion(qw, qx, qy, qz)
             lin_acc = q.rotate(np.array([ax, ay, az]))
@@ -336,19 +368,25 @@ class StrokeTracker:
                 if avg_acc < CONFIG['stationary_thresh'] and var_acc < 0.05:
                     is_stationary = True
 
-            # Predict
+            # --- PREDICT BOTH FILTERS ---
             self.kf.predict(input_acc[0], input_acc[1], dt)
+            self.kf_comp.predict(input_acc[0], input_acc[1], dt)
+
+            # Apply Friction
             self.kf.x[2] *= CONFIG['friction']
             self.kf.x[3] *= CONFIG['friction']
+            self.kf_comp.x[2] *= CONFIG['friction']
+            self.kf_comp.x[3] *= CONFIG['friction']
 
+            # Apply ZUPT
             if is_stationary:
                 self.kf.apply_zupt()
-                self.kf.x[2] = 0.0
-                self.kf.x[3] = 0.0
+                self.kf_comp.apply_zupt()
             
             has_predicted = True
             
-            # Record Path
+            # --- RECORD PATHS ---
+            # Path 1: Light Blue (Hardware)
             curr_x, curr_y = self.kf.x[0], self.kf.x[1]
             if self.is_in_bounds(curr_x, curr_y):
                 self.path_x.append(curr_x)
@@ -359,26 +397,49 @@ class StrokeTracker:
                     self.path_x.append(np.nan)
                     self.path_y.append(np.nan)
                     self.is_drawing = False
+            
+            # Path 2: Dark Blue (Computed)
+            comp_curr_x, comp_curr_y = self.kf_comp.x[0], self.kf_comp.x[1]
+            # We use the same 'is_drawing' flag logic roughly, or check bounds again
+            if self.is_in_bounds(comp_curr_x, comp_curr_y):
+                self.path_comp_fused_x.append(comp_curr_x)
+                self.path_comp_fused_y.append(comp_curr_y)
+            else:
+                # Add gaps if out of bounds
+                self.path_comp_fused_x.append(np.nan)
+                self.path_comp_fused_y.append(np.nan)
 
-        # 7. UPDATE
+        # ====================================================
+        #    UPDATE STEP (Correction)
+        # ====================================================
         if has_predicted:
+            # --- Update Filter 1 (Hardware) ---
             pred_pos = self.kf.x[:2]
             innovation = np.linalg.norm(self.prev_uwb_tip - pred_pos)
             
             if innovation > CONFIG['uwb_jump_thresh']:
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= 5:
-                    print(f"Rescue: Resetting Filter (Diff {innovation:.2f}m)")
-                    self.kf.x[0] = self.prev_uwb_tip[0]
-                    self.kf.x[1] = self.prev_uwb_tip[1]
-                    self.kf.x[2] = 0.0 
-                    self.kf.x[3] = 0.0
-                    self.kf.P = np.diag([0.5, 0.5, 1.0, 1.0])
+                    self.kf.reset_state(self.prev_uwb_tip)
                     self.consecutive_rejects = 0
             else:
                 self.kf.update(self.prev_uwb_tip)
                 self.consecutive_rejects = 0
             
+            # --- Update Filter 2 (Computed) ---
+            if has_comp_data: # Only update if trilateration succeeded this frame
+                pred_pos_comp = self.kf_comp.x[:2]
+                innovation_comp = np.linalg.norm(self.prev_uwb_comp_tip - pred_pos_comp)
+
+                if innovation_comp > CONFIG['uwb_jump_thresh']:
+                    self.consecutive_rejects_comp += 1
+                    if self.consecutive_rejects_comp >= 5:
+                        self.kf_comp.reset_state(self.prev_uwb_comp_tip)
+                        self.consecutive_rejects_comp = 0
+                else:
+                    self.kf_comp.update(self.prev_uwb_comp_tip)
+                    self.consecutive_rejects_comp = 0
+
 
 # ==========================================
 # MAIN EXECUTION
@@ -410,11 +471,15 @@ def main():
     line_comp, = ax.plot([], [], linestyle=':', marker='o', markersize=2, alpha=0.6,
                           linewidth=1.0, color="#E63F3F", label='Computed Trilateration')
 
-    # 3. BLUE: Fused Track (Tip)
+    # 3. LIGHT BLUE: Fused Track (Hardware Tip)
     line_fused, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#3F92E6",
-                           label='Fused Track (Tip)')
+                           label='Fused (Hardware)')
+    
+    # 4. DARK BLUE: Fused Track (Computed Tip) - NEW!
+    line_fused_comp, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#2A2A94",
+                           label='Fused (Computed)')
 
-    ax.set_title("v4.1: TRILATERATION I")
+    ax.set_title("v4.2: DUAL FUSION MONITOR")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.axis('equal')
@@ -432,26 +497,27 @@ def main():
             if line:
                 tracker.process_packet(line)
 
-                # ====== UPDATE ORANGE (Hardware UWB) ======
-                if tracker.uwb_hw_x:
-                    line_raw.set_xdata(tracker.uwb_hw_x)
-                    line_raw.set_ydata(tracker.uwb_hw_y)
+                # ====== UPDATE PLOTS ======
+                # if tracker.uwb_hw_x:
+                #     line_raw.set_xdata(tracker.uwb_hw_x)
+                #     line_raw.set_ydata(tracker.uwb_hw_y)
 
-                # ====== UPDATE RED (Trilateration Computed) ======
-                if tracker.uwb_computed_x:
-                    line_comp.set_xdata(tracker.uwb_computed_x)
-                    line_comp.set_ydata(tracker.uwb_computed_y)
+                # if tracker.uwb_computed_x:
+                #     line_comp.set_xdata(tracker.uwb_computed_x)
+                #     line_comp.set_ydata(tracker.uwb_computed_y)
 
-                # ====== UPDATE BLUE (Kalman Fused Tip) ======
                 if tracker.path_x:
                     line_fused.set_xdata(tracker.path_x)
                     line_fused.set_ydata(tracker.path_y)
+                    
+                if tracker.path_comp_fused_x:
+                    line_fused_comp.set_xdata(tracker.path_comp_fused_x)
+                    line_fused_comp.set_ydata(tracker.path_comp_fused_y)
 
-                # ====== Auto scale like standard Matplotlib ======
-                # Recompute limits based on current data
+                # ====== Auto scale ======
                 ax.relim()
-                ax.autoscale_view()  # Expands or shrinks axes automatically
-
+                ax.autoscale_view()
+                
                 fig.canvas.draw()
                 fig.canvas.flush_events()
 
@@ -464,8 +530,6 @@ def main():
         print("Capture finished.")
         plt.ioff()
         plt.show()
-
-
 
 if __name__ == "__main__":
     main()

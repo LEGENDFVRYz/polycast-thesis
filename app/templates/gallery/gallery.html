@@ -1,4 +1,5 @@
 {% from 'shared/_modal.html' import modal_shell %}
+{% from "gallery/_render_folder_card.html" import render_folder_card %}
 
 {% extends "base.html" %}
 
@@ -95,44 +96,15 @@
 
 
             <div class="folder-list">
-                
-                <!-- Loop through all available folders -->
-                
                 {% if folders %}  
                     {% for folder in folders %}
-
-                            <div class="folder-item">
-                                <div class="item-icon">
-                                    <image src="../static/images/icons/folder1.svg">
-                                </div>
-                                <div class="item-info">
-                                    <a href="{{ url_for('session_page', galleryname=folder.name) }}" class="folder-link-wrapper">
-                                        <h3 class="item-title">{{ folder.name }}</h3>
-                                    </a>
-                                    <p class="item-subtitle">BSCPE 4-3</p>
-                                </div>
-
-                                <!-- This still exist for clients so it should be hidden for all non-admin users -->
-                                <!-- Still no button actions -->
-                                <button type="button" class="icon-button edit-session-btn" 
-                                        data-gallery-id="{{ folder.id }}" 
-                                        data-gallery-name="{{ folder.name }}"
-                                        data-modal-target="#editGalleryModal">
-                                    <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                </button>
-                                
-                                <button type="button" class="icon-button delete-session-btn"
-                                        data-modal-target="#deleteGalleryModal"
-                                        data-delete-url="{{ url_for('delete_gallery', gallery_id=folder.id) }}">
-                                    <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                </button>
-
-                            </div>
+                        {{ render_folder_card(folder, active_view) }}
                     {% endfor %}
                 {% else %}
-                    <p>No gallery folders found!</p>
+                    <div class="empty-state">
+                        <p>No items found in {{ active_view }}!</p>
+                    </div>
                 {% endif %}
-
             </div>
         </section>
 
@@ -157,7 +129,6 @@
         ==========================================
         #}
         {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
-            
             <p>Are you sure you want to move this gallery to the recycle bin?</p>
             <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
             
@@ -167,14 +138,78 @@
                     <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
                 </div>
             </form>
+        {% endcall %}
+
+        {# 
+        ==========================================
+        RECOVER CONFIRMATION MODAL
+        ==========================================
+        #}
+        {% call modal_shell(modal_id='recoverGalleryModal', modal_title='CONFIRM RECOVERY') %}
+            <p>Are you sure you want to restore this gallery?</p>
+            <p>It will be moved back to your active dashboard and sessions will be accessible again.</p>
+            
+            <form id="recoverGalleryForm" method="POST" action="">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                    <button type="submit" class="btn btn-success">Yes, Restore Gallery</button>
+                </div>
+            </form> 
+        {% endcall %}
+
+        {# 
+        ==========================================
+        FORCE DELETE CONFIRMATION MODAL (NEW)
+        ==========================================
+        #}
+        {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
+            <div class="alert alert-danger">
+                <strong>Warning:</strong> This action cannot be undone.
+            </div>
+            <p>Are you sure you want to <strong>permanently delete</strong> this gallery?</p>
+            <p>All associated photos and data will be wiped from the database forever.</p>
+            
+            <form id="forceDeleteGalleryForm" method="POST" action="">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                    <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+                </div>
+            </form>
+        {% endcall %}
+
+        {# 
+        ==========================================
+        FAVORITE CONFIRMATION MODAL
+        ==========================================
+        #}
+        {% call modal_shell(modal_id='favoriteGalleryModal', modal_title='Manage Favorites') %}
+            
+            <div class="text-center">
+                <!-- <div class="mb-3">
+                    <img src="{{ url_for('static', filename='images/icons/star-filled.svg') }}" width="50" height="50">
+                </div> -->
+
+                <p>Do you want to change the <strong>favorite status</strong> of this gallery?</p>
+                <p class="text-muted small">This will move the gallery to/from your favorites list.</p>
+                
+                <form id="favoriteGalleryForm" method="POST" action="">
+                    <div class="modal-footer justify-content-center">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-warning text-white">
+                            Yes, Update Status
+                        </button>
+                    </div>
+                </form>
+            </div>
 
         {% endcall %}
     </div>
 
 
+    <!-- QUICK ACTIONS SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // --- Quick Actions Button Navigation ---
+
             const iconButtons = document.querySelectorAll('.qa-button');
             const iconButtonsContainer = document.querySelector('.quick-actions');
 
@@ -189,102 +224,99 @@
 
                 // Add active class to the clicked button
                 clickedButton.classList.add('active');
-
-                // You could add logic here based on the clicked button
-                // const activeBtn = clickedButton.dataset.iconBtn;
-                // console.log('Active button:', activeBtn);
             });
         });
     </script>
 
-        <!-- MODALS SCRIPT -->
+
+    <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
-
-    <!-- <script>
+    <script>
         document.addEventListener('DOMContentLoaded', function() {
 
             const editForm = document.getElementById('editGalleryForm');
             const editNameInput = document.getElementById('new_gallery_name');
 
-            // Listen for clicks on the *specific* edit buttons
-            document.querySelectorAll('.edit-gallery-btn').forEach(button => {
-                button.addEventListener('click', function() {
-                    // Get data from the button
+            // Edit buttons
+            document.querySelectorAll('.edit-session-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+
                     const galleryId = this.dataset.galleryId;
                     const galleryName = this.dataset.galleryName;
 
-                    // Set the form action and input value
                     if (editForm && editNameInput) {
-                        editForm.action = '/gallery/' + galleryId + '/update'; 
+                        editForm.action = '/gallery/' + galleryId + '/update';
                         editNameInput.value = galleryName;
                     }
+                    
                 });
             });
 
-
-            // ===========================================
-            // 3. SPECIFIC LOGIC FOR "DELETE CONFIRM" MODAL
-            // ===========================================
+            // Delete buttons
             const deleteForm = document.getElementById('deleteGalleryForm');
 
-            // Listen for clicks on ANY trash icon button
-            document.querySelectorAll('.delete-gallery-btn').forEach(button => {
-                button.addEventListener('click', function() {
-                    
-                    // Get the URL from the button that was clicked
+            document.querySelectorAll('.delete-session-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation(); // prevent parent link click
+
                     const deleteUrl = this.dataset.deleteUrl;
 
-                    // Set the modal's form "action" to that URL
                     if (deleteForm) {
                         deleteForm.action = deleteUrl;
                     }
+
+                });
+            });
+
+            // Recover buttons
+            const recoverForm = document.getElementById('recoverGalleryForm');
+
+            document.querySelectorAll('.recover-gallery-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation(); 
+
+                    // Get the URL from the button data attribute
+                    const recoverUrl = this.dataset.recoverUrl;
+
+                    if (recoverForm) {
+                        recoverForm.action = recoverUrl;
+                    }
+                });
+            });
+
+            // Force buttons
+            const forceDeleteForm = document.getElementById('forceDeleteGalleryForm');
+
+            document.querySelectorAll('.force-delete-btn').forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation(); 
+
+                    // Get the force-delete URL
+                    const forceUrl = this.dataset.forceUrl;
+
+                    if (forceDeleteForm) {
+                        forceDeleteForm.action = forceUrl;
+                    }
+                });
+            });
+            
+            // Favorite buttons
+            const favoriteForm = document.getElementById('favoriteGalleryForm');
+            const favoriteButtons = document.querySelectorAll('.favorite-gallery-btn');
+
+            favoriteButtons.forEach(button => {
+                button.addEventListener('click', function(e) {
+                    e.stopPropagation(); 
                     
-                    // The generic JS will now open the modal,
-                    // which is now correctly configured.
+                    const favoriteUrl = this.dataset.favoriteUrl;
+
+                    if (favoriteForm) {
+                        favoriteForm.action = favoriteUrl;
+                    }
                 });
             });
         });
-    </script> -->
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-
-        const editForm = document.getElementById('editGalleryForm');
-        const editNameInput = document.getElementById('new_gallery_name');
-
-        // Edit buttons
-        document.querySelectorAll('.edit-session-btn').forEach(button => {
-            button.addEventListener('click', function(e) {
-
-                const galleryId = this.dataset.galleryId;
-                const galleryName = this.dataset.galleryName;
-
-                if (editForm && editNameInput) {
-                    editForm.action = '/gallery/' + galleryId + '/update';
-                    editNameInput.value = galleryName;
-                }
-                
-            });
-        });
-
-        // Delete buttons
-        const deleteForm = document.getElementById('deleteGalleryForm');
-
-        document.querySelectorAll('.delete-session-btn').forEach(button => {
-            button.addEventListener('click', function(e) {
-                e.stopPropagation(); // prevent parent link click
-
-                const deleteUrl = this.dataset.deleteUrl;
-
-                if (deleteForm) {
-                    deleteForm.action = deleteUrl;
-                }
-
-            });
-        });
-    });
-
     </script>
 
 {% endblock %}

@@ -1,3 +1,5 @@
+{% from 'shared/_modal.html' import modal_shell %}
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11,7 +13,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    
+
     <!-- Lucide Icons -->
     <!-- <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script> -->
 
@@ -20,34 +22,37 @@
 </head>
 <body>
 
-    <!-- Header -->
-    <header class="app-header">
-        <a href="{{ url_for('index') }}">
-            <image class='header-logo' src="../../static/images/icons/polycast-blue.svg">
-        </a>
-        <div class="right-header">
-            <img src="../../static/images/icons/profile1.svg" 
-                alt="Profile Picture" 
-                class="header-profile">
-            <a href="{{ url_for('logout_page') }}">
-                <image class="logout" src="../../static/images/icons/exit.svg">
+    <header class="app-wrapper">
+        <!-- Header -->
+        <div class="app-header">
+            <a href="{{ url_for('index') }}">
+                <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
             </a>
+            <div class="right-header">
+                <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                     alt="Profile Picture" 
+                     class="header-profile"
+                     id="profileBtn"
+                     data-modal-target="#profileModal"
+                     style="cursor: pointer;">
+            </div>
         </div>
+        <!-- Navigation Tabs -->
+        <nav class="app-navigation">
+                <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
+                   href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
+                    Stream
+                </a>
+    
+                <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
+                   href="{{ url_for('gallery_page') }}">
+                    Gallery
+                </a>
+        </nav>
     </header>
 
-    <!-- Navigation Tabs -->
-    <nav class="app-navigation">
-            <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
-               href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
-                Stream
-            </a>
-
-            <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
-               href="{{ url_for('gallery_page') }}">
-                Gallery
-            </a>
-    </nav>
-
+    
+    <!-- Flash Message Popups -->
     {% with messages = get_flashed_messages(with_categories=true) %}
         {% if messages %}
             <div id="flash-container">
@@ -60,51 +65,134 @@
             </div>
         {% endif %}
     {% endwith %}
-
+    
     <!-- Main content -->
     <main class="main-content">
         {% block content %}
             <!-- Page-specific content will go here -->
-
+            
         {% endblock %}
     </main>
     
+    
+    {# 
+    ==========================================
+    PROFILE MENU MODAL
+    ==========================================
+    #}
+    {% call modal_shell(modal_id='profileModal', modal_title='User Profile') %}
+
+        <div class="profile-center-block">
+            <!-- Profile Picture -->
+            <img 
+                src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                alt="Profile"
+                class="profile-avatar"
+            >
+
+            <div class="profile-name">
+                {{ admin_operator if is_admin else 'Guest' }}
+            </div>
+            <div class="profile-role">
+                {{ 'Admin' if is_admin else 'Client' }} Role
+            </div>
+        </div>
+
+        {% if is_admin %}
+            <div class="modal-actions">
+                <button type="button" class="btn btn-primary modal-btn" style="width: 100%;">
+                    Settings
+                </button>
+
+                <form action="{{ url_for('logout_page') }}" method="GET" style="width: 100%; margin-top: 10px;">
+                    <button type="submit" class="btn-danger modal-btn" style="width: 100%;">
+                        Logout
+                    </button>
+                </form>
+            </div>
+        {% endif %}
+    {% endcall %}
 
 </body>
 
-    <!-- 
-    HIDDING FLASH MESSAGE
-    -->
-    <script>
-        // Wait for the document to be fully loaded
-        document.addEventListener('DOMContentLoaded', (event) => {
+<!-- HIDDING FLASH MESSAGE -->
+<script>
+    document.addEventListener('DOMContentLoaded', (event) => {
+        const flashContainer = document.getElementById('flash-container');
+        if (flashContainer) {
             
-            // Find the flash container
-            const flashContainer = document.getElementById('flash-container');
-            if (flashContainer) {
-                // Get all messages inside
-                const messages = flashContainer.querySelectorAll('.flash-message');
-                
-                messages.forEach((message, index) => {
-                    // Set a timeout to fade out the message
-                    // We can stagger them slightly for a nice effect, or just use one duration
-                    const fadeOutDelay = 3000 + (index * 500); // 3s delay, plus 0.5s for each
-                    const removeDelay = fadeOutDelay + 500; // 0.5s for fade-out transition
+            const messages = flashContainer.querySelectorAll('.flash-message');
+            
+            messages.forEach((message, index) => {
+                // Set a timeout to fade out the message
+                const fadeOutDelay = 3000 + (index * 500); 
+                const removeDelay = fadeOutDelay + 500; 
 
-                    setTimeout(() => {
-                        message.classList.add('fade-out');
-                    }, fadeOutDelay);
-                    
-                    // Set another timeout to remove the element from the DOM
-                    setTimeout(() => {
-                        message.remove();
-                        // If the container is empty, remove it too
-                        if (flashContainer.children.length === 0) {
-                            flashContainer.remove();
-                        }
-                    }, removeDelay);
-                });
-            }
+                setTimeout(() => {
+                    message.classList.add('fade-out');
+                }, fadeOutDelay);
+                
+                // Set another timeout to remove the element from the DOM
+                setTimeout(() => {
+                    message.remove();
+                    if (flashContainer.children.length === 0) {
+                        flashContainer.remove();
+                    }
+                }, removeDelay);
+            });
+        }
+    });
+</script>
+
+<!-- PROFILE MENU MODAL -->
+<script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+
+<!-- TABS ANIMATIONS -->
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+    const nav = document.querySelector(".app-navigation");
+    if (!nav) return;
+
+    const activeTab = nav.querySelector(".app-tab.active");
+    if (!activeTab) return;
+
+    const marker = document.createElement("div");
+    marker.classList.add("nav-marker");
+    nav.appendChild(marker);
+
+    // --- Start marker at center of tab, zero width ---
+    const tabLeft = activeTab.offsetLeft;
+    const tabWidth = activeTab.offsetWidth;
+    const center = tabLeft + tabWidth / 2;
+
+    marker.style.transition = "none";
+    marker.style.left = center + "px";
+    marker.style.width = "0px";
+
+    // --- Animate marker to full width under tab ---
+    requestAnimationFrame(() => {
+        marker.style.transition = "all 0.35s cubic-bezier(0.25, 1.25, 0.5, 1)";
+        marker.style.left = tabLeft + "px"; // move to tab start
+        marker.style.width = tabWidth + "px"; // grow to full width
+    });
+
+    // --- Handle window resize ---
+    window.addEventListener("resize", () => {
+        const newLeft = activeTab.offsetLeft;
+        const newWidth = activeTab.offsetWidth;
+
+        marker.style.transition = "none";
+        marker.style.left = newLeft + "px";
+        marker.style.width = newWidth + "px";
+
+        requestAnimationFrame(() => {
+            marker.style.transition = "all 0.35s cubic-bezier(0.25, 1.25, 0.5, 1)";
         });
-    </script>
+    });
+});
+</script>
+
+
+
+
 </html>

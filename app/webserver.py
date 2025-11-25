@@ -1,7 +1,5 @@
 import os
-import time  # <-- ADDED: For simulating delays
-import json  # <-- ADDED: For sending SSE data
-import threading
+import json
 from flask import Flask, Response, render_template, redirect, sessions, url_for, request, session, jsonify, request, flash, send_from_directory, abort
 from pytest import Session
 from werkzeug.utils import secure_filename
@@ -43,7 +41,10 @@ admin_status = AdminStatusManager()
 # ---------------------------------------------------------------------
 
 
-# UTILITY FUNCTION
+
+# ---------------------------------------------------------------------
+# GLOBAL VARIABLES
+# ---------------------------------------------------------------------
 def is_current_user_admin(admin_status):
     """
     Returns True if the current session user is the admin.
@@ -56,18 +57,21 @@ def is_current_user_admin(admin_status):
 # GLOBAL VARIABLES
 @app.context_processor
 def inject_is_admin():
-    return dict(is_admin=is_current_user_admin(admin_status))
+    admin_name = admin_status.get_field('admin_name') if admin_status else None
+    
+    return dict(is_admin=is_current_user_admin(admin_status), admin_operator=admin_name)
 
 
 
 # ---------------------------------------------------------------------
-# ROUTES
+# WEB ROUTES
 # ---------------------------------------------------------------------
 @app.route("/")
 def index():
     # --- MODIFIED: Check the real status ---
     is_setup = admin_status.get_field("hosting_active")
     return render_template("index.html", is_setup=is_setup)
+
 
 
 @app.route("/admin")
@@ -102,7 +106,6 @@ def admin_page():
         current_status=admin_status.get_field("status"),
         gallery_data=gallery_list_for_json
     )
-
 
 # Admin Configurantion:
 @app.route("/admin/configure", methods=["POST"])
@@ -154,7 +157,7 @@ def admin_configure():
         flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
         
         prototype_config.PROTOTYPE_IP = None
-    
+
     return redirect(url_for("admin_page"))
 
 # Admin Configurantion Helper: API for scanning IP
@@ -345,7 +348,7 @@ def delete_gallery(gallery_id):
         db.session.rollback()
         flash(f'An error occurred while moving to bin: {e}', 'danger')
 
-    return redirect(url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/gallery/<int:gallery_id>/update", methods=['POST'])
 def update_gallery_name(gallery_id):
@@ -388,7 +391,7 @@ def update_gallery_name(gallery_id):
         db.session.rollback()
         flash(f'An error occurred while updating the name: {e}', 'danger')
 
-    return redirect(url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/delete", methods=['POST'])
 def delete_session(session_id):
@@ -415,7 +418,7 @@ def delete_session(session_id):
 
     # 4. Redirect back to the page the user was on
     # request.referrer is the URL they just came from (the session list)
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
 
 @app.route("/session/<int:session_id>/update", methods=['POST'])
 def update_session_name(session_id):
@@ -462,14 +465,199 @@ def update_session_name(session_id):
         flash(f'An error occurred: {e}', 'danger')
 
     # Redirect back to the session list page
-    return redirect(request.referrer or url_for('admin_page'))
+    return redirect(request.referrer or url_for('gallery_page'))
+
+@app.route("/gallery/<int:gallery_id>/recover", methods=['POST'])
+def recover_gallery(gallery_id):
+    # 1. Auth Check
+    if "user" not in session:
+        flash("You must be logged in to perform this action.", "error")
+        return redirect(url_for("login_page"))
+    
+    # 2. Find the gallery
+    # NOTE: If your global query filter hides deleted items, 'get_or_404' might fail here.
+    # You might need to use: Gallery.query.with_deleted().filter_by(id=gallery_id).first_or_404()
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # 3. SECURITY CHECK: Ensure the gallery belongs to the current user
+    current_user_id = session['id']
+    if gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    try:
+        # 4. Perform the restore
+        # If you don't have a .restore() method, use: gallery.is_deleted = False
+        if hasattr(gallery, 'restore'):
+            gallery.restore(commit=False) 
+        else:
+            # Fallback if you are manually toggling a boolean
+            gallery.is_deleted = False 
+            
+        db.session.commit()
+        flash('Gallery has been successfully recovered from the bin.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred while recovering: {e}', 'danger')
+
+    # Redirect to the Recycle Bin page or Admin page
+    return redirect(request.referrer or url_for('gallery_page'))
+
+@app.route("/session/<int:session_id>/recover", methods=['POST'])
+def recover_session(session_id):
+    # 1. Auth Check
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+
+    # 2. Find the session
+    session_to_recover = Session.query.get_or_404(session_id)
+
+    # 3. SECURITY CHECK: Check ownership via the parent gallery
+    if session_to_recover.gallery.admin_id != current_user_id:
+        abort(403)
+
+    # 4. LOGIC CHECK: Prevent recovering a session if the parent Gallery is still deleted
+    # (Optional but recommended to prevent "orphan" sessions)
+    if getattr(session_to_recover.gallery, 'is_deleted', False):
+        flash('You cannot recover this session because its parent Gallery is in the bin.', 'error')
+        return redirect(request.referrer)
+
+    try:
+        # 5. Perform the restore
+        if hasattr(session_to_recover, 'restore'):
+            session_to_recover.restore(commit=False)
+        else:
+            # Fallback manual toggle
+            session_to_recover.is_deleted = False
+
+        db.session.commit()
+        flash('Session has been successfully recovered.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred: {e}', 'danger')
+
+    return redirect(request.referrer or url_for('gallery_page'))
+
+@app.route("/gallery/<int:gallery_id>/force-delete", methods=['POST'])
+def force_delete_gallery(gallery_id):
+    # 1. Auth Check
+    if "user" not in session:
+        flash("You must be logged in to perform this action.", "error")
+        return redirect(url_for("login_page"))
+    
+    # 2. Find the gallery
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # 3. SECURITY CHECK: Ensure the gallery belongs to the current user
+    current_user_id = session['id']
+    if gallery.admin_id != current_user_id:
+        abort(403) # Forbidden
+
+    try:
+        # 4. Perform Hard Delete
+        # Note: If you store actual image files (locally or S3), 
+        # you should call your file cleanup function here before deleting the DB row.
+        
+        db.session.delete(gallery) # This is the standard hard delete in SQLAlchemy
+        db.session.commit()
+        
+        flash('Gallery has been permanently deleted.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred during permanent deletion: {e}', 'danger')
+
+    # Redirect back to the Trash page (referrer)
+    return redirect(request.referrer or url_for('gallery_page'))
+
+@app.route("/session/<int:session_id>/force-delete", methods=['POST'])
+def force_delete_session(session_id):
+    # 1. Auth Check
+    if "user" not in session:
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+
+    # 2. Find the session
+    session_to_delete = Session.query.get_or_404(session_id)
+
+    # 3. SECURITY CHECK: Check ownership via the parent gallery
+    if session_to_delete.gallery.admin_id != current_user_id:
+        abort(403)
+
+    try:
+        # 4. Perform Hard Delete
+        # TODO: Add logic here to delete actual physical files associated with this session
+        
+        db.session.delete(session_to_delete)
+        db.session.commit()
+        
+        flash('Session has been permanently deleted.', 'success')
+        
+    except Exception as e:
+        db.session.rollback()
+        flash(f'An error occurred: {e}', 'danger')
+
+    return redirect(request.referrer or url_for('gallery_page'))
+
+@app.route("/gallery/<int:gallery_id>/favorite", methods=['POST'])
+def toggle_gallery_favorite(gallery_id):
+    
+    if "user" not in session:
+        flash("You must be admin in to perform this action.", "error")
+        return redirect(url_for("login_page"))
+    
+    current_user_id = session['id']
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # Security Check
+    if gallery.admin_id != current_user_id:
+        abort(403)
+
+    try:
+        # Toggle the value
+        gallery.is_favorite = not gallery.is_favorite
+        db.session.commit()
+
+        # 5. Feedback
+        if gallery.is_favorite:
+            flash(f'"{gallery.name}" added to favorites.', 'success')
+        else:
+            flash(f'"{gallery.name}" removed from favorites.', 'info')
+
+    except Exception as e:
+        db.session.rollback()
+        flash(f'Error updating favorite status: {e}', 'danger')
+
+    return redirect(request.referrer or url_for('gallery_page'))
+
 
 
 
 
 @app.route("/client")
 def client_page():
-    return render_template("client.html", ws_port=BROWSER_WS_PORT)
+    current_status = admin_status.get_field("status")
+    current_admin = admin_status.get_field("admin_name")
+    
+    # Default fallback
+    image_number = 1 
+
+    if current_status == "IDLE":
+        image_number = 2 if current_admin else 1
+    elif current_status == "CONFIGURING":
+        image_number = 3
+    elif current_status == "CONFIGURED":
+        image_number = 4
+    elif current_status == "STARTING":
+        image_number = 5
+    elif current_status == "HOSTING":
+        image_number = 6
+    
+    return render_template("client.html", initial_image=f"{image_number}.png", ws_port=BROWSER_WS_PORT)
 
 
 # --- Server-Sent Events (SSE) route for status updates ---
@@ -579,7 +767,6 @@ def register_page():
     # On a GET request or if an error occurred during POST, render the register page
     return render_template("auth/register.html", error=error)
 
-
 @app.route("/login", methods=["GET", "POST"])
 def login_page():
     error = None
@@ -613,7 +800,6 @@ def login_page():
                 error = "An unexpected error occurred. Please try again."
     return render_template("auth/login.html", error=error)
 
-
 @app.route("/logout")
 def logout_page():
     global archiver_manager
@@ -639,7 +825,30 @@ def logout_page():
     session.pop("gname", None)
     session.pop("sname", None)
     
-    return redirect(url_for("login_page"))
+    return redirect(url_for("index"))
+
+@app.before_request
+def check_admin_sync():
+    if "user" not in session:
+        return
+
+    current_session_user = session["user"]
+    server_side_admin = admin_status.get_field("admin_name")
+
+    if server_side_admin is None:
+        # SCENARIO: Server Restarted
+        print(f"[SYNC] Server was restarted. Re-locking for {current_session_user}")
+        admin_status.login(current_session_user)
+    
+    
+    elif server_side_admin != current_session_user:
+        # SCENARIO: There is new admin login
+        print(f"[SYNC] Conflict. Server has {server_side_admin}, you are {current_session_user}. Logging out.")
+        session.clear()
+        flash("Session expired or another admin is active.", "error")
+        return redirect(url_for("login_page"))
+
+    admin_status.update_activity()
 
 
 
@@ -657,7 +866,7 @@ def gallery_page():
     # FETCH ADMIN
     admin_name = str(admin_status.get_field('admin_name'))
     current_admin = Admin.query.filter_by(username=admin_name).first()
-
+ 
     eligible_folders = []
 
     # If not current admin, just render empty gallery instead of redirect
@@ -686,12 +895,12 @@ def gallery_page():
     admin_galleries = base_query.order_by(Gallery.name).all()
 
     # Check if gallery folder exists on disk
-    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.username))
+    user_filepath = os.path.join(GALLERY_PATH, str(current_admin.id))
     for g in admin_galleries:
         folder_path = os.path.join(user_filepath, str(g.id))
         if os.path.isdir(folder_path):
             # MODIFICATION: Append a dictionary with id and name
-            eligible_folders.append({'id': g.id, 'name': g.name})
+            eligible_folders.append({'id': g.id, 'name': g.name, 'is_favorite': g.is_favorite})
 
     is_setup = admin_status.get_field("hosting_active")
 
@@ -703,30 +912,7 @@ def gallery_page():
         folders=eligible_folders,
         active_view=current_view
     )
-    
-    
-    
-@app.route("/api/gallery/<string:gallery_name>/sessions")
-def get_gallery_sessions(gallery_name):
-    """
-    Return all session names for a given gallery (by name) as JSON.
-    """
-    admin_name = str(admin_status.get_field('admin_name'))
-    current_admin = Admin.query.filter_by(username=admin_name).first()
 
-    if not current_admin:
-        return jsonify({"sessions": []})
-
-    gallery = Gallery.query.filter_by(admin_id=current_admin.id, name=gallery_name).first()
-    if not gallery:
-        return jsonify({"sessions": []})
-
-    sessions = Session.query.filter_by(gallery_id=gallery.id).order_by(Session.created_at.desc()).all()
-    session_names = [s.name for s in sessions]
-
-    return jsonify({"sessions": session_names})
-
-    
 
 @app.route("/gallery/<string:galleryname>")
 def session_page(galleryname):
@@ -734,7 +920,7 @@ def session_page(galleryname):
     List all sessions within the selected gallery
     """
     
-    # FETCH ADMIN
+    current_view = request.args.get('view', 'all')
     admin_name = str(admin_status.get_field('admin_name'))
     
     current_admin = Admin.query.filter_by(username=admin_name).first()
@@ -755,12 +941,20 @@ def session_page(galleryname):
         return "Gallery not found or deleted", 404
 
     # Path to the gallery folder using gallery ID
-    gallery_filepath = os.path.join(GALLERY_PATH, admin_name, str(gallery.id))
+    gallery_filepath = os.path.join(GALLERY_PATH, str(current_admin.id), str(gallery.id))
 
-    # FETCH sessions from database, only not soft-deleted
-    sessions_db = Session.query.filter_by(gallery_id=gallery.id) \
-                               .filter(Session.deleted_at.is_(None)) \
-                               .all()
+    # BUILD BASE QUERY
+    base_query = Session.query.filter_by(gallery_id=gallery.id)
+    
+    # 3. APPLY VIEW FILTER
+    if current_view == 'trash':
+        # Show only soft-deleted items
+        sessions_db = base_query.filter(Session.deleted_at.is_not(None)).all()
+    else:
+        # Default: Show only active items
+        current_view = 'all'
+        sessions_db = base_query.filter(Session.deleted_at.is_(None)).all()
+    
 
     # Only include sessions whose folders exist on disk
     sessions = []
@@ -773,6 +967,7 @@ def session_page(galleryname):
         "gallery/session.html",
         selected_gallery=gallery.name,
         sessions=sessions,
+        active_view=current_view,
         is_current_user=is_current_user
     )
 
@@ -784,7 +979,6 @@ def folderview_page(galleryname, sessionname):
     """
     image_extensions = {'.jpg', '.png'}
     foldername = secure_filename(sessionname)
-    admin_name = str(admin_status.get_field('admin_name'))
     
     # FETCH ADMIN using admin_name from admin_status
     admin_name = str(admin_status.get_field('admin_name'))
@@ -808,7 +1002,7 @@ def folderview_page(galleryname, sessionname):
         return "Session not found or deleted", 404
     
     # Path to the session folder using IDs
-    folder_path = os.path.join(GALLERY_PATH, admin_name, str(gallery.id), str(session_obj.id))
+    folder_path = os.path.join(GALLERY_PATH, str(current_admin.id), str(gallery.id), str(session_obj.id))
 
     if not os.path.isdir(folder_path):
         print("FOLDER: Does not exist")
@@ -825,7 +1019,7 @@ def folderview_page(galleryname, sessionname):
         print("FOLDER: Access Error")
         return redirect(url_for("gallery_page"))
     
-    base_url = f"{admin_name}/{gallery.id}/{session_obj.id}"
+    base_url = f"{current_admin.id}/{gallery.id}/{session_obj.id}"
     
     return render_template(
         "gallery/view.html",
@@ -842,7 +1036,7 @@ def folderview_page(galleryname, sessionname):
 def serve_gallery_image(filename):
     """
     Serve dynamically generated images from archive.
-    filename: relative path inside <admin_name>/<gallery>/<session>/<image>
+    filename: relative path inside <admin_id>/<gallery>/<session>/<image>
     """
     
 
@@ -885,6 +1079,36 @@ def video_feed():
     return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
 
 
+
+# ---------------------------------------------------------------------
+# API ROUTES
+# ---------------------------------------------------------------------
+
+@app.route("/api/gallery/<string:gallery_name>/sessions")
+def get_gallery_sessions(gallery_name):
+    """
+    Return all session names for a given gallery (by name) as JSON.
+    """
+    admin_name = str(admin_status.get_field('admin_name'))
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+
+    if not current_admin:
+        return jsonify({"sessions": []})
+
+    gallery = Gallery.query.filter_by(admin_id=current_admin.id, name=gallery_name).first()
+    if not gallery:
+        return jsonify({"sessions": []})
+
+    sessions = Session.query.filter_by(gallery_id=gallery.id).order_by(Session.created_at.desc()).all()
+    session_names = [s.name for s in sessions]
+
+    return jsonify({"sessions": session_names})
+
+
+# ---------------------------------------------------------------------
+# UTILITIES
+# ---------------------------------------------------------------------
+
 def run_webserver(port):
     print(f"[FLASK] running on 0.0.0.0:{port}")
     app.run(
@@ -893,7 +1117,6 @@ def run_webserver(port):
         debug=True,
         threaded=True # CRITICAL for SSE
     )
-
 
 if __name__ == "__main__":
     run_webserver(5000)

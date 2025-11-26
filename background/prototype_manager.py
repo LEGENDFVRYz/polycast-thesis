@@ -1,5 +1,5 @@
 from threading import Event
-from background._prototype_thread import PrototypeWSThread
+from background._prototype_thread import PrototypeSerialThread
 
 class PrototypeManager:
     def __init__(self):
@@ -11,7 +11,7 @@ class PrototypeManager:
             print("Thread already running.")
             return False
         self.stop_event.clear()
-        self.thread = PrototypeWSThread(self.stop_event)
+        self.thread = PrototypeSerialThread(self.stop_event)
         self.thread.start()
         print("Thread started.")
         return True 

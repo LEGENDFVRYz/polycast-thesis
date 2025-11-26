@@ -26,12 +26,10 @@ class PrototypeSerialThread(threading.Thread):
         self.port = prototype_config.SERIAL_PORT
         self.baud = prototype_config.BAUD_RATE
         
-        # Get physical bounds from the tracker to ensure sync
-        bounds = self.tracker.get_bounds()
-        self.p_min_x = bounds['x_min']
-        self.p_max_x = bounds['x_max']
-        self.p_min_y = bounds['y_min']
-        self.p_max_y = bounds['y_max']
+        # Get boundery box
+        bounds = self.tracker.get_bbox()
+        self.p_min_x = self.p_min_y = bounds['b_min']
+        self.p_max_x = self.p_max_y = bounds['b_max']
         
         self.p_width = self.p_max_x - self.p_min_x
         self.p_height = self.p_max_y - self.p_min_y

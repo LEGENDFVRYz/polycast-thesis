@@ -16,46 +16,38 @@ from scipy.optimize import least_squares
 #   "v4.3: Weighted Non-Linear Least Squares (WNLLS)"
 # ==============================================================================
 
-plt.ion()
+plt.ion() 
 
-CONFIG = {
-    'serial_port': 'COM2',
-    'baud_rate': 115200,
-    
+TRACKER_CONFIG = {
     # --- PHYSICAL SETUP (CRITICAL) ---
     # 2 Anchors at Bottom (Left/Right), 1 Anchor at Right (Top).
     'anchors': np.array([
-        [1.75, 0.00, 0.00],  # Anchor 0: BOTTOM RIGHT
-        [1.75, 1.61, 0.00],  # Anchor 1: TOP RIGHT
-        [0.00, 0.00, 0.00]   # Anchor 2: BOTTOM LEFT (Origin)
+        [1.41, 0.00, 0.00],  # Anchor 0: BOTTOM RIGHT
+        [1.41, 1.35, 0.00],  # Anchor 1: TOP RIGHT
+        [0.00, 1.35, 0.00]   # Anchor 2: BOTTOM LEFT (Origin)
     ]),
-    # Note: This setup is "Right-Heavy". Tracking on the far Left side 
-    # relies heavily on Anchor 2 (Bottom Left) and Anchor 1 (Top Right).
     
-    # 2. LEVER ARM (Sensor -> Tip)
-    'tip_offset': [0.0, 0.0, 0.0], 
+    'tip_offset': [0.0, 0.0, 0.0],
+    'uwb_window_size': 5,
     
-    # --- LAYERS 1 & 2 (Defense) ---
-    'uwb_window_size': 5,        
-    'max_accel': 2.0,            
-    
-    # --- VIRTUAL WHITEBOARD BOUNDS ---
+    # --- VIRTUAL WHITEBOARD BOUNDS (FOR CALIBRATION) ---
     'bounds_x_min': -0.5, 'bounds_x_max': 2.5,
     'bounds_y_min': -0.5, 'bounds_y_max': 2.5,
     
+    # --- SCALING OF RENDERED DRAWING
+    'bmin': 0.0,
+    'bmax': 1.2,
+    
     # --- FINE TUNING ---
-    'friction': 0.90,            
-    'accel_noise_var': 0.05,     
-    'stationary_thresh': 0.20,   
-    'accel_deadband': 0.12,
-    
-    # --- KALMAN FILTER ---
+    'uwb_noise_std': 0.5,
+    'accel_noise_var': 0.05,
     'process_pos_var': 0.01,
-    'process_vel_var': 0.1,    
-    'uwb_noise_std': 0.5,       
-    
-    # --- SAFETY ---
-    'uwb_jump_thresh': 0.60      
+    'process_vel_var': 0.1,
+    'uwb_jump_thresh': 0.60,
+    'friction': 0.90,
+    'stationary_thresh': 0.20,
+    'accel_deadband': 0.12,
+    'max_accel': 2.0
 }
 
 
@@ -129,7 +121,7 @@ class KalmanFilter2D:
         self.x = np.array([initial_pos[0], initial_pos[1], 0.0, 0.0], dtype=float)
         self.P = np.diag([0.1**2, 0.1**2, 1.0**2, 1.0**2])
         self.H = np.array([[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0]])
-        self.R_default = np.diag([CONFIG['uwb_noise_std']**2, CONFIG['uwb_noise_std']**2])
+        self.R_default = np.diag([TRACKER_CONFIG['uwb_noise_std']**2, TRACKER_CONFIG['uwb_noise_std']**2])
 
     def predict(self, ax, ay, dt):
         F = np.array([
@@ -148,10 +140,10 @@ class KalmanFilter2D:
         u = np.array([ax, ay])
         self.x = F.dot(self.x) + B.dot(u)
         
-        Q_accel = B.dot(np.eye(2) * CONFIG['accel_noise_var']).dot(B.T)
+        Q_accel = B.dot(np.eye(2) * TRACKER_CONFIG['accel_noise_var']).dot(B.T)
         Q_base = np.diag([
-            CONFIG['process_pos_var'], CONFIG['process_pos_var'],
-            CONFIG['process_vel_var'], CONFIG['process_vel_var']
+            TRACKER_CONFIG['process_pos_var'], TRACKER_CONFIG['process_pos_var'],
+            TRACKER_CONFIG['process_vel_var'], TRACKER_CONFIG['process_vel_var']
         ])
         self.P = F.dot(self.P).dot(F.T) + (Q_accel + Q_base)
 
@@ -170,197 +162,169 @@ class KalmanFilter2D:
         self.P[2,2] = min(self.P[2,2], 1e-4)
         self.P[3,3] = min(self.P[3,3], 1e-4)
 
-# ==========================================
-# CLASS: TRACKING PIPELINE
-# ==========================================
 
+# ==========================================
+# MAIN CLASS: STROKE TRACKER
+# ==========================================
 class StrokeTracker:
     def __init__(self):
-        self.kf = None
-        self.prev_uwb_tip = None 
-        self.path_x = []         
-        self.path_y = []
-        self.consecutive_rejects = 0
-
         self.kf_comp = None
         self.prev_uwb_comp_tip = None
-        self.path_comp_fused_x = []
-        self.path_comp_fused_y = []
-        self.consecutive_rejects_comp = 0
-
         self.prev_ts_micros = 0
-        self.is_drawing = False 
-        
-        self.uwb_hw_x = []       
-        self.uwb_hw_y = []
-        self.uwb_computed_x = [] 
-        self.uwb_computed_y = []
-        
+        self.dist_windows = [[], [], []] 
+        self.uwb_window_x = []
+        self.uwb_window_y = []
         self.sim_filter_x = 0.0
         self.sim_filter_y = 0.0
         self.sim_initialized = False
+        self.accel_magnitudes = []
+        self.offset_local = np.array(TRACKER_CONFIG['tip_offset'])
+        self.consecutive_rejects_comp = 0
+        self.is_drawing = False
 
-        # --- VARIANCE BUFFERS (For WLS) ---
-        # Stores last N raw distances for Anchor 0, 1, 2
-        self.dist_windows = [[], [], []] 
-        
-        # Median Filter Window (For Hardware pipeline)
-        self.uwb_window_x = []
-        self.uwb_window_y = []
-        
-        self.accel_magnitudes = [] 
-        self.ZUPT_WINDOW_SIZE = 10
-        
-        self.offset_local = np.array(CONFIG['tip_offset'])
+        # --- Debug/Plotting History ---
+        self.uwb_hw_x = []
+        self.uwb_hw_y = []
+        self.uwb_computed_x = []
+        self.uwb_computed_y = []
+        self.path_x = []        
+        self.path_y = []
+        self.path_comp_fused_x = []
+        self.path_comp_fused_y = []
+        self.prev_uwb_tip = None
+        self.consecutive_rejects = 0
+        self.kf = None
+    
+    def get_bounds(self):
+        """Returns the physical bounds config so the UI thread knows the range."""
+        return {
+            'x_min': TRACKER_CONFIG['bounds_x_min'],
+            'x_max': TRACKER_CONFIG['bounds_x_max'],
+            'y_min': TRACKER_CONFIG['bounds_y_min'],
+            'y_max': TRACKER_CONFIG['bounds_y_max']
+        }
 
+    def get_bbox(self):
+        """Returns the render bounds config so the PT thread know what to rendered."""
+        return {
+            'b_min': TRACKER_CONFIG['bmin'],
+            'b_max': TRACKER_CONFIG['bmax'],
+        }
+    
     def is_in_bounds(self, x, y):
-        return (x >= CONFIG['bounds_x_min'] and 
-                x <= CONFIG['bounds_x_max'] and 
-                y >= CONFIG['bounds_y_min'] and 
-                y <= CONFIG['bounds_y_max'])
+        return (x >= TRACKER_CONFIG['bounds_x_min'] and 
+                x <= TRACKER_CONFIG['bounds_x_max'] and 
+                y >= TRACKER_CONFIG['bounds_y_min'] and 
+                y <= TRACKER_CONFIG['bounds_y_max'])
 
     def process_packet(self, line_bytes):
+        """
+        Input: Raw Serial Bytes
+        Output: (x_meters, y_meters, is_drawing_bool) OR None
+        """
         try:
             parts = line_bytes.decode('utf-8').strip().split(',')
             vals = [float(x) for x in parts]
         except:
-            return 
+            return None
             
-        if len(vals) < 10: return
+        if len(vals) < 10: return None
 
-        # 1. EXTRACT DATA
+        # --- 1. EXTRACT DATA ---
         hw_x, hw_y = vals[0], vals[1]
-        dists = [vals[2], vals[3], vals[4]] # d0, d1, d2
-        
-        idx_first = 6 
-        qx_init, qy_init, qz_init, qw_init = vals[idx_first : idx_first+4]
+        dists = [vals[2], vals[3], vals[4]]
+        qx_init, qy_init, qz_init, qw_init = vals[6:10]
         q_init = Quaternion(qw_init, qx_init, qy_init, qz_init)
 
-        # ====================================================
-        #    CALCULATE VARIANCES FOR WEIGHTING
-        # ====================================================
+        # --- 2. CALCULATE VARIANCES ---
         current_variances = []
-        
         for i in range(3):
             d = dists[i]
-            if d > 0:
-                self.dist_windows[i].append(d)
-                
-            # Maintain window size
-            if len(self.dist_windows[i]) > CONFIG['uwb_window_size']:
-                self.dist_windows[i].pop(0)
-            
-            # Calculate Variance (std^2)
+            if d > 0: self.dist_windows[i].append(d)
+            if len(self.dist_windows[i]) > TRACKER_CONFIG['uwb_window_size']: self.dist_windows[i].pop(0)
             if len(self.dist_windows[i]) > 2:
-                var = np.var(self.dist_windows[i])
-                # If variance is dangerously low (perfect signal?), clamp it
-                current_variances.append(max(var, 1e-5))
+                current_variances.append(max(np.var(self.dist_windows[i]), 1e-5))
             else:
-                current_variances.append(1.0) # High uncertainty if no history
+                current_variances.append(1.0)
 
-        # ====================================================
-        #    PIPELINE A: WEIGHTED NLLS (RED DATA)
-        # ====================================================
-        last_pos_guess = None
-        if self.kf_comp is not None:
-            last_pos_guess = np.array([self.kf_comp.x[0], self.kf_comp.x[1], 0.0])
-
-        # Pass Variances to the Solver
-        comp_pos_3d, error_metric = trilaterate_wls(
-            dists, 
-            CONFIG['anchors'], 
-            current_variances,
-            last_known_pos=last_pos_guess
-        )
+        # --- 3. TRILATERATION (WNLLS) ---
+        last_pos_guess = np.array([self.kf_comp.x[0], self.kf_comp.x[1], 0.0]) if self.kf_comp else None
+        comp_pos_3d, _ = trilaterate_wls(dists, TRACKER_CONFIG['anchors'], current_variances, last_pos_guess)
         
+        # --- 4. DATA LOGGING (For Plotting) ---
+        # Record Raw Hardware
+        self.uwb_hw_x.append(hw_x)
+        self.uwb_hw_y.append(hw_y)
+
         has_comp_data = False
-        
         if comp_pos_3d is not None:
-            raw_x = comp_pos_3d[0]
-            raw_y = comp_pos_3d[1]
+            raw_x, raw_y = comp_pos_3d[0], comp_pos_3d[1]
 
-            # Imitation Filter
+            # Imitation Low-Pass Filter
             if not self.sim_initialized:
-                self.sim_filter_x = raw_x
-                self.sim_filter_y = raw_y
+                self.sim_filter_x, self.sim_filter_y = raw_x, raw_y
                 self.sim_initialized = True
             else:
                 self.sim_filter_x = (0.75 * self.sim_filter_x) + (0.25 * raw_x)
                 self.sim_filter_y = (0.75 * self.sim_filter_y) + (0.25 * raw_y)
-
+            
             self.uwb_computed_x.append(self.sim_filter_x)
             self.uwb_computed_y.append(self.sim_filter_y)
             has_comp_data = True
-        
-        # ====================================================
-        #    PIPELINE B: HARDWARE UWB (ORANGE DATA)
-        # ====================================================
-        self.uwb_hw_x.append(hw_x)
-        self.uwb_hw_y.append(hw_y)
+        else:
+            raw_x, raw_y = 0.0, 0.0
 
-        self.uwb_window_x.append(hw_x)
-        self.uwb_window_y.append(hw_y)
-        if len(self.uwb_window_x) > CONFIG['uwb_window_size']:
-            self.uwb_window_x.pop(0)
-            self.uwb_window_y.pop(0)
-            
-        uwb_sensor_clean_x = np.median(self.uwb_window_x)
-        uwb_sensor_clean_y = np.median(self.uwb_window_y)
-        
-        # ====================================================
-        #    TRANSFORM BOTH TO TIP SPACE
-        # ====================================================
+        # --- 5. TRANSFORM TO TIP ---
         offset_world = q_init.rotate(self.offset_local)
 
-        # 1. Hardware Tip
-        tip_hw_x = uwb_sensor_clean_x + offset_world[0]
-        tip_hw_y = uwb_sensor_clean_y + offset_world[1]
+        # Hardware Tip
+        # Simple median filter for hardware path
+        self.uwb_window_x.append(hw_x)
+        self.uwb_window_y.append(hw_y)
+        if len(self.uwb_window_x) > TRACKER_CONFIG['uwb_window_size']:
+             self.uwb_window_x.pop(0)
+             self.uwb_window_y.pop(0)
+        
+        tip_hw_x = np.median(self.uwb_window_x) + offset_world[0]
+        tip_hw_y = np.median(self.uwb_window_y) + offset_world[1]
         uwb_tip_pos_hw = np.array([tip_hw_x, tip_hw_y])
 
-        # 2. Computed Tip
+        # Computed Tip
         tip_comp_x = self.sim_filter_x + offset_world[0]
         tip_comp_y = self.sim_filter_y + offset_world[1]
         uwb_tip_pos_comp = np.array([tip_comp_x, tip_comp_y])
 
-        # UWB Smoothing (Low Pass)
+        # Pre-filter Smoothing
         alpha = 0.3
+        if self.prev_uwb_comp_tip is None:
+            self.prev_uwb_comp_tip = uwb_tip_pos_comp
+        else:
+            self.prev_uwb_comp_tip = alpha * uwb_tip_pos_comp + (1.0 - alpha) * self.prev_uwb_comp_tip
         
-        # Hardware Smoothing
         if self.prev_uwb_tip is None:
             self.prev_uwb_tip = uwb_tip_pos_hw
         else:
             self.prev_uwb_tip = alpha * uwb_tip_pos_hw + (1.0 - alpha) * self.prev_uwb_tip
 
-        # Computed Smoothing
-        if self.prev_uwb_comp_tip is None:
-            self.prev_uwb_comp_tip = uwb_tip_pos_comp
-        else:
-            self.prev_uwb_comp_tip = alpha * uwb_tip_pos_comp + (1.0 - alpha) * self.prev_uwb_comp_tip
 
+        # --- 6. INITIALIZE OR PREDICT (KALMAN) ---
+        if self.kf_comp is None:
+            self.kf_comp = KalmanFilter2D(uwb_tip_pos_comp)
+            self.kf = KalmanFilter2D(uwb_tip_pos_hw)
+            self.prev_ts_micros = vals[13]
+            return (tip_comp_x, tip_comp_y, False)
 
-        # ====================================================
-        #    INITIALIZATION
-        # ====================================================
-        if self.kf is None:
-            self.kf = KalmanFilter2D(uwb_tip_pos_hw) 
-            self.kf_comp = KalmanFilter2D(uwb_tip_pos_comp) 
-            self.prev_ts_micros = vals[13] 
-            return
-
-        # ====================================================
-        #    IMU BATCH PREDICTION
-        # ====================================================
         offset = 6
         stride = 8
         has_predicted = False
-
+        
+        # Batched IMU processing
         for i in range(10):
             idx = offset + (i * stride)
             if idx + 7 >= len(vals): break
-
-            qx, qy, qz, qw = vals[idx : idx+4]
-            ax, ay, az     = vals[idx+4 : idx+7]
-            ts_micros      = int(vals[idx+7])
+            qx, qy, qz, qw = vals[idx:idx+4]
+            ax, ay, az = vals[idx+4:idx+7]
+            ts_micros = int(vals[idx+7])
 
             dt = (ts_micros - self.prev_ts_micros) / 1_000_000.0
             self.prev_ts_micros = ts_micros
@@ -368,48 +332,32 @@ class StrokeTracker:
 
             q = Quaternion(qw, qx, qy, qz)
             lin_acc = q.rotate(np.array([ax, ay, az]))
-            
-            # Clamping & Deadband
-            limit = CONFIG['max_accel']
-            input_acc_x = np.clip(lin_acc[0], -limit, limit)
-            input_acc_y = np.clip(lin_acc[1], -limit, limit)
-            input_acc = np.array([input_acc_x, input_acc_y])
+            limit = TRACKER_CONFIG['max_accel']
+            input_acc = np.clip(lin_acc[:2], -limit, limit)
+            if np.linalg.norm(input_acc) < TRACKER_CONFIG['accel_deadband']: input_acc[:] = 0.0
 
-            if np.linalg.norm(input_acc) < CONFIG['accel_deadband']:
-                input_acc[:] = 0.0
-
-            # ZUPT Logic
-            acc_mag = np.linalg.norm(input_acc)
-            self.accel_magnitudes.append(acc_mag)
-            
-            if len(self.accel_magnitudes) > self.ZUPT_WINDOW_SIZE:
-                self.accel_magnitudes.pop(0)
-
+            # ZUPT
+            self.accel_magnitudes.append(np.linalg.norm(input_acc))
+            if len(self.accel_magnitudes) > 10: self.accel_magnitudes.pop(0)
             is_stationary = False
-            if len(self.accel_magnitudes) == self.ZUPT_WINDOW_SIZE:
-                avg_acc = np.mean(self.accel_magnitudes)
-                var_acc = np.var(self.accel_magnitudes)
-                if avg_acc < CONFIG['stationary_thresh'] and var_acc < 0.05:
-                    is_stationary = True
+            if len(self.accel_magnitudes) == 10 and np.mean(self.accel_magnitudes) < TRACKER_CONFIG['stationary_thresh']:
+                is_stationary = True
 
-            # --- PREDICT BOTH FILTERS ---
             self.kf.predict(input_acc[0], input_acc[1], dt)
             self.kf_comp.predict(input_acc[0], input_acc[1], dt)
 
-            # Apply Friction
-            self.kf.x[2] *= CONFIG['friction']
-            self.kf.x[3] *= CONFIG['friction']
-            self.kf_comp.x[2] *= CONFIG['friction']
-            self.kf_comp.x[3] *= CONFIG['friction']
+            self.kf.x[2] *= TRACKER_CONFIG['friction']
+            self.kf.x[3] *= TRACKER_CONFIG['friction']
+            self.kf_comp.x[2] *= TRACKER_CONFIG['friction']
+            self.kf_comp.x[3] *= TRACKER_CONFIG['friction']
 
-            # Apply ZUPT
-            if is_stationary:
+            if is_stationary: 
                 self.kf.apply_zupt()
                 self.kf_comp.apply_zupt()
-            
+
             has_predicted = True
             
-            # --- RECORD PATHS ---
+            # --- RECORD INTERMEDIATE PATHS ---
             curr_x, curr_y = self.kf.x[0], self.kf.x[1]
             if self.is_in_bounds(curr_x, curr_y):
                 self.path_x.append(curr_x)
@@ -420,7 +368,7 @@ class StrokeTracker:
                     self.path_x.append(np.nan)
                     self.path_y.append(np.nan)
                     self.is_drawing = False
-            
+
             comp_curr_x, comp_curr_y = self.kf_comp.x[0], self.kf_comp.x[1]
             if self.is_in_bounds(comp_curr_x, comp_curr_y):
                 self.path_comp_fused_x.append(comp_curr_x)
@@ -429,15 +377,12 @@ class StrokeTracker:
                 self.path_comp_fused_x.append(np.nan)
                 self.path_comp_fused_y.append(np.nan)
 
-        # ====================================================
-        #    UPDATE STEP
-        # ====================================================
+        # --- 7. UPDATE STEP ---
         if has_predicted:
-            # --- Update Filter 1 (Hardware) ---
+            # Update Hardware Filter
             pred_pos = self.kf.x[:2]
             innovation = np.linalg.norm(self.prev_uwb_tip - pred_pos)
-            
-            if innovation > CONFIG['uwb_jump_thresh']:
+            if innovation > TRACKER_CONFIG['uwb_jump_thresh']:
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= 5:
                     self.kf.reset_state(self.prev_uwb_tip)
@@ -445,83 +390,92 @@ class StrokeTracker:
             else:
                 self.kf.update(self.prev_uwb_tip)
                 self.consecutive_rejects = 0
-            
-            # --- Update Filter 2 (Computed) ---
-            if has_comp_data: 
-                pred_pos_comp = self.kf_comp.x[:2]
-                innovation_comp = np.linalg.norm(self.prev_uwb_comp_tip - pred_pos_comp)
 
-                if innovation_comp > CONFIG['uwb_jump_thresh']:
-                    self.consecutive_rejects_comp += 1
-                    if self.consecutive_rejects_comp >= 5:
-                        self.kf_comp.reset_state(self.prev_uwb_comp_tip)
-                        self.consecutive_rejects_comp = 0
-                else:
-                    self.kf_comp.update(self.prev_uwb_comp_tip)
+            # Update Computed Filter
+            pred_pos = self.kf_comp.x[:2]
+            innovation = np.linalg.norm(self.prev_uwb_comp_tip - pred_pos)
+            if innovation > TRACKER_CONFIG['uwb_jump_thresh']:
+                self.consecutive_rejects_comp += 1
+                if self.consecutive_rejects_comp >= 5:
+                    self.kf_comp.reset_state(self.prev_uwb_comp_tip)
                     self.consecutive_rejects_comp = 0
+            else:
+                self.kf_comp.update(self.prev_uwb_comp_tip)
+                self.consecutive_rejects_comp = 0
+
+        # --- 8. FINALIZE (Return Data for Webserver) ---
+        final_x = self.kf_comp.x[0]
+        final_y = self.kf_comp.x[1]
+        
+        # Determine Status based on bounds (used by PrototypeManager)
+        is_drawing_now = self.is_in_bounds(final_x, final_y)
+                        
+        return (final_x, final_y, is_drawing_now)
+
 
 # ==========================================
-# MAIN EXECUTION
+# TESTING BLOCK (Run Directly)
 # ==========================================
-is_running = True
+if __name__ == "__main__":
+    import serial
+    import matplotlib.pyplot as plt
+    import signal
 
-def signal_handler(sig, frame):
-    global is_running
-    print("\nStopping capture...")
-    is_running = False
-
-def main():
-    signal.signal(signal.SIGINT, signal_handler)
-    tracker = StrokeTracker()
+    os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
     
-    print(f"Opening {CONFIG['serial_port']}...")
+    # Testing Config (Override if needed, else uses TRACKER_CONFIG)
+    SERIAL_PORT = 'COM2'
+    BAUD_RATE = 115200
 
-    # =====================================================
-    #        LIVE PLOT
-    # =====================================================
+    is_running = True
+
+    def signal_handler(sig, frame):
+        global is_running
+        print("\nStopping capture...")
+        is_running = False
+
+    signal.signal(signal.SIGINT, signal_handler)
+    
+    tracker = StrokeTracker()
+    print(f"Opening {SERIAL_PORT}...")
+    
+    # Setup Plot
     plt.ion()
     fig, ax = plt.subplots(figsize=(8, 8))
-
-    line_raw, = ax.plot([], [], linestyle=':', marker='o', markersize=2, alpha=0.4,
-                        linewidth=1.0, color="#E6AC3F", label='Hardware UWB')
-
-    line_comp, = ax.plot([], [], linestyle=':', marker='o', markersize=2, alpha=0.6,
-                          linewidth=1.0, color="#E63F3F", label='NLLS Trilateration')
-
-    line_fused, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#3F92E6",
-                           label='Fused (Hardware)')
     
-    line_fused_comp, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#2A2A94",
-                           label='Fused (Computed)')
+    line_raw, = ax.plot([], [], linestyle=':', marker='o', markersize=2, alpha=0.4, linewidth=1.0, color="#E6AC3F", label='Hardware UWB')
+    line_comp, = ax.plot([], [], linestyle=':', marker='o', markersize=2, alpha=0.6, linewidth=1.0, color="#E63F3F", label='NLLS Trilateration')
+    line_fused, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#3F92E6", label='Fused (Hardware)')
+    line_fused_comp, = ax.plot([], [], linestyle='-', linewidth=1.25, color="#2A2A94", label='Fused (Computed)')
 
-    ax.set_title("v4.3: NLLS + Strong Wall Bounds")
+    ax.set_title("Stroke Processor Testing")
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Y (m)")
     ax.axis('equal')
     ax.grid(True)
     ax.legend()
-    plt.show()
-
+    
+    ser = None
     try:
-        ser = serial.Serial(CONFIG['serial_port'], CONFIG['baud_rate'], timeout=1)
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
         ser.flushInput()
         print("System Ready. Draw on the wall.")
         
         while is_running:
             line = ser.readline()
             if line:
-                tracker.process_packet(line)
+                # We ignore return value here as we use internal lists for plotting
+                tracker.process_packet(line) 
 
-                # ====== UPDATE PLOTS (UWB) ======
-                # if tracker.uwb_hw_x:
-                #     line_raw.set_xdata(tracker.uwb_hw_x)
-                #     line_raw.set_ydata(tracker.uwb_hw_y)
-                #
-                # if tracker.uwb_computed_x:
-                #     line_comp.set_xdata(tracker.uwb_computed_x)
-                #     line_comp.set_ydata(tracker.uwb_computed_y)
+                # Update Plots
+                if tracker.uwb_hw_x:
+                    line_raw.set_xdata(tracker.uwb_hw_x)
+                    line_raw.set_ydata(tracker.uwb_hw_y)
                 
-                # # ====== UPDATE PLOTS (COORDINATE) ======
+                if tracker.uwb_computed_x:
+                    line_comp.set_xdata(tracker.uwb_computed_x)
+                    line_comp.set_ydata(tracker.uwb_computed_y)
+                
                 if tracker.path_x:
                     line_fused.set_xdata(tracker.path_x)
                     line_fused.set_ydata(tracker.path_y)
@@ -537,13 +491,9 @@ def main():
 
     except Exception as e:
         print(f"Error: {e}")
-
     finally:
-        if 'ser' in locals() and ser.is_open:
+        if ser and ser.is_open:
             ser.close()
-        print("Capture finished.")
+        print("Test finished.")
         plt.ioff()
         plt.show()
-
-if __name__ == "__main__":
-    main()

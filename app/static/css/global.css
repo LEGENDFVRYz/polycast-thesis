@@ -9,12 +9,12 @@ GLOBAL RESETS AND FONT
 
 html, body {
     height: 100%;
-    font-family: 'Poppins', sans-serif;
+    font-family: 'Poppins';
     font-weight: 400; /* ensure Regular is default */
 }
 
 body {
-    /* font-family: 'Poppins-M', sans-serif; */
+    /* font-family: 'Poppins-M' */
     background-color: #F9FAFB; /* --color-bg-light */
     color: #1F2937; /* --color-text-primary */
     line-height: 1.5;
@@ -100,6 +100,7 @@ header.app-wrapper {
             text-decoration: none;
             cursor: pointer;
             
+            font-family: 'Poppins-M';
             position: relative;
             transition: color 0.2s;
         }

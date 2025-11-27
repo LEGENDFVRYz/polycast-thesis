@@ -9,11 +9,11 @@
 
 html, body {
     height: 100%;
-    font-family: 'Poppins-SB', sans-serif;
+    font-family: 'Poppins-SB';
 }
 
 .auth-ctn {
-    font-family: 'Poppins-SB', sans-serif;
+    font-family: 'Poppins-SB';
     background: linear-gradient(
         90deg,       /* 180deg = top to bottom */
         #0D1720 0%,   /* start color */
@@ -88,7 +88,7 @@ html, body {
                             border: 1px solid #d1d5db;
                             border-radius: 0.5rem;
                             font-size: 1rem;
-                            font-family: 'Inter', sans-serif;
+                            font-family: 'Poppins';
 
                             &:focus {
                                 outline: 2px solid #1a2c47;

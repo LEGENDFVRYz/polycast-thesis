@@ -1,4 +1,6 @@
-/* --- Global Resets & Font --- */
+/* ==========================================
+GLOBAL RESETS AND FONT
+===========================================*/
 * {
     box-sizing: border-box;
     margin: 0;
@@ -7,10 +9,12 @@
 
 html, body {
     height: 100%;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 400; /* ensure Regular is default */
 }
 
 body {
-    font-family: 'Poppins-M', sans-serif;
+    /* font-family: 'Poppins-M', sans-serif; */
     background-color: #F9FAFB; /* --color-bg-light */
     color: #1F2937; /* --color-text-primary */
     line-height: 1.5;
@@ -21,6 +25,9 @@ body {
 }
 
 
+/* ==========================================
+MAIN APPLICATION STYLES
+===========================================*/
 header.app-wrapper {
     display: flex;
     flex-direction: column;
@@ -126,7 +133,6 @@ header.app-wrapper {
     }
 }
 
-
 /* --- Main Content Inital --- */
 .main-content {
     padding: 1.5rem 1.25rem;
@@ -145,79 +151,13 @@ header.app-wrapper {
     font-family: "Poppins-SB";
     font-size: 1.25rem;
     margin-bottom: 1rem;
-    color: #102E4A; /* --color-text-primary */
+    color: #102E4A;
 }
 
 
-
-.main-content {
-    
-
-}
-
-
-/* Individual flash message container */
-#flash-container {
-    position: fixed;  /* Fixes it to the screen */
-    top: 20px;        /* Distance from top */
-    left: 50%;        /* Center horizontally */
-    transform: translateX(-50%); /* Actually centers the container */
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    z-index: 9999;    /* On top of everything */
-    width: 80%;      /* Let width adjust based on content */
-    max-width: 90%;   /* Prevent it from being too wide on mobile */
-    padding: 0 10px;  /* Small padding around the container */
-    align-items: center; /* Center messages inside container */
-}
-
-/* Individual flash message */
-.flash-message {
-    color: white;
-    padding: 15px 25px;  /* Add padding inside each message */
-    border-radius: 8px;  /* Rounded corners */
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    min-width: 200px;    /* Optional minimum width */
-    text-align: center;  /* Center text inside message */
-    animation: slideIn 0.5s ease-out; /* Slide in animation */
-}
-
-/* Fade out effect */
-.flash-message.fade-out {
-    opacity: 0;
-    transform: translateY(-20px);
-    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
-}
-
-/* Styles by category */
-.flash-message.error {
-    background-color: #dc3545;
-}
-
-.flash-message.success {
-    background-color: #28a745;
-}
-
-.flash-message:not(.error):not(.success) {
-    background-color: #007aff;
-}
-
-/* Slide in animation */
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
-    }
-}
-
-
-
-
+/* ==========================================
+PROFILE MODAL STYLES
+===========================================*/
 #profileModal{
     .profile-center-block {
         text-align: center;
@@ -255,13 +195,67 @@ header.app-wrapper {
 
 
 
+/* ==========================================
+FLASH POP-UP STYLES
+===========================================*/
+#flash-container {
+    position: fixed;  /* Fixes it to the screen */
+    top: 20px;        /* Distance from top */
+    left: 50%;        /* Center horizontally */
+    transform: translateX(-50%); /* Actually centers the container */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 9999;    /* On top of everything */
+    width: 80%;      /* Let width adjust based on content */
+    max-width: 90%;   /* Prevent it from being too wide on mobile */
+    padding: 0 10px;  /* Small padding around the container */
+    align-items: center; /* Center messages inside container */
+}
 
+.flash-message {
+    color: white;
+    padding: 15px 25px;  /* Add padding inside each message */
+    border-radius: 8px;  /* Rounded corners */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    min-width: 200px;    /* Optional minimum width */
+    text-align: center;  /* Center text inside message */
+    animation: slideIn 0.5s ease-out; /* Slide in animation */
+}
+
+.flash-message.fade-out {
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+}
+
+.flash-message.error {
+    background-color: #dc3545;
+}
+
+.flash-message.success {
+    background-color: #28a745;
+}
+
+.flash-message:not(.error):not(.success) {
+    background-color: #007aff;
+}
+
+/* Slide in animation */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 
 /* ==========================================
-BASIC MODAL STYLES
+(GLOBAL) BASIC MODAL STYLES
 ===========================================*/
-
-/* The dark background overlay */
 .modal-overlay {
     display: none; /* Hidden by default */
     position: fixed; 

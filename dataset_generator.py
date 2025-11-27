@@ -4,9 +4,9 @@ import time
 import sys
 
 # --- CONFIGURATION ---
-SERIAL_PORT = 'COM5'   # <--- CHANGE THIS to your specific Port
+SERIAL_PORT = 'COM3'   # <--- CHANGE THIS to your specific Port
 BAUD_RATE = 115200     # Must match Serial.begin in ESP32
-OUTPUT_FILE = 'uwb_imu_data.csv'
+OUTPUT_FILE = 'Hline.csv'
 IMU_SAMPLES_PER_PACKET = 10
 
 def generate_header():

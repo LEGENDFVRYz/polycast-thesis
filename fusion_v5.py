@@ -11,7 +11,7 @@ import sys
 # -------------------------
 # CONFIG
 # -------------------------
-SERIAL_PORT = 'COM5'
+SERIAL_PORT = 'COM2'
 BAUD_RATE = 115200
 
 ANCHORS = np.array([

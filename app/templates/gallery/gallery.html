@@ -17,21 +17,21 @@
             <a href="{{ url_for('gallery_page', view='all') }}" 
                class="qa-button {% if active_view == 'all' %}active{% endif %}" 
                data-icon-btn="home">
-                <image src="../static/images/icons/home.svg">
+                <image src="{{ url_for('static', filename='images/icons/home.svg') }}">
                 <span>Home</span>
             </a>
             
             <a href="{{ url_for('gallery_page', view='favorites') }}" 
                class="qa-button {% if active_view == 'favorites' %}active{% endif %}" 
                data-icon-btn="favorites">
-                <image src="../static/images/icons/favorites.svg">
+                <image src="{{ url_for('static', filename='images/icons/star-filled.svg') }}">
                 <span>Favorites</span>
             </a>
 
             <a href="{{ url_for('gallery_page', view='trash') }}" 
                class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
                data-icon-btn="trash">
-                <image src="../static/images/icons/trash.svg">
+                <image src="{{ url_for('static', filename='images/icons/trash.svg') }}">
                 <span>Trash</span>
             </a>
         </section>
@@ -45,36 +45,36 @@
                     <!-- File Card 1 -->
                     <div class="file-card">
                         <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
+                            <image src="{{ url_for('static', filename='images/icons/image1.svg') }}">
                         </div>
                         <div class="fc-info">
                             <span class="fc-name">IMG_1230</span>
                             <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
+                                <image src="{{ url_for('static', filename='images/icons/dots.svg') }}">
                             </button>
                         </div>
                     </div>
                     <!-- File Card 2 -->
                     <div class="file-card">
                         <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
+                            <image src="{{ url_for('static', filename='images/icons/image1.svg') }}">
                         </div>
                         <div class="fc-info">
                             <span class="fc-name">IMG_7381</span>
                             <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
+                                <image src="{{ url_for('static', filename='images/icons/dots.svg') }}">
                             </button>
                         </div>
                     </div>
                     <!-- File Card 3 -->
                     <div class="file-card">
                         <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
+                            <image src="{{ url_for('static', filename='images/icons/image1.svg') }}">
                         </div>
                         <div class="fc-info">
                             <span class="fc-name">IMG_4212</span>
                             <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
+                                <image src="{{ url_for('static', filename='images/icons/dots.svg') }}">
                             </button>
                         </div>
                     </div>

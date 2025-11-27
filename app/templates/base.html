@@ -18,7 +18,7 @@
         <!-- Header -->
         <div class="app-header">
             <a href="{{ url_for('index') }}">
-                <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
+                <img class='header-logo' src="{{ url_for('static', filename='images/icons/polycast-blue.svg') }}">
             </a>
             <div class="right-header">
                 <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 

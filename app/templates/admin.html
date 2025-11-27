@@ -235,7 +235,7 @@
                     container.replaceChild(input, currentElement);
 
                     // Change icon to "cancel" or "chevron" (toggle)
-                    icon.src = '/static/images/icons/chevron-down.svg';
+                    icon.src = 'url_for('static', filename='images/icons/chevron-down.svg')'"";
                     icon.alt = 'Cancel';
                     return;
                 }

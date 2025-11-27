@@ -102,7 +102,7 @@ def admin_page():
     return render_template(
         "admin.html",
         ws_port=BROWSER_WS_PORT,
-        prototype_ip=prototype_config.PROTOTYPE_IP,
+        prototype_ip=prototype_config.SERIAL_PORT,
         current_status=admin_status.get_field("status"),
         gallery_data=gallery_list_for_json
     )
@@ -114,29 +114,35 @@ def admin_configure():
         return redirect(url_for("login_page"))
 
     admin_name = session["user"]
-    esp_ip = request.form.get('esp_ip')
+    
+    # 1. GET PORT FROM FORM (Instead of IP)
+    selected_port = request.form.get('serial_port') # Ensure your HTML form uses name="serial_port"
 
-    if not esp_ip:
-        flash("No IP address was provided.", "error")
+    if not selected_port:
+        flash("No Serial Port was selected.", "error")
         return redirect(url_for("admin_page"))
-
-    ws_url_to_test = f"ws://{esp_ip}/ws"
-
 
     # Set status to "Configuring..."
     admin_status._update_state(
         status="CONFIGURING",
         admin_name=admin_name,
     )
-    print(f"[ADMIN] {admin_name} is configuring with IP: {esp_ip}...")
+    print(f"[ADMIN] {admin_name} is configuring with Port: {selected_port}...")
     
-    # Perform the actual WebSocket connection check
-    is_connected = check_esp_ws_connection(ws_url_to_test)
-    
-    if is_connected:
+    try:
+        # 2. UPDATE CONFIG
+        prototype_config.SERIAL_PORT = selected_port
         
-        prototype_config.PROTOTYPE_IP = esp_ip  # Save the IP
+        # 3. ATTEMPT TO START THREAD
+        # The PrototypeManager will now initialize the Serial Thread using the port we just set
+        result = thread_manager.start()
         
+        if result:
+            print("[PROTO] Serial thread started successfully")
+        else:
+            print("[PROTO] Thread was already running")
+
+        # 4. SUCCESS
         admin_status._update_state(
             status="CONFIGURED",
         )
@@ -160,19 +166,23 @@ def admin_configure():
 
     return redirect(url_for("admin_page"))
 
+
 # Admin Configurantion Helper: API for scanning IP
-@app.route('/scan-for-ip')
-def scan_for_ip_route():
+# --- NEW ROUTE: Scan for Serial Ports ---
+@app.route('/scan-ports')
+def scan_ports_route():
     if 'user' not in session:
-        # If not logged in, return a JSON error, NOT a redirect
         return jsonify({'success': False, 'message': 'User not authenticated'}), 401
     
-    ip = find_esp_ip(timeout=10) 
+    # Use the helper method we added to your config.py earlier
+    ports = prototype_config.list_serial_ports()
     
-    if ip:
-        return jsonify({'success': True, 'ip': ip})
+    if ports:
+        # Return the list of found ports (e.g., ["COM3", "COM4"])
+        return jsonify({'success': True, 'ports': ports})
     else:
-        return jsonify({'success': False, 'message': 'Scan timed out. No device found.'}), 404
+        return jsonify({'success': False, 'message': 'No serial ports found.'}), 404
+    
 
 # --- NEW: Admin action route to start hosting ---
 @app.route("/admin/start_host", methods=["POST"])

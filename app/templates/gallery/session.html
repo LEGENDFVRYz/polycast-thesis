@@ -4,7 +4,45 @@
 
 {% block extra_css %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
+
+    <!-- Added by Timothy @ 11/27/2025-->
+    <style>
+        session-wrap {
+            #descriptionDisplay {
+                white-space: normal;
+                word-wrap: break-word;
+            }
     
+            /* Shared button style */
+            #editBtn, #deleteBtn {
+                padding: 6px 14px;
+                color: white;
+                border: none;
+                border-radius: 6px;
+                font-size: 14px;
+                cursor: pointer;
+                transition: 0.2s ease;
+                display: none;
+            }
+    
+            /* Edit button style */
+            #editBtn {
+                background-color: #1e88e5;
+            }
+            #editBtn:hover {
+                background-color: #1565c0;
+            }
+    
+            /* Delete button (red) */
+            #deleteBtn {
+                background-color: #e53935;
+            }
+            #deleteBtn:hover {
+                background-color: #b71c1c;
+            }
+        }
+
+    </style>
 {% endblock %}
 
 {% block content %}
@@ -25,43 +63,6 @@
                 </a>
             </div>
             
-
-            <!-- Added by Timothy @ 11/27/2025-->
-            <!--<style>
-                #descriptionDisplay {
-                    white-space: normal;
-                    word-wrap: break-word;
-                }
-
-                /* Shared button style */
-                #editBtn, #deleteBtn {
-                    padding: 6px 14px;
-                    color: white;
-                    border: none;
-                    border-radius: 6px;
-                    font-size: 14px;
-                    cursor: pointer;
-                    transition: 0.2s ease;
-                    display: none;
-                }
-
-                /* Edit button style */
-                #editBtn {
-                    background-color: #1e88e5;
-                }
-                #editBtn:hover {
-                    background-color: #1565c0;
-                }
-
-                /* Delete button (red) */
-                #deleteBtn {
-                    background-color: #e53935;
-                }
-                #deleteBtn:hover {
-                    background-color: #b71c1c;
-                }
-            </style>-->
-
             <div class="card-content">
                 <div class="folder-details">
 

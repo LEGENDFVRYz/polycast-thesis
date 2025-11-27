@@ -23,7 +23,7 @@
                     data-gallery-id="{{ folder.id }}"
                     data-modal-target="#forceDeleteGalleryModal"
                     data-force-url="{{ url_for('force_delete_gallery', gallery_id=folder.id) }}">
-                <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" class="delete" width="21" height="21">
+                <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" width="21" height="21">
             </button>
 
         {% else %}

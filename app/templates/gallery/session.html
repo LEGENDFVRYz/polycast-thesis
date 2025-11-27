@@ -15,36 +15,147 @@
             <div class="folder-header">
                 <div class="folder-name">
                     <a href="{{ url_for('gallery_page') }}" class="icon-button back-button">
-                        <image class="back-icon" src="../../static/images/icons/arrow-right.svg">
+                        <image class="back-icon" src="{{ url_for('static', filename='images/icons/arrow-right.svg') }}">
                     </a>
-                    <image class="folder-icon" src="../../static/images/icons/folder1.svg"/>
+                    <image class="folder-icon" src="{{ url_for('static', filename='images/icons/folder1.svg') }}"/>
                     <p class="title">{{ selected_gallery }}</p>
                 </div>
                 <a href="#" class="details-link" id="detailsToggle">
-                    <image class="info-icon" src="../../static/images/icons/information.svg"/>
+                    <image class="info-icon" src="{{ url_for('static', filename='images/icons/information.svg') }}"/>
                 </a>
             </div>
             
+
+            <!-- Added by Timothy @ 11/27/2025-->
+            <!--<style>
+                #descriptionDisplay {
+                    white-space: normal;
+                    word-wrap: break-word;
+                }
+
+                /* Shared button style */
+                #editBtn, #deleteBtn {
+                    padding: 6px 14px;
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    font-size: 14px;
+                    cursor: pointer;
+                    transition: 0.2s ease;
+                    display: none;
+                }
+
+                /* Edit button style */
+                #editBtn {
+                    background-color: #1e88e5;
+                }
+                #editBtn:hover {
+                    background-color: #1565c0;
+                }
+
+                /* Delete button (red) */
+                #deleteBtn {
+                    background-color: #e53935;
+                }
+                #deleteBtn:hover {
+                    background-color: #b71c1c;
+                }
+            </style>-->
+
             <div class="card-content">
                 <div class="folder-details">
+
                     <div class="specifics">
                         <p class="detail-label">CYS</p>
                         <p class="detail-value">BSCPE 4-3</p>
                     </div>
+
                     <div class="specifics">
                         <p class="detail-label">Modified on</p>
                         <p class="detail-value">November XX, 20XX</p>
                     </div>
+
                     <div class="specifics">
                         <p class="detail-label">Created on</p>
                         <p class="detail-value">November XX, 20XX</p>
                     </div>
+
+                    <!-- User input -->
                     <div class="specifics">
                         <p class="detail-label">Description</p>
-                        <input class="detail-value" placeholder="Add a description"/>
+                        <input id="descriptionInput" class="detail-value" placeholder="Add a description" />
                     </div>
+
+                    <!-- Display output -->
+                    <!--<div class="specifics">
+                        <p id="descriptionDisplay" class="detail-value" 
+                            style="display: inline-block; margin-right: 10px;"></p>
+                        <button id="editBtn" style="margin-right: 6px; margin-top: 10px;">Edit</button>
+                        <button id="deleteBtn">Delete</button>
+                    </div>-->
+
                 </div>
             </div>
+
+            <script>
+                const input = document.getElementById("descriptionInput");
+                const display = document.getElementById("descriptionDisplay");
+                const editBtn = document.getElementById("editBtn");
+                const deleteBtn = document.getElementById("deleteBtn");
+
+                // Load saved description from localStorage on page load
+                window.addEventListener("DOMContentLoaded", () => {
+                    const savedDesc = localStorage.getItem("description");
+                    if (savedDesc) {
+                        display.textContent = savedDesc;
+                        editBtn.style.display = "inline-block";
+                        deleteBtn.style.display = "inline-block";
+                    }
+                });
+
+                // Handle Enter key to submit description
+                input.addEventListener("keydown", function(event) {
+                    if (event.key === "Enter") {
+                        const text = input.value.trim();
+                        if (text !== "") {
+                            display.textContent = text;
+
+                            // Save to localStorage
+                            localStorage.setItem("description", text);
+
+                            // Show buttons
+                            editBtn.style.display = "inline-block";
+                            deleteBtn.style.display = "inline-block";
+                        }
+
+                        input.value = "";
+                        input.blur();
+                    }
+                });
+
+                // Edit description
+                editBtn.addEventListener("click", function() {
+                    input.value = display.textContent;
+                    input.focus();
+                });
+
+                // Delete description
+                deleteBtn.addEventListener("click", function() {
+                    display.textContent = "";
+
+                    // Remove from localStorage
+                    localStorage.removeItem("description");
+
+                    editBtn.style.display = "none";
+                    deleteBtn.style.display = "none";
+                });
+            </script>
+
+
+            <!-- End of Addition by Timothy @ 11/27/2025-->
+
+
+
 
             <!-- <div class="hidden-details" id="folderDetails">
                 <p><strong>Course:</strong> Database Management Systems</p>
@@ -80,7 +191,7 @@
                         <div class="folder-item">
                             <div class="item-icon">
                                 <!-- Use a custom filled-in folder icon -->
-                                <image src="../static/images/icons/folder1.svg">
+                                <image src="{{ url_for('static', filename='images/icons/folder1.svg') }}">
                             </div>
                             <div class="item-info">
                                     <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
@@ -104,7 +215,7 @@
                                             data-modal-target="#forceDeleteSessionModal"
                                             data-force-url="{{ url_for('force_delete_session', session_id=session.id) }}"
                                             title="Permanently Delete">
-                                        <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" class="delete" width="21" height="21">
+                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" width="21" height="21">
                                     </button>
                                 {% else %}
                                     <button type="button" class="icon-button edit-session-btn"

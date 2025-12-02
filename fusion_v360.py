@@ -50,6 +50,19 @@ TRACKER_CONFIG = {
     'max_accel': 2.0
 }
 
+# Add these config params near TRACKER_CONFIG (or inside it)
+FORCE_CONFIG = {
+    'contact_on_thresh': 1.0,       # tune to your hardware units
+    'contact_off_thresh': 0.6,
+    'contact_on_count': 2,
+    'contact_off_count': 3,
+    'use_max_force': True,          # use max(force_i) OR mean(force_i)
+    'R_contact_scale': 0.25,        # multiply default R by this when contact (trust UWB)
+    'R_no_contact_scale': 4.0,      # multiply default R by this when no contact (distrust UWB)
+    'min_force_samples_for_decision': 2,
+    'spike_reject_window': 3        # number of recent uwb packets to consider for spike rejections
+}
+
 
 # ==========================================
 # WEIGHTED NON-LINEAR LEAST SQUARES (WNLLS)
@@ -194,7 +207,14 @@ class StrokeTracker:
         self.prev_uwb_tip = None
         self.consecutive_rejects = 0
         self.kf = None
-    
+        
+        # Pressure/contact detection state
+        self.contact_state = False
+        self._contact_on_counter = 0
+        self._contact_off_counter = 0
+        self._force_history = []    # short-term smoothing
+        self._recent_uwb_positions = []  # keep for spike rejection
+
     def get_bounds(self):
         """Returns the physical bounds config so the UI thread knows the range."""
         return {
@@ -314,9 +334,66 @@ class StrokeTracker:
             self.prev_ts_micros = vals[13]
             return (tip_comp_x, tip_comp_y, False)
 
+        # Extract force values from packet (each IMU has force at idx+? in your stride)
         offset = 6
         stride = 8
         has_predicted = False
+
+        # Gather forces for this packet
+        forces = []
+        for i in range(10):
+            idx = offset + (i * stride)
+            if idx + 7 >= len(vals): break
+            # force is at idx+6 in your earlier packet pattern (qx,qy,qz,qw,ax,ay,az,force,ts)
+            f = vals[idx+6]  # adjust if indexing differs
+            forces.append(float(f))
+
+        # compute contact metric
+        if len(forces) >= FORCE_CONFIG['min_force_samples_for_decision']:
+            contact_metric = max(forces) if FORCE_CONFIG['use_max_force'] else (sum(forces)/len(forces))
+        else:
+            contact_metric = 0.0
+
+        # short smoothing history
+        self._force_history.append(contact_metric)
+        if len(self._force_history) > 5:
+            self._force_history.pop(0)
+        smooth_force = sum(self._force_history)/len(self._force_history)
+
+        # Hysteresis / debounce decision
+        if smooth_force >= FORCE_CONFIG['contact_on_thresh']:
+            self._contact_on_counter += 1
+            self._contact_off_counter = 0
+        elif smooth_force <= FORCE_CONFIG['contact_off_thresh']:
+            self._contact_off_counter += 1
+            self._contact_on_counter = 0
+
+        if self._contact_on_counter >= FORCE_CONFIG['contact_on_count']:
+            # go to contact state
+            if not self.contact_state:
+                # pen just touched -> do any on-contact initialization here
+                # e.g. apply ZUPT and reset small velocities
+                if self.kf is not None:
+                    self.kf.apply_zupt()
+                    self.kf_comp.apply_zupt()
+                # record time if needed, e.g. self.pen_down_ts = current packet ts
+            self.contact_state = True
+            # keep counters bounded
+            self._contact_on_counter = FORCE_CONFIG['contact_on_count']
+        elif self._contact_off_counter >= FORCE_CONFIG['contact_off_count']:
+            # go to no-contact
+            if self.contact_state:
+                # pen just lifted -> optional cleanup
+                # add nan to path to break stroke
+                if self.is_drawing:
+                    self.path_x.append(np.nan)
+                    self.path_y.append(np.nan)
+                    self.path_comp_fused_x.append(np.nan)
+                    self.path_comp_fused_y.append(np.nan)
+                    self.is_drawing = False
+            self.contact_state = False
+            self._contact_off_counter = FORCE_CONFIG['contact_off_count']
+
         
         # Batched IMU processing
         for i in range(10):
@@ -377,30 +454,42 @@ class StrokeTracker:
                 self.path_comp_fused_x.append(np.nan)
                 self.path_comp_fused_y.append(np.nan)
 
-        # --- 7. UPDATE STEP ---
+
+        # --- 7. UPDATE STEP (modified to use contact_state) ---
         if has_predicted:
-            # Update Hardware Filter
+            # Choose R scales depending on contact confidence
+            # For hardware (kf), if contact -> trust UWB more (smaller R)
+            if self.contact_state:
+                R_override_hw = np.diag([TRACKER_CONFIG['uwb_noise_std']**2, TRACKER_CONFIG['uwb_noise_std']**2]) * FORCE_CONFIG['R_contact_scale']
+                R_override_comp = R_override_hw.copy()
+            else:
+                R_override_hw = np.diag([TRACKER_CONFIG['uwb_noise_std']**2, TRACKER_CONFIG['uwb_noise_std']**2]) * FORCE_CONFIG['R_no_contact_scale']
+                R_override_comp = R_override_hw.copy()
+
+            # Update Hardware Filter (with adaptive R)
             pred_pos = self.kf.x[:2]
             innovation = np.linalg.norm(self.prev_uwb_tip - pred_pos)
-            if innovation > TRACKER_CONFIG['uwb_jump_thresh']:
+            if innovation > TRACKER_CONFIG['uwb_jump_thresh'] and not self.contact_state:
+                # reject UWB jump while not contacting
                 self.consecutive_rejects += 1
                 if self.consecutive_rejects >= 5:
                     self.kf.reset_state(self.prev_uwb_tip)
                     self.consecutive_rejects = 0
             else:
-                self.kf.update(self.prev_uwb_tip)
+                # Use R_override to control how much we trust the UWB measurement
+                self.kf.update(self.prev_uwb_tip, R_override=R_override_hw)
                 self.consecutive_rejects = 0
 
-            # Update Computed Filter
+            # Update Computed Filter (with adaptive R)
             pred_pos = self.kf_comp.x[:2]
             innovation = np.linalg.norm(self.prev_uwb_comp_tip - pred_pos)
-            if innovation > TRACKER_CONFIG['uwb_jump_thresh']:
+            if innovation > TRACKER_CONFIG['uwb_jump_thresh'] and not self.contact_state:
                 self.consecutive_rejects_comp += 1
                 if self.consecutive_rejects_comp >= 5:
                     self.kf_comp.reset_state(self.prev_uwb_comp_tip)
                     self.consecutive_rejects_comp = 0
             else:
-                self.kf_comp.update(self.prev_uwb_comp_tip)
+                self.kf_comp.update(self.prev_uwb_comp_tip, R_override=R_override_comp)
                 self.consecutive_rejects_comp = 0
 
         # --- 8. FINALIZE (Return Data for Webserver) ---

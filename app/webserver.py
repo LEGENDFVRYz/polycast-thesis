@@ -267,7 +267,7 @@ def admin_start_host():
     session["sname"] = session_name
     
     try:
-        archive_path = os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
+        archive_path = os.path.join("archive", str(admin_id), str(gallery_id), str(session_id))
         archiver_manager = Archiver(
             initial_archive_path=archive_path
         )

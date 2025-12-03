@@ -18,7 +18,7 @@
 
 // Compression scales
 const float Q_SCALE = 32767.0f; // quaternion -1..1 -> int16
-const float A_SCALE = 100.0f;   // accel m/s^2 * 100 -> int16 (±327.67 m/s^2 effective range)
+const float A_SCALE = 1000.0f;   // accel m/s^2 * 1000 -> int16 (±327.67 m/s^2 effective range)
 
 // number of IMU samples per packet (you chose 10)
 const uint8_t IMU_SAMPLES_PER_PACKET = 10;
@@ -29,11 +29,11 @@ const size_t MAX_PACKET_SIZE = 220; // safe upper bound for esp_now_send
 
 // Anchor config (same as earlier)
 struct Position { float x, y; };
-Position* base0 = new Position{1.75, 0};
-Position* base1 = new Position{1.75, 1.61};
-Position* base2 = new Position{0, 0};
+Position* base0 = new Position{1.41, 0};
+Position* base1 = new Position{1.41, 1.35};
+Position* base2 = new Position{0, 1.35};
 Position* base_stations[8] = {base0, base1, base2, NULL, NULL, NULL, NULL, NULL};
-float distance_offsets[8] = {-0.2, -0.18, -0.1, 0,0,0,0,0};
+float distance_offsets[8] = {-0.15, -0.1, -0.1, 0,0,0,0,0};
 
 // IMU
 Adafruit_BNO08x bno08x(-1);

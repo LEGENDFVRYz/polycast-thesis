@@ -9,7 +9,7 @@
 
 // scales must match sender
 const float Q_SCALE = 32767.0f;
-const float A_SCALE = 100.0f;
+const float A_SCALE = 1000.0f;
 const uint8_t EXPECTED_VERSION = 0x01;
 const uint8_t IMU_SAMPLES_PER_PACKET = 10;
 

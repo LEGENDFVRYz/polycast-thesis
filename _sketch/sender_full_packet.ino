@@ -37,9 +37,9 @@ const size_t MAX_PACKET_SIZE = 250;
 
 // Anchor config
 struct Position { float x, y; };
-Position* base0 = new Position{1.41, 0};
-Position* base1 = new Position{1.41, 1.35};
-Position* base2 = new Position{0, 1.35};
+Position* base0 = new Position{1.24, 0};
+Position* base1 = new Position{1.24, 1.23};
+Position* base2 = new Position{0, 1.23};
 Position* base_stations[8] = {base0, base1, base2, NULL, NULL, NULL, NULL, NULL};
 float distance_offsets[8] = {-0.15, -0.1, -0.1, 0,0,0,0,0};
 

@@ -6,7 +6,7 @@ import sys
 # --- CONFIGURATION ---
 SERIAL_PORT = 'COM5'   # <--- CHANGE THIS to your specific Port
 BAUD_RATE = 115200     # Must match Serial.begin in ESP32
-OUTPUT_FILE = 'uwb_imu_data.csv'
+OUTPUT_FILE = 'abc_word_updated.csv'
 IMU_SAMPLES_PER_PACKET = 10
 
 def generate_header():
@@ -20,9 +20,12 @@ def generate_header():
     # The looped IMU data (10 samples per row)
     for i in range(IMU_SAMPLES_PER_PACKET):
         suffix = f"_{i}" # e.g., qx_0, qx_1...
+        # Updated order matches receiver: qx, qy, qz, qw, ax, ay, az, force, ts
         header.extend([
             f"qx{suffix}", f"qy{suffix}", f"qz{suffix}", f"qw{suffix}",
-            f"ax{suffix}", f"ay{suffix}", f"az{suffix}", f"ts{suffix}"
+            f"ax{suffix}", f"ay{suffix}", f"az{suffix}", 
+            f"force{suffix}", # Added force column
+            f"ts{suffix}"
         ])
     return header
 

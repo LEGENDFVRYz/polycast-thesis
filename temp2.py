@@ -1,17 +1,17 @@
 import serial
 import time
 
-PORT = "COM3"
+PORT = "COM5"
 BAUD = 115200
 
 def parse_csv_line(line):
     """Parse a comma-separated line into floats/ints, return as list."""
     parts = line.strip().split(",")
-    if len(parts) != 12:  # 11 floats + 1 timestamp
+    if len(parts) != 15:  # 15 floats + 1 timestamp
         return None
     try:
-        # Convert first 11 to float, last to int
-        data = [float(p) for p in parts[:11]] + [int(parts[11])]
+        # Convert first 15 to float, last to int
+        data = [float(p) for p in parts[:14]] + [int(parts[14])]
         return data
     except ValueError:
         return None
@@ -24,6 +24,7 @@ def main():
     # Print CSV header
     header = ["x","y","filtered_x","filtered_y",
               "qx","qy","qz","qw",
+              "dist", "dist2", "dist3",
               "ax","ay","az","timestamp"]
     print(",".join(header))
 

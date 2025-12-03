@@ -20,16 +20,15 @@ ANCHORS = np.array([
     [0.00, 0.00, 0.00]
 ])
 
-PEN_TIP_OFFSET = np.array([0.0, 0.0, -0.12])
-ALIGNMENT_ANGLE_DEG = 0.0
+PEN_TIP_OFFSET = np.array([0.0, 0.0, 0.0])
 
 # System Constants
 TRAP_DT_MAX = 0.15
 IMU_SAMPLES_PER_PACKET = 10
 
 # Filter & Bias Constants
-BIAS_ALPHA = 0.008
-VELOCITY_DECAY = 0.97    # Soft decay to prevent runaway when no UWB
+BIAS_ALPHA = 0.01
+VELOCITY_DECAY = 0.97   # Soft decay to prevent runaway when no UWB
 
 # Motion Thresholds (Used for ZVUP - Zero Velocity Update)
 ACCEL_NOISE_FLOOR = 0.01
@@ -174,6 +173,7 @@ last_timestamp_us = None
 uwb_pos = np.zeros(3)
 last_uwb_pos = np.zeros(3)
 last_uwb_time = 0
+last_imu_integration_pos = np.zeros(3)
 
 has_first_fix = False
 is_simulated_contact = False 
@@ -241,31 +241,22 @@ def toggle_contact():
     global is_simulated_contact, current_stroke, yz_strokes, stroke_items
     global pos, vel, prev_vel, prev_accel, last_uwb_pos, has_first_fix
 
-    # remember previous state to detect OFF->ON transition
-    prev_contact = is_simulated_contact
     is_simulated_contact = not is_simulated_contact
 
     if is_simulated_contact:
         toggle_btn.setText("Simulated Contact: ON (Writing)")
         toggle_btn.setStyleSheet("background-color: green; color: white; font-weight: bold;")
 
-        # --- NEW: if we are switching from HOVERING -> WRITING, snap IMU to last UWB ---
-        # Only perform the teleport when we have a valid UWB fix
-        if (not prev_contact) and has_first_fix:
-            # Teleport IMU state to last UWB position (trusted)
-            pos[:] = last_uwb_pos.copy()
-            # zero velocity and previous integration buffers so we don't "launch"
+        # TELEPORT IMU to last UWB position whenever entering WRITING mode
+        if has_first_fix:
+            print(f"[TOGGLE] Teleported pos from {pos} to UWB: {last_uwb_pos}")
+            pos[:] = uwb_pos[:]
             vel[:] = 0.0
             prev_vel = None
             prev_accel = None
-
-            # Update the visible IMU dot immediately to reflect teleport
-            try:
-                yz_dot.setData([pos[0]], [pos[2]])
-            except Exception:
-                # fallback: set to UWB ghost XY if something odd happens
-                yz_dot.setData([last_uwb_pos[0]], [last_uwb_pos[2] if len(last_uwb_pos) > 2 else last_uwb_pos[1]])
-            print(f"[TOGGLE] Teleported IMU to last UWB position: {last_uwb_pos}")
+            accel_bias[:] = 0.0 
+            gravity_component[:] = 0.0
+            yz_dot.setData([pos[0]], [pos[2]])
 
         # START A NEW STROKE SEGMENT
         current_stroke = []
@@ -334,16 +325,6 @@ def process_imu_sample(qx, qy, qz, qw, ax_s, ay_s, az_s, t_us):
     r = R.from_quat([qx, qy, qz, qw])
     accel_world = r.apply(accel_local)
     accel_world[1] *= -1 # Axis correction
-    
-    # --- ALIGNMENT ROTATION ---
-    if ALIGNMENT_ANGLE_DEG != 0:
-        align_rad = np.radians(ALIGNMENT_ANGLE_DEG)
-        c, s = np.cos(align_rad), np.sin(align_rad)
-        ax_new = accel_world[0] * c - accel_world[1] * s
-        ay_new = accel_world[0] * s + accel_world[1] * c
-        accel_world[0] = ax_new
-        accel_world[1] = ay_new
-    # --------------------------
 
     # 2. Startup Calibration
     if is_calibrating:
@@ -392,12 +373,6 @@ def process_imu_sample(qx, qy, qz, qw, ax_s, ay_s, az_s, t_us):
 
     # 2. Rotate the offset vector
     rotated_offset = rot_matrix @ PEN_TIP_OFFSET
-    
-    if ALIGNMENT_ANGLE_DEG != 0:
-        rx = rotated_offset[0] * c - rotated_offset[1] * s
-        ry = rotated_offset[0] * s + rotated_offset[1] * c
-        rotated_offset[0] = rx
-        rotated_offset[1] = ry
 
     # 3. Calculate actual tip position
     tip_pos = pos + rotated_offset
@@ -410,13 +385,13 @@ def process_imu_sample(qx, qy, qz, qw, ax_s, ay_s, az_s, t_us):
 
     # 7. Visualization Update
     yz_dot.setData([tip_pos[0]], [tip_pos[2]])
-    uwb_ghost.setData([uwb_pos[0]], [uwb_pos[1]])
+    uwb_ghost.setData([uwb_pos[0]], [uwb_pos[2]])
 
     state_name = get_motion_state_name(motion_state)
     info_label.setText(
         f"Status: {'CALIBRATING...' if is_calibrating else 'READY'}\n"
         f"Motion State: {state_name}\n"
-        f"Pos X: {tip_pos[0]:.3f} | Y: {tip_pos[1]:.3f}\n"
+        f"Pos X: {tip_pos[0]:.3f} | Y: {tip_pos[2]:.3f}\n"
         f"Vel: {np.linalg.norm(vel):.4f} m/s | Accel: {accel_mag:.4f} m/s²\n"
         f"Curvature: {features['curvature']:.3f} | Contact: {is_simulated_contact}"
     )
@@ -470,26 +445,27 @@ def update():
                     # A. Raw Trilateration
                     raw_uwb_3d = trilaterate([d0, d1, d2], ANCHORS)
                     
+                    raw_uwb_3d_transformed = np.array([
+                        raw_uwb_3d[0],      # X stays X
+                        raw_uwb_3d[2],      # Z (unused) → becomes new Y
+                        raw_uwb_3d[1]       # Y → becomes new Z
+                    ])
+                    
                     if not has_first_fix:
-                        # TELEPORT everything to this coordinate
-                        uwb_pos[:] = raw_uwb_3d[:]
-                        pos[:] = raw_uwb_3d[:]  # Snap IMU to UWB
-                        last_uwb_pos[:] = raw_uwb_3d[:]
-                        
-                        # Also zero out velocity so we don't "launch" from the snap
-                        vel[:] = 0 
-                        
+                        uwb_pos[:] = raw_uwb_3d_transformed[:]
+                        pos[:] = raw_uwb_3d_transformed[:]
+                        last_uwb_pos[:] = raw_uwb_3d_transformed[:]
+                        vel[:] = 0
                         has_first_fix = True
-                        print(f"Fix Acquired at: {raw_uwb_3d}")
-                        continue # Skip the rest of the UWB log
+                        continue
                     
                     # B. Outlier Rejection (Glitch Filter)
-                    dist_jump = np.linalg.norm(raw_uwb_3d - uwb_pos)
+                    dist_jump = np.linalg.norm(raw_uwb_3d_transformed - uwb_pos)
                     if dist_jump > 1.0 and np.linalg.norm(uwb_pos) > 0.1:
                         pass # Ignore glitch
                     else:
                         # C. Low Pass Filter on UWB Position
-                        uwb_pos[:] = (UWB_SMOOTHING_ALPHA * raw_uwb_3d) + \
+                        uwb_pos[:] = (UWB_SMOOTHING_ALPHA * raw_uwb_3d_transformed) + \
                                      ((1 - UWB_SMOOTHING_ALPHA) * uwb_pos)
 
                         # D. Calculate UWB Velocity
@@ -500,7 +476,9 @@ def update():
                             # E. Velocity Clamp
                             if uwb_speed < MAX_HANDWRITING_VELOCITY:
                                 # F. The "Filter-and-Reset" Fusion
-                                reset_factor = 0.2 
+                                reset_factor = 0.1
+                                print("UWB:", uwb_velocity)
+                                print("IMU:", vel)
                                 vel[:] = (1 - reset_factor) * vel + (reset_factor * uwb_velocity)
                                 
                                 # Position Leash

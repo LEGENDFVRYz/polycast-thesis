@@ -42,15 +42,18 @@
                     {% if current_status == 'IDLE' %}
                         <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
                             <div class="input-group">
-                                <label for="ip-address">PolyCast IP Address</label>
+                                <label for="serial_port">Device Serial Port</label>
                                 <div class="input-with-button">
-                                    <input type="text" id="esp_ip" name="esp_ip" placeholder="Click 'Scan' to find...">
+                                    <select id="serial_port" name="serial_port" style="flex-grow: 1; padding: 10px;" required>
+                                        <option value="" disabled selected>Click 'Scan' to find ports...</option>
+                                    </select>
+
                                     <button type="button" class="btn btn-secondary" id="scanBtn">
                                         <img id="scanIcon" src="{{ url_for('static', filename='images/icons/scan1.svg') }}" alt="Scan" width=21>
                                     </button>
                                 </div>
                             </div>
-                            <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Configure Setup</button>
+                            <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Connect via USB</button>
                         </form>
                     {% endif %}
 
@@ -125,45 +128,6 @@
                 </section>
             {% endif %}
             
-            {% if 1 == 0 %}
-                <section class="folders">
-                    <h2 class="section-title">Manage:</h2>
-
-                    <div class="folder-list">
-                        {% if gallery_data %}  
-                            {% for gallery in gallery_data %}
-                                <div class="folder-item">
-                                    <div class="item-icon">
-                                        <image src="../static/images/icons/folder1.svg">
-                                    </div>
-                                    <div class="item-info">
-                                        <a href="{{ url_for('session_page', galleryname=gallery.name) }}">
-                                            <h3 class="item-title">{{ gallery.name }}</h3>
-                                        </a>
-                                        <p class="item-subtitle">BSCPE 4-3</p>
-                                    </div>
-                                    <div class="item-menu">
-                                        <button type="button" class="icon-button edit-session-btn" 
-                                                data-gallery-id="{{ gallery.id }}" 
-                                                data-gallery-name="{{ gallery.name }}"
-                                                data-modal-target="#editGalleryModal">
-                                            <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                        </button>
-                                        
-                                        <button type="button" class="icon-button delete-session-btn"
-                                                data-modal-target="#deleteGalleryModal"
-                                                data-delete-url="{{ url_for('delete_gallery', gallery_id=gallery.id) }}">
-                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                        </button>
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No gallery folders found!</p>
-                        {% endif %}
-                    </div>
-                </section>
-            {% endif %}
         </div>
 
         {# 
@@ -204,48 +168,67 @@
 
     <!-- ESP SCANNER SCRIPT -->
     <script>
-    document.addEventListener('DOMContentLoaded', () => {
-        const scanIcon = document.getElementById('scanIcon');
-        const ipInput = document.getElementById('esp_ip');
+        document.addEventListener('DOMContentLoaded', () => {
+            const scanBtn = document.getElementById('scanBtn'); // Button wrapper
+            const scanIcon = document.getElementById('scanIcon'); // The image inside
+            const portSelect = document.getElementById('serial_port'); // The dropdown
 
-        scanIcon.addEventListener('click', function() {
-            // Disable click while scanning
-            scanIcon.style.pointerEvents = 'none';
+            // Helper to create options easily
+            function addOption(text, value, isDisabled = false, isSelected = false) {
+                const option = document.createElement("option");
+                option.text = text;
+                option.value = value;
+                option.disabled = isDisabled;
+                option.selected = isSelected;
+                portSelect.add(option);
+            }
 
-            // Toggle image to scanning state
-            scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
-            ipInput.placeholder = 'Scanning for broadcast...';
-            ipInput.value = ''; // Clear old value
+            scanBtn.addEventListener('click', function() {
+                // 1. UI: Disable interaction and change icon
+                scanBtn.style.pointerEvents = 'none';
+                scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
+                
+                // Clear dropdown and show loading state
+                portSelect.innerHTML = "";
+                addOption("Scanning ports...", "", true, true);
 
-            // API Call
-            fetch("{{ url_for('scan_for_ip_route') }}")
-                .then(response => {
-                    if (!response.ok) {
-                        return response.json().then(err => { 
-                            throw new Error(err.message || 'Scan failed'); 
-                        });
-                    }
-                    return response.json();
-                })
-                .then(data => {
-                    if (data.success) {
-                        ipInput.value = data.ip;
-                        ipInput.placeholder = 'IP Found!';
-                    } else {
-                        ipInput.placeholder = 'No IP found';
-                    }
-                })
-                .catch(error => {
-                    console.error('Fetch error:', error);
-                    ipInput.placeholder = error.message;
-                })
-                .finally(() => {
-                    // Re-enable click and reset image
-                    scanIcon.style.pointerEvents = 'auto';
-                    scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
-                });
+                // 2. API Call to the new Python Route
+                fetch("{{ url_for('scan_ports_route') }}")
+                    .then(response => {
+                        if (!response.ok) {
+                            return response.json().then(err => { 
+                                throw new Error(err.message || 'Scan failed'); 
+                            });
+                        }
+                        return response.json();
+                    })
+                    .then(data => {
+                        portSelect.innerHTML = ""; // Clear "Scanning..." message
+
+                        if (data.success && data.ports.length > 0) {
+                            // Populate the dropdown with found ports
+                            data.ports.forEach(port => {
+                                addOption(port, port); 
+                            });
+                            // Select the first one automatically
+                            portSelect.selectedIndex = 0;
+                        } else {
+                            // Success response but empty list (no devices plugged in)
+                            addOption("No devices found", "", true, true);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Fetch error:', error);
+                        portSelect.innerHTML = "";
+                        addOption(`Error: ${error.message}`, "", true, true);
+                    })
+                    .finally(() => {
+                        // 3. Cleanup: Re-enable click and reset icon
+                        scanBtn.style.pointerEvents = 'auto';
+                        scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
+                    });
+            });
         });
-    });
     </script>
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
@@ -274,7 +257,7 @@
                     container.replaceChild(input, currentElement);
 
                     // Change icon to "cancel" or "chevron" (toggle)
-                    icon.src = '/static/images/icons/chevron-down.svg';
+                    icon.src = 'url_for('static', filename='images/icons/chevron-down.svg')'"";
                     icon.alt = 'Cancel';
                     return;
                 }

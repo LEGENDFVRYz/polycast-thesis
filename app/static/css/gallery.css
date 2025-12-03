@@ -21,7 +21,7 @@
             border: 1px solid #000425;
             border-radius: 1rem;
 
-            /* font-family: 'Inter'; */
+            font-family: 'Poppins';
             font-size: 0.875rem;
             font-weight: 500;
             cursor: pointer;
@@ -56,9 +56,16 @@
     /* --- Folders List --- */
     .folders {
         /* margin-bottom: 2rem; */
+        .folder-header{
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            font-size: 22px;
 
-        .section-title {
-            color: #102E4A;
+            .section-title {
+                color: #102E4A;
+            }
         }
 
         .folder-list {
@@ -340,86 +347,7 @@ div.session-wrap{
         outline: none;         /* Optional: Removes the blue ring on click (focus) */
     }
 
-    /* .folder-header {
-        width: 100%;
-        height: 360px;
-        background-color: #f5f5f5;
-        border-radius: 16px;
-        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.08);
-        padding: 24px;
-        box-sizing: border-box;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-
-        .card-content {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-
-            .icon-container {
-                margin-bottom: 20px;
-
-                .circle {
-                    width: 120px;
-                    height: 120px;
-                    background-color: #b03a3a;
-                    border-radius: 50%;
-                }
-            }
-
-            .info-container {
-                text-align: center;
-                margin-bottom: 20px;
-
-                .title {
-                    font-size: 24px;
-                    font-weight: 600;
-                    color: #222;
-                    margin: 0;
-                }
-
-                .subtitle {
-                    font-size: 16px;
-                    color: #555;
-                    margin: 4px 0 0 0;
-                }
-            }
-        }
-
-        .hidden-details {
-            display: none;
-            width: 100%;
-            font-size: 14px;
-            text-align: left;
-            color: #444;
-
-            &.show {
-                display: block;
-            }
-
-            p {
-                margin: 6px 0;
-            }
-        }
-
-        .details-container {
-            margin-top: auto;
-            padding-top: 10px;
-
-            .details-link {
-                font-size: 14px;
-                color: #666;
-                text-decoration: none;
-                font-weight: 500;
-
-                &:hover {
-                    text-decoration: underline;
-                }
-            }
-        }
-    } */
-
+    /* FOLDER IDENTIFIER */
     .folder-container {
         display: flex;
         align-items: center;
@@ -512,6 +440,16 @@ div.session-wrap{
 
         .card-content.hidden {
             display: none;
+        }
+    }
+
+    /* FOLDER LIST Customized */
+    .folders {
+        /* margin-bottom: 2rem; */
+        .folder-header{
+            img.recycle-toggle{
+                cursor: pointer;
+            }
         }
     }
 }

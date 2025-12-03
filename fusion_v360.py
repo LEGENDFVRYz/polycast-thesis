@@ -513,7 +513,7 @@ if __name__ == "__main__":
     os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
     
     # Testing Config (Override if needed, else uses TRACKER_CONFIG)
-    SERIAL_PORT = 'COM2'
+    SERIAL_PORT = 'COM3'
     BAUD_RATE = 115200
 
     is_running = True

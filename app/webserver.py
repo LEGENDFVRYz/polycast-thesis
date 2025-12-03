@@ -107,6 +107,7 @@ def admin_page():
         gallery_data=gallery_list_for_json
     )
 
+
 # Admin Configurantion:
 @app.route("/admin/configure", methods=["POST"])
 def admin_configure():
@@ -146,23 +147,14 @@ def admin_configure():
         admin_status._update_state(
             status="CONFIGURED",
         )
-        
-        print(f"[ADMIN] {admin_name} finished configuration. Connection SUCCESS.")
-        flash(f"Successfully connected to PolyCast at {esp_ip}!", "success")
-        
-        result = thread_manager.start()
-        print("[PROTO] started" if result else "[PROTO] already running")
-    
-    else:
-        # 4. FAILURE: Set status back to "IDLE"
-        admin_status._update_state(
-            status="IDLE",
-        )
-        print(f"[ADMIN] {admin_name} configuration FAILED. Could not connect.")
-        
-        flash(f"Failed to connect to PolyCast at {esp_ip}. Check IP and network.", "error")
-        
-        prototype_config.PROTOTYPE_IP = None
+        print(f"[ADMIN] {admin_name} finished configuration.")
+        flash(f"Connected to device on {selected_port}!", "success")
+
+    except Exception as e:
+        # 5. FAILURE
+        print(f"[ADMIN] Configuration failed: {e}")
+        admin_status._update_state(status="IDLE")
+        flash(f"Failed to open Serial Port {selected_port}. Error: {e}", "error")
 
     return redirect(url_for("admin_page"))
 
@@ -183,6 +175,7 @@ def scan_ports_route():
     else:
         return jsonify({'success': False, 'message': 'No serial ports found.'}), 404
     
+
 
 # --- NEW: Admin action route to start hosting ---
 @app.route("/admin/start_host", methods=["POST"])

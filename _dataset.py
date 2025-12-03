@@ -4,7 +4,7 @@ import serial
 import sys
 
 # Configuration
-CSV_FILE = "_circle.csv"  # Ensure this matches your new filename
+CSV_FILE = "instance/datasets/_circle.csv"  # Ensure this matches your new filename
 TIMESTAMP_COL = "packet_ts"
 SERIAL_PORT = 'COM1'
 BAUD_RATE = 115200

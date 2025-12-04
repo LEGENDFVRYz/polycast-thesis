@@ -8,7 +8,7 @@ class Admin(db.Model):
     __tablename__ = "admins"
 
     id = db.Column('id', db.Integer, primary_key=True)
-    username = db.Column(db.String(80), unique=True, nullable=False)
+    username = db.Column(db.String(64), unique=True, nullable=False)
     password_hash = db.Column(db.LargeBinary(128), nullable=False)  # bcrypt hash stored as bytes
     
     # Relationships

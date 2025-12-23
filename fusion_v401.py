@@ -61,8 +61,8 @@ def trilaterate_wls(distances, anchors, variances, last_known_pos=None):
         x0 = np.mean(active_anchors, axis=0)
 
     # 5. Run the Least Squares Solver
-    bounds_min = [-10.0, -10.0, -0.05] # Box constraint
-    bounds_max = [ 10.0,  10.0,  0.05]
+    bounds_min = [-10.0, -10.0, -0.05]
+    bounds_max = [ 10.0,  10.0,  0.30]
 
     try:
         res = least_squares(
@@ -74,7 +74,8 @@ def trilaterate_wls(distances, anchors, variances, last_known_pos=None):
             f_scale=0.5
         )
         return res.x, None
-    except Exception:
+    except Exception as e:
+        print(f"Solver Failed: {e}")
         return None, None
 
 # ==============================================================================
@@ -93,6 +94,7 @@ class StrokeTracker:
         self.sim_filter_x = 0.0
         self.sim_filter_y = 0.0
         self.sim_initialized = False
+        self.warmup_counter = 0
 
 
     def process_packet(self, line_bytes):
@@ -103,6 +105,12 @@ class StrokeTracker:
             return None
         
         if len(vals) < 10: return None
+        
+        # Skip for the first packet
+        if self.warmup_counter < 5:
+            self.warmup_counter += 1
+            return None
+        
 
         # Extract Hardware Prototype Reported Position (Just for comparison)
         hw_x, hw_y = vals[0], vals[1]
@@ -163,7 +171,7 @@ class StrokeTracker:
         # OUTPUT OF THE HARDWARE PROTOTYPE UWB
         self.uwb_hw_x.append(hw_x)
         self.uwb_hw_y.append(hw_y)
-    
+
 
 
 # ==============================================================================

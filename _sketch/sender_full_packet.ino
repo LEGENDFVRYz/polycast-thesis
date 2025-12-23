@@ -2,7 +2,7 @@
 // Sends one ESP-NOW packet per UWB reception, containing:
 //  - filtered_x, filtered_y (float)
 //  - dist0,dist1,dist2 (float)
-//  - 10 compressed IMU samples: qx,qy,qz,qw (int16 scaled), ax,ay,az (int16 scaled), ts (uint32)
+//  - 10 compressed IMU samples: qx,qy,qz,qw (int16 scaled), ax,ay,az (int16 scaled), force (int16 scaled), ts (uint32)
 //
 // Requires Adafruit_BNO08x library and ESP-NOW support.
 
@@ -18,20 +18,28 @@
 
 // Compression scales
 const float Q_SCALE = 32767.0f; // quaternion -1..1 -> int16
-const float A_SCALE = 1000.0f;   // accel m/s^2 * 1000 -> int16 (±327.67 m/s^2 effective range)
+const float A_SCALE = 1000.0f;   // accel m/s^2 * 1000 -> int16
+const float F_SCALE = 100.0f;    // Force: Multiplies float by 100 to keep 2 decimals
+                                 // e.g., 30.55 becomes 3055. Fits in int16.
 
-// number of IMU samples per packet (you chose 10)
+// number of IMU samples per packet
 const uint8_t IMU_SAMPLES_PER_PACKET = 10;
 
 // Data buffer sizes
-const size_t IMU_SAMPLE_SIZE = 18; // bytes per compressed sample
-const size_t MAX_PACKET_SIZE = 220; // safe upper bound for esp_now_send
+// IMU Sample size: 
+// 4x int16 (quat) = 8 bytes
+// 3x int16 (accel) = 6 bytes
+// 1x int16 (force) = 2 bytes  (Required for 0-31 range with decimals, as 31.00*100 = 3100 > 255)
+// 1x uint32 (ts)   = 4 bytes
+// Total = 20 bytes per sample
+const size_t IMU_SAMPLE_SIZE = 20; 
+const size_t MAX_PACKET_SIZE = 250; 
 
-// Anchor config (same as earlier)
+// Anchor config
 struct Position { float x, y; };
-Position* base0 = new Position{1.41, 0};
-Position* base1 = new Position{1.41, 1.35};
-Position* base2 = new Position{0, 1.35};
+Position* base0 = new Position{1.24, 0};
+Position* base1 = new Position{1.24, 1.23};
+Position* base2 = new Position{0, 1.23};
 Position* base_stations[8] = {base0, base1, base2, NULL, NULL, NULL, NULL, NULL};
 float distance_offsets[8] = {-0.15, -0.1, -0.1, 0,0,0,0,0};
 
@@ -44,6 +52,7 @@ bool imuFound = false;
 struct ImuRaw {
   float qx,qy,qz,qw;
   float ax,ay,az;
+  float force; // Holds decimal value (0.00 to 31.00)
   uint32_t ts;
 };
 ImuRaw imuRing[IMU_SAMPLES_PER_PACKET];
@@ -76,7 +85,7 @@ void writeFloatLE(uint8_t *buf, size_t &idx, float f){
 }
 
 // ---------------- IMU buffering ----------------
-void pushImuSample(float qx,float qy,float qz,float qw,float ax,float ay,float az,uint32_t ts){
+void pushImuSample(float qx,float qy,float qz,float qw,float ax,float ay,float az, float force, uint32_t ts){
   imuRing[imuRingHead].qx = qx;
   imuRing[imuRingHead].qy = qy;
   imuRing[imuRingHead].qz = qz;
@@ -84,25 +93,25 @@ void pushImuSample(float qx,float qy,float qz,float qw,float ax,float ay,float a
   imuRing[imuRingHead].ax = ax;
   imuRing[imuRingHead].ay = ay;
   imuRing[imuRingHead].az = az;
+  imuRing[imuRingHead].force = force;
   imuRing[imuRingHead].ts = ts;
   imuRingHead = (imuRingHead + 1) % IMU_SAMPLES_PER_PACKET;
   if (imuRingCount < IMU_SAMPLES_PER_PACKET) imuRingCount++;
 }
 
-// get last N samples in chronological order into dest (dest must be size IMU_SAMPLES_PER_PACKET)
+// get last N samples in chronological order
 void getLastImuSamples(ImuRaw *dest){
   int count = imuRingCount;
-  // We will always send IMU_SAMPLES_PER_PACKET entries. If buffer hasn't filled yet, repeat last item.
   int start = imuRingHead - count;
   if (start < 0) start += IMU_SAMPLES_PER_PACKET;
-  // copy available
+  
   for (int i=0;i<count;i++){
     int idx = (start + i) % IMU_SAMPLES_PER_PACKET;
     dest[i] = imuRing[idx];
   }
-  // if not enough samples yet, pad with last sample (or zeros)
+  
   if (count < IMU_SAMPLES_PER_PACKET){
-    ImuRaw pad = {0,0,0,1.0, 0,0,0, micros()};
+    ImuRaw pad = {0,0,0,1.0, 0,0,0, 0.0f, micros()};
     if (count>0) pad = imuRing[(imuRingHead - 1 + IMU_SAMPLES_PER_PACKET) % IMU_SAMPLES_PER_PACKET];
     for (int i=count;i<IMU_SAMPLES_PER_PACKET;i++){
       dest[i] = pad;
@@ -110,7 +119,7 @@ void getLastImuSamples(ImuRaw *dest){
   }
 }
 
-// ---------------- UWB decode (same as your existing) ----------------
+// ---------------- UWB decode ----------------
 bool decodeUwbDistances(uint8_t* data, int dataLen, float* distances) {
     for (int i = 0; i < 8; i++) distances[i] = -1;
     if (dataLen < 35) return false;
@@ -127,7 +136,7 @@ bool decodeUwbDistances(uint8_t* data, int dataLen, float* distances) {
     return true;
 }
 
-// ---------------- Trilateration (reuse your code, simplified) ----------------
+// ---------------- Trilateration ----------------
 bool trilaterate2d(float* distances, float* x, float* y, float* out_d0, float* out_d1, float* out_d2) {
     *out_d0 = *out_d1 = *out_d2 = 0.0f;
     struct ValidData { float x,y,dist; };
@@ -169,13 +178,13 @@ void setupIMU() {
   }
   if (!found) { imuFound = false; return; }
   imuFound = true;
-  bno08x.enableReport(SH2_ROTATION_VECTOR, 5000); // 200Hz
-  bno08x.enableReport(SH2_LINEAR_ACCELERATION, 5000); // 200Hz
+  bno08x.enableReport(SH2_ROTATION_VECTOR, 5000); 
+  bno08x.enableReport(SH2_LINEAR_ACCELERATION, 5000); 
 }
 
 // ---------------- ESP-NOW helper ----------------
 void OnDataSent(const uint8_t *mac_addr, esp_now_send_status_t status) {
-  // optional debug
+  // debug
 }
 
 // ---------------- setup ----------------
@@ -184,14 +193,13 @@ void setup() {
   delay(500);
   Serial1.begin(115200, SERIAL_8N1, UWB_RX, UWB_TX);
 
-  // initialize imu
+  pinMode(A0, INPUT); 
+
   Wire.begin();
   setupIMU();
 
-  // init ring
   imuRingHead = 0; imuRingCount = 0;
 
-  // wifi/esp-now
   WiFi.mode(WIFI_STA);
   esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
@@ -208,59 +216,56 @@ void setup() {
   peerInfo.encrypt = false;
   esp_now_add_peer(&peerInfo);
 
-  // init packet defaults
   uwbXf = 0; uwbYf = 0;
   Serial.println("[SENDER] Ready");
 }
 
-// ---------------- update IMU into ring buffer (call often) ----------------
+// ---------------- update IMU ----------------
 void updateIMU() {
   if (!imuFound) return;
   if (!bno08x.getSensorEvent(&sensorValue)) return;
   if (sensorValue.sensorId == SH2_ROTATION_VECTOR) {
-    // store quaternion (we will store combined when accel arrives)
-    // For simplicity we capture both quaternion & accel when each event comes.
-    // If events arrive separately, we push partial and use last values.
     static float last_qx=0,last_qy=0,last_qz=0,last_qw=1.0;
     last_qx = sensorValue.un.rotationVector.i;
     last_qy = sensorValue.un.rotationVector.j;
     last_qz = sensorValue.un.rotationVector.k;
     last_qw = sensorValue.un.rotationVector.real;
-    // push a sample using last accel if exists
-    // We'll rely on linear accel events too; so this code ensures both are updated
-    // but only push when we also got linear accel event (below) to avoid duplicates.
-    // For robust operation, consider storing last quaternion and last accel and push on a timer.
-    // (Simpler approach: push when accel event comes.)
-    // We'll store into globals for accel event to push.
+    
     imuRing[ (imuRingHead==0?IMU_SAMPLES_PER_PACKET-1:imuRingHead-1) ].qx = last_qx;
     imuRing[ (imuRingHead==0?IMU_SAMPLES_PER_PACKET-1:imuRingHead-1) ].qy = last_qy;
     imuRing[ (imuRingHead==0?IMU_SAMPLES_PER_PACKET-1:imuRingHead-1) ].qz = last_qz;
     imuRing[ (imuRingHead==0?IMU_SAMPLES_PER_PACKET-1:imuRingHead-1) ].qw = last_qw;
+
   } else if (sensorValue.sensorId == SH2_LINEAR_ACCELERATION) {
     float ax = sensorValue.un.linearAcceleration.x;
     float ay = sensorValue.un.linearAcceleration.y;
     float az = sensorValue.un.linearAcceleration.z;
-    // we expect quaternion values to have been set recently; read last quaternion from previous event
-    // For robust implementation, keep last quaternion variables; here we'll read ring last slot and use it
+    
+    // --- FORCE SENSOR MAPPING (0-31 range with decimals) ---
+    // Read A0 (0-4095)
+    int rawForce = analogRead(A0);
+    
+    // Map 0-4095 to 0.00-31.00
+    // Example: raw 2048 -> ~15.50
+    float forceVal = (rawForce / 4095.0f) * 31.0f;
+    // ---------------------------------------
+
     uint32_t ts = micros();
-    // For robustness, use temporary placeholders if not initialized
     float qx=0,qy=0,qz=0,qw=1;
     int lastIdx = (imuRingHead - 1 + IMU_SAMPLES_PER_PACKET) % IMU_SAMPLES_PER_PACKET;
     qx = imuRing[lastIdx].qx;
     qy = imuRing[lastIdx].qy;
     qz = imuRing[lastIdx].qz;
     qw = imuRing[lastIdx].qw;
-    // push combined sample
-    pushImuSample(qx,qy,qz,qw, ax, ay, az, ts);
+
+    pushImuSample(qx,qy,qz,qw, ax, ay, az, forceVal, ts);
   }
 }
 
 // ---------------- main loop ----------------
 void loop() {
-  // handle IMU events frequently
   updateIMU();
 
-  // Read UWB from Serial1
   static uint8_t buffer[256];
   static int idx=0;
   static bool started=false;
@@ -273,48 +278,52 @@ void loop() {
       if (idx >= 35) {
         bool ok = decodeUwbDistances(buffer, idx, distances);
         if (ok) {
-          // compute trilateration (and distances used)
           float d0,d1,d2;
           bool success = trilaterate2d(distances, &uwbX, &uwbY, &d0, &d1, &d2);
           if (success) {
-            // EMA filter for filtered_x/y
             uwbXf = 0.8f * uwbXf + 0.2f * uwbX;
             uwbYf = 0.8f * uwbYf + 0.2f * uwbY;
           }
-          // Build packet buffer
+          
           uint8_t pkt[MAX_PACKET_SIZE];
           size_t pidx = 0;
-          // header magic
+          
+          // Header
           writeUint8(pkt, pidx, 0xAA);
           writeUint8(pkt, pidx, 0x55);
-          writeUint8(pkt, pidx, 0x01); // version
+          writeUint8(pkt, pidx, 0x01); 
           writeUint8(pkt, pidx, IMU_SAMPLES_PER_PACKET);
-          // packet timestamp
           writeUint32(pkt, pidx, micros());
-          // filtered x,y
-          writeFloatLE(pkt, pidx, uwbXf);
-          writeFloatLE(pkt, pidx, uwbYf);
-          // distances (use d0,d1,d2 previously extracted if success, else set -1)
+          writeFloatLE(pkt, pidx, uwbX);
+          writeFloatLE(pkt, pidx, uwbY);
+          
           float od0 = (success? d0 : -1.0f);
           float od1 = (success? d1 : -1.0f);
           float od2 = (success? d2 : -1.0f);
           writeFloatLE(pkt, pidx, od0);
           writeFloatLE(pkt, pidx, od1);
           writeFloatLE(pkt, pidx, od2);
-          // append last N IMU samples (chronological)
+          
+          // IMU Samples
           ImuRaw tmp[IMU_SAMPLES_PER_PACKET];
           getLastImuSamples(tmp);
+          
           for (int s=0;s<IMU_SAMPLES_PER_PACKET;s++){
-            // quaternion scaled to int16
             int16_t qxs = (int16_t)constrain(round(tmp[s].qx * Q_SCALE), -32767, 32767);
             int16_t qys = (int16_t)constrain(round(tmp[s].qy * Q_SCALE), -32767, 32767);
             int16_t qzs = (int16_t)constrain(round(tmp[s].qz * Q_SCALE), -32767, 32767);
             int16_t qws = (int16_t)constrain(round(tmp[s].qw * Q_SCALE), -32767, 32767);
-            // accel scaled to int16
+            
             int16_t axs = (int16_t)constrain(round(tmp[s].ax * A_SCALE), -32767, 32767);
             int16_t ays = (int16_t)constrain(round(tmp[s].ay * A_SCALE), -32767, 32767);
             int16_t azs = (int16_t)constrain(round(tmp[s].az * A_SCALE), -32767, 32767);
-            // write
+            
+            // --- FORCE COMPRESSION (0-31 range, 2 decimals) ---
+            // Max value is 31.00
+            // Multiply by 100 -> 3100
+            // This fits comfortably in int16 (max 32767)
+            int16_t forceInt = (int16_t)(tmp[s].force * F_SCALE); 
+            
             writeInt16(pkt, pidx, qxs);
             writeInt16(pkt, pidx, qys);
             writeInt16(pkt, pidx, qzs);
@@ -322,21 +331,22 @@ void loop() {
             writeInt16(pkt, pidx, axs);
             writeInt16(pkt, pidx, ays);
             writeInt16(pkt, pidx, azs);
+            
+            // Write 2 bytes for force
+            writeInt16(pkt, pidx, forceInt); 
             writeUint32(pkt, pidx, tmp[s].ts);
           }
-          // send
+          
           esp_err_t res = esp_now_send(receiverMAC, pkt, pidx);
           if (res != ESP_OK) {
-            // send failed; you may want to retry or log
             Serial.printf("[ESP-NOW] send fail: %d\n", (int)res);
           } else {
             Serial.printf("[ESP-NOW] Sent packet %u bytes\n", (unsigned)pidx);
           }
         }
-        // reset parser
         started = false; idx = 0;
       }
       if (idx >= 256) { started=false; idx=0; }
     }
-  } // end Serial1.available
+  } 
 }

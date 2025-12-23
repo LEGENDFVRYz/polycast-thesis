@@ -46,6 +46,17 @@
                     }
                 }
             }
+
+            .popup-fade {
+                opacity: 0;
+                transform: scale(1.1);
+                transition: opacity 0.5s ease, transform 1s ease;
+            }
+
+            .popup-fade.show {
+                opacity: 1;
+                transform: scale(1); 
+            }
         }
     }
 </style>
@@ -57,8 +68,9 @@
             <div id="status-box">
                 <!-- temporary, minimized but can be optimized in other ways -->
                 <img id="status-image" 
-                    src="{{ url_for('static', filename='images/1.png') }}" 
+                    src="{{ url_for('static', filename='images/placeholder.png') }}" 
                     alt="status" 
+                    class="popup-fade"
                     style="width:200px; height:200px;">
                     <!-- add transition: opacity 0.5s; for fade effect -->
                 <h1 id="status-comment">...</h1>
@@ -100,6 +112,14 @@
             statusComment.textContent = "Connection Error";
             statusMessage.textContent = "Please refresh or try again later.";
             eventSource.close();
+        };
+    </script>
+
+    <script>
+        const img = document.querySelector('.popup-fade');
+
+        img.onload = () => {
+            img.classList.add('show');
         };
     </script>
 {% endblock %}

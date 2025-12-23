@@ -9,7 +9,7 @@ from background.image_generator import draw_segment, image_lock
 
 # --- LOGIC ENGINE (Imported from the new file) ---
 # from background.stroke_processor import StrokeTracker     # IF FINALIZED
-from fusion_v360 import StrokeTracker                       # Temporarily (dev2.1)
+from fusion_v14 import StrokeTracker                       # Temporarily (dev2.1)
 
 
 class PrototypeSerialThread(threading.Thread):

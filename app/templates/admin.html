@@ -128,45 +128,6 @@
                 </section>
             {% endif %}
             
-            {% if 1 == 0 %}
-                <section class="folders">
-                    <h2 class="section-title">Manage:</h2>
-
-                    <div class="folder-list">
-                        {% if gallery_data %}  
-                            {% for gallery in gallery_data %}
-                                <div class="folder-item">
-                                    <div class="item-icon">
-                                        <image src="../static/images/icons/folder1.svg">
-                                    </div>
-                                    <div class="item-info">
-                                        <a href="{{ url_for('session_page', galleryname=gallery.name) }}">
-                                            <h3 class="item-title">{{ gallery.name }}</h3>
-                                        </a>
-                                        <p class="item-subtitle">BSCPE 4-3</p>
-                                    </div>
-                                    <div class="item-menu">
-                                        <button type="button" class="icon-button edit-session-btn" 
-                                                data-gallery-id="{{ gallery.id }}" 
-                                                data-gallery-name="{{ gallery.name }}"
-                                                data-modal-target="#editGalleryModal">
-                                            <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                        </button>
-                                        
-                                        <button type="button" class="icon-button delete-session-btn"
-                                                data-modal-target="#deleteGalleryModal"
-                                                data-delete-url="{{ url_for('delete_gallery', gallery_id=gallery.id) }}">
-                                            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                        </button>
-                                    </div>
-                                </div>
-                            {% endfor %}
-                        {% else %}
-                            <p>No gallery folders found!</p>
-                        {% endif %}
-                    </div>
-                </section>
-            {% endif %}
         </div>
 
         {# 
@@ -271,66 +232,137 @@
     </script>
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
-    <script>
-        const GALLERY_OPTIONS = {{ gallery_data | tojson }};
+<script>
+        document.addEventListener('DOMContentLoaded', () => {
+            
+            // --- 1. COMBO BOX TOGGLE LOGIC ---
+            const GALLERY_OPTIONS = {{ gallery_data | tojson }};
 
-        document.querySelectorAll('.toggle-input').forEach(button => {
-            button.addEventListener('click', (e) => {
-                e.preventDefault(); // avoid form submission
+            document.querySelectorAll('.toggle-input').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.preventDefault(); // stop any form submits
 
-                const targetId = button.getAttribute('data-target');
-                const container = button.parentElement;
-                const currentElement = container.querySelector(`#${targetId}`);
-                const icon = button.querySelector('img'); // get the icon inside the clicked button
+                    const targetId = button.getAttribute('data-target');
+                    const container = button.parentElement;
+                    // Use simple string concatenation to be safe against template literal issues
+                    const currentElement = container.querySelector('#' + targetId); 
+                    const icon = button.querySelector('img'); 
 
-                // --- Toggle select → input ---
-                if (currentElement.tagName.toLowerCase() === 'select') {
-                    const input = document.createElement('input');
-                    input.type = 'text';
-                    input.id = targetId;
-                    input.name = currentElement.name;
-                    input.className = currentElement.className;
-                    input.placeholder = targetId === 'folder-name' 
-                        ? 'Enter New Gallery Name...' 
-                        : 'Enter New Session Name...';
-                    container.replaceChild(input, currentElement);
+                    // A. Toggle SELECT -> INPUT (Add New)
+                    if (currentElement.tagName.toLowerCase() === 'select') {
+                        const input = document.createElement('input');
+                        input.type = 'text';
+                        input.id = targetId;
+                        input.name = currentElement.name;
+                        input.className = currentElement.className;
+                        input.required = true; // Ensure value is sent
+                        
+                        // Set placeholder based on which button was clicked
+                        input.placeholder = targetId === 'folder-name' 
+                            ? 'Enter New Gallery Name...' 
+                            : 'Enter New Session Name...';
+                        
+                        container.replaceChild(input, currentElement);
 
-                    // Change icon to "cancel" or "chevron" (toggle)
-                    icon.src = '/static/images/icons/chevron-down.svg';
-                    icon.alt = 'Cancel';
-                    return;
-                }
+                        // Change icon to "cancel" (chevron/x)
+                        icon.src = "{{ url_for('static', filename='images/icons/chevron-down.svg') }}";
+                        icon.alt = 'Cancel';
+                        
+                        // If we just switched 'folder-name' to input, clear the session dropdown
+                        if(targetId === 'folder-name'){
+                            updateSessionDropdown([]); // Clear sessions
+                        }
+                        return;
+                    }
 
-                // --- Toggle input → select ---
-                const select = document.createElement('select');
-                select.id = targetId;
-                select.name = currentElement.name;
-                select.className = currentElement.className;
+                    // B. Toggle INPUT -> SELECT (Pick Existing)
+                    const select = document.createElement('select');
+                    select.id = targetId;
+                    select.name = currentElement.name;
+                    select.className = currentElement.className;
 
-                // Add placeholder option
-                const defaultOption = document.createElement('option');
-                defaultOption.value = '';
-                defaultOption.textContent = targetId === 'folder-name'
-                    ? 'Select Existing Gallery...'
-                    : 'Select Existing Session...';
-                select.appendChild(defaultOption);
+                    // Add default placeholder option
+                    const defaultOption = document.createElement('option');
+                    defaultOption.value = '';
+                    defaultOption.textContent = targetId === 'folder-name'
+                        ? 'Select Existing Gallery...'
+                        : 'Select Existing Session...';
+                    select.appendChild(defaultOption);
 
-                // Populate options for gallery only
-                if (targetId === 'folder-name' && Array.isArray(GALLERY_OPTIONS)) {
-                    GALLERY_OPTIONS.forEach(gallery => {
-                        const opt = document.createElement('option');
-                        opt.value = gallery.name;
-                        opt.textContent = gallery.name;
-                        select.appendChild(opt);
-                    });
-                }
+                    // Populate options ONLY if it is the Gallery/Folder dropdown
+                    if (targetId === 'folder-name' && Array.isArray(GALLERY_OPTIONS)) {
+                        GALLERY_OPTIONS.forEach(gallery => {
+                            const opt = document.createElement('option');
+                            opt.value = gallery.name;
+                            opt.textContent = gallery.name;
+                            select.appendChild(opt);
+                        });
+                    }
 
-                container.replaceChild(select, currentElement);
+                    container.replaceChild(select, currentElement);
 
-                // Change icon back to "plus"
-                icon.src = '/static/images/icons/plus.svg';
-                icon.alt = 'Add';
+                    // Change icon back to "plus"
+                    icon.src = "{{ url_for('static', filename='images/icons/plus.svg') }}";
+                    icon.alt = 'Add';
+                });
             });
+
+
+            // --- 2. SESSION LOADING LOGIC (With Event Delegation) ---
+            const sessionSelect = document.getElementById("session-name");
+
+            // Helper to update the session UI
+            function updateSessionDropdown(sessions) {
+                // If the session element is currently an Input (user is typing a new name), don't overwrite it
+                const currentSessionEl = document.getElementById("session-name");
+                if (!currentSessionEl || currentSessionEl.tagName.toLowerCase() === 'input') return;
+
+                currentSessionEl.innerHTML = ""; // Clear options
+
+                if (sessions && sessions.length > 0) {
+                    sessions.forEach(s => {
+                        const opt = document.createElement("option");
+                        opt.value = s;
+                        opt.textContent = s;
+                        currentSessionEl.appendChild(opt);
+                    });
+                } else {
+                    const opt = document.createElement("option");
+                    opt.value = "";
+                    opt.textContent = "-- No Sessions Found --";
+                    currentSessionEl.appendChild(opt);
+                }
+            }
+
+            async function loadSessions(galleryName) {
+                if (!galleryName) return; 
+
+                try {
+                    const response = await fetch(`/api/gallery/${encodeURIComponent(galleryName)}/sessions`);
+                    const data = await response.json();
+                    updateSessionDropdown(data.sessions);
+                } catch (err) {
+                    console.error("Error fetching sessions:", err);
+                    updateSessionDropdown([]); // Clear on error
+                }
+            }
+
+            // GLOBAL EVENT LISTENER (Event Delegation)
+            // We listen to the document because the #folder-name element might be deleted and recreated
+            document.addEventListener('change', function(e) {
+                if (e.target && e.target.id === 'folder-name') {
+                    // Only load sessions if the user selected a value from a Dropdown (not typing in an input)
+                    if (e.target.tagName.toLowerCase() === 'select') {
+                        loadSessions(e.target.value);
+                    }
+                }
+            });
+
+            // Initial load check (if browser cached the value or Jinja set it)
+            const folderInput = document.getElementById('folder-name');
+            if(folderInput && folderInput.value && folderInput.tagName.toLowerCase() === 'select') {
+                loadSessions(folderInput.value);
+            }
         });
     </script>
 

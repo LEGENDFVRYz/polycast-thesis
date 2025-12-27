@@ -3,169 +3,218 @@ import struct
 import time
 import os
 
-# --- CONFIGURATION (EDIT THESE TO CHANGE MODES) ---
-# SERIAL COM: 
-SERIAL_PORT = 'COM3'
-BAUD_RATE = 115200
 
-# VIEW MODE OPTIONS: 
-#   > 'HISTORY' (Scrolls / Stack Outputs) 
-#   > 'LIVE'    (Clears screen for every packet)
-VIEW_MODE = 'LIVE' 
-
-# FILTER OPTIONS: 
-#   > 'BOTH',   (Shows both sensor data)
-#   > 'IMU',    (Shows IMU data)
-#   > 'UWB'     (Shows UWB data)
-FILTER_MODE = 'IMU'
-
-# --- DISPLAY SETTINGS ---
-#   > 0  =  real-speed of transfer between sender and reciever + unpacker.py
-#   > 1  =  10 updates per second (Smooth, readable)
-DISPLAY_RATE = 0.1
-
-
-# --- SCALING FACTORS ---
-Q_SCALE = 32767.0
-A_SCALE = 1000.0
-F_SCALE = 100.0
-
-
-# --- GLOBAL DATA STORE ---
-latest_data = {
-    'imu_id': 0,
-    'acc': (0.0, 0.0, 0.0),
-    'force': 0.0,
-    'uwb_id': 0,
-    'pos': (0.0, 0.0),
-    'dists': (0.0, 0.0, 0.0)
-}
-
-
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-def parse_imu_packet(payload):
-    try:
-        packet_id = struct.unpack('<I', payload[1:5])[0] 
-        offset = 5
-        sample_size = 20 
+# ==============================================================================
+# SERIAL STREAMER
+#    - Enable to read all the raw data came from the reciever module
+# ==============================================================================
+class SerialStreamer:
+    def __init__(self, port='COM3', baud=115200):
+        # --- SERIAL COM ---
+        self.port = port
+        self.baud = baud
+        self.ser = None
+        self.buffer = bytearray()
         
-        # We only care about the LAST sample in the batch for "Live View"
-        # But we process all to ensure we don't miss any logic later
-        for i in range(3):
-            if offset + sample_size > len(payload): break
-            chunk = payload[offset : offset + sample_size]
-            offset += sample_size
-            
-            data = struct.unpack('<hhhhhhhhI', chunk)
-            
-            # Update Global Data
-            latest_data['imu_id'] = packet_id
-            latest_data['acc'] = (data[4]/A_SCALE, data[5]/A_SCALE, data[6]/A_SCALE)
-            latest_data['force'] = data[7]/F_SCALE
-            
-            # If HISTORY mode, we print every sample immediately
-            if VIEW_MODE == 'HISTORY' and (FILTER_MODE in ['BOTH', 'IMU']):
-                 if i == 2: # Print once per batch to save space
-                    print(f"[IMU #{packet_id}] Force: {latest_data['force']:.2f} | Acc: {latest_data['acc']}")
-
-    except Exception as e:
-        pass # Silently ignore partial corruptions to prevent scroll jitter
-
-def parse_uwb_packet(payload):
-    try:
-        data = struct.unpack('<BIfffffI', payload)
+        # --- SCALING FACTORS ---
+        self.Q_SCALE = 32767.0
+        self.A_SCALE = 1000.0
+        self.F_SCALE = 100.0
         
-        # Update Global Data
-        latest_data['uwb_id'] = data[1]
-        latest_data['pos'] = (data[2], data[3])
-        latest_data['dists'] = (data[4], data[5], data[6])
-        
-        # If HISTORY mode, print immediately
-        if VIEW_MODE == 'HISTORY' and (FILTER_MODE in ['BOTH', 'UWB']):
-            print(f">>> [UWB #{data[1]}] Pos: {latest_data['pos']} <<<")
-            
-    except Exception as e:
-        pass
+        self.connect()
 
-def print_live_dashboard():
-    """Prints a static dashboard that doesn't flicker"""
-    clear_screen()
-    print(f"==========================================")
-    print(f" LIVE MONITORING (Update Rate: {DISPLAY_RATE}s)")
-    print(f"==========================================")
-    
-    if FILTER_MODE in ['BOTH', 'IMU']:
-        acc = latest_data['acc']
-        print(f"\n [IMU #{latest_data['imu_id']}]")
-        print(f"   Force: {latest_data['force']:.2f}")
-        print(f"   Accel: X={acc[0]:.2f}, Y={acc[1]:.2f}, Z={acc[2]:.2f}")
-    
-    if FILTER_MODE in ['BOTH', 'UWB']:
-        pos = latest_data['pos']
-        dists = latest_data['dists']
-        print(f"\n [UWB #{latest_data['uwb_id']}]")
-        print(f"   Pos  : X={pos[0]:.2f}, Y={pos[1]:.2f}")
-        print(f"   Dists: {dists[0]:.2f}, {dists[1]:.2f}, {dists[2]:.2f}")
-    
-    print("\n==========================================")
-    print(" (Data is streaming 100% speed in background)")
-
-def read_serial_stream():
-    last_update_time = 0
-    
-    try:
-        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
-        print(f"Connected to {SERIAL_PORT}...")
-        time.sleep(1)
-        ser.reset_input_buffer()
-    except Exception as e:
-        print(f"Error: {e}")
-        return
-
-    buffer = bytearray()
-    
-    while True:
+    def connect(self):
         try:
-            # 1. READ DATA (As fast as possible)
-            if ser.in_waiting:
-                buffer.extend(ser.read(ser.in_waiting))
+            self.ser = serial.Serial(self.port, self.baud, timeout=0.1)
+            self.ser.reset_input_buffer()
+            print(f"[STREAMER] Connected to {self.port} @ {self.baud}")
+        except Exception as e:
+            print(f"[STREAMER] Connection Error: {e}")
+            self.ser = None
+
+    def close(self):
+        if self.ser and self.ser.is_open:
+            self.ser.close()
+
+    def _parse_imu(self, payload):
+        """
+        Unpacks IMU bytes into a usable dictionary.
+        """
+        try:
+            packet_id = struct.unpack('<I', payload[1:5])[0] 
+            offset = 5
+            sample_size = 20 
             
-            while len(buffer) >= 4: 
-                # Header Check
-                if buffer[0] != 0xAA or buffer[1] != 0x55:
-                    buffer.pop(0); continue
+            samples = []
+            
+            # Extract all 3 samples in the batch
+            for i in range(3):
+                if offset + sample_size > len(payload): break
+                chunk = payload[offset : offset + sample_size]
+                offset += sample_size
                 
-                payload_len = buffer[2]
-                total_frame_size = 2 + 1 + payload_len + 1 
+                # Unpack: qx,qy,qz,qw (shorts), ax,ay,az (shorts), force (short), ts (uint)
+                data = struct.unpack('<hhhhhhhhI', chunk)
                 
-                if len(buffer) < total_frame_size: break 
+                sample = {
+                    'ts': data[8],
+                    'quat': (data[0]/self.Q_SCALE, data[1]/self.Q_SCALE, data[2]/self.Q_SCALE, data[3]/self.Q_SCALE),
+                    'acc':  (data[4]/self.A_SCALE, data[5]/self.A_SCALE, data[6]/self.A_SCALE),
+                    'force': data[7]/self.F_SCALE
+                }
+                samples.append(sample)
                 
-                if buffer[total_frame_size - 1] != 0xFF:
-                    buffer.pop(0); continue
+            return {
+                'type': 'IMU',
+                'id': packet_id,
+                'samples': samples # List of 3 samples
+            }
+        except Exception as e:
+            return None
+
+    def _parse_uwb(self, payload):
+        """
+        Unpacks UWB bytes into a usable dictionary.
+        """
+        try:
+            # Format: Type(1), ID(4), x(4), y(4), d0..d2(12), ts(4)
+            data = struct.unpack('<BIfffffI', payload)
+            return {
+                'type': 'UWB',
+                'id': data[1],
+                'pos': (data[2], data[3]),
+                'dists': (data[4], data[5], data[6]),
+                'ts': data[7] # Hardware Timestamp
+            }
+        except Exception as e:
+            return None
+
+    def read_new_packets(self):
+        """
+        Main interface function.
+        Returns: A list of packet dictionaries found in the buffer.
+        """
+        packets_found = []
+        
+        if not self.ser: return packets_found
+        
+        try:
+            # Read Raw Bytes (As fast as possible)
+            if self.ser.in_waiting:
+                self.buffer.extend(self.ser.read(self.ser.in_waiting))
+            
+            # Parsing the Frames
+            while len(self.buffer) >= 4:
+                # Header Check (0xAA 0x55)
+                if self.buffer[0] != 0xAA or self.buffer[1] != 0x55:
+                    self.buffer.pop(0) # Invalid, slide 1 byte
+                    continue
                 
-                # Extract
-                frame = buffer[:total_frame_size]
-                buffer = buffer[total_frame_size:] 
-                data_payload = frame[7:-1] 
+                payload_len = self.buffer[2]
+                total_frame = 2 + 1 + payload_len + 1 # Head + Len + Payload + Foot
+                
+                if len(self.buffer) < total_frame:
+                    break # Wait for more data
+                
+                # Footer Check (0xFF)
+                if self.buffer[total_frame - 1] != 0xFF:
+                    self.buffer.pop(0) # Corrupt, slide 1 byte
+                    continue
+                
+                # Extract Payload
+                frame = self.buffer[:total_frame]
+                self.buffer = self.buffer[total_frame:] # Remove from buffer
+                
+                # payload starts at index 7 (Header=2, Len=1, RecvTS=4)
+                data_payload = frame[7:-1]
                 
                 if len(data_payload) > 0:
-                    if data_payload[0] == 0x01: parse_imu_packet(data_payload)
-                    elif data_payload[0] == 0x02: parse_uwb_packet(data_payload)
-
-            # 2. UPDATE DISPLAY (Throttled)
-            if VIEW_MODE == 'LIVE':
-                current_time = time.time()
-                if (current_time - last_update_time) > DISPLAY_RATE:
-                    print_live_dashboard()
-                    last_update_time = current_time
-
-        except KeyboardInterrupt:
-            break
+                    pkt = None
+                    if data_payload[0] == 0x01:   pkt = self._parse_imu(data_payload)
+                    elif data_payload[0] == 0x02: pkt = self._parse_uwb(data_payload)
+                    
+                    if pkt: packets_found.append(pkt)
+                    
         except Exception as e:
-            print(f"Error: {e}")
-            break
+            print(f"[STREAMER] Read Error: {e}")
+            
+        return packets_found
 
+
+
+# ==============================================================================
+# DEBUG MODE
+#   - Enable to print all the collected data immediately as possible
+# ==============================================================================
 if __name__ == "__main__":
-    read_serial_stream()
+    
+    # --- CONFIGURATION ---
+    # VIEW MODE OPTIONS: 
+    #   > 'HISTORY' (Scrolls / Stack Outputs) 
+    #   > 'LIVE'    (Clears screen for every packet)
+    VIEW_MODE = 'LIVE' 
+
+    # FILTER OPTIONS: 
+    #   > 'BOTH',   (Shows both sensor data)
+    #   > 'IMU',    (Shows IMU data)
+    #   > 'UWB'     (Shows UWB data)
+    FILTER_MODE = 'BOTH'
+
+    # --- DISPLAY SETTINGS ---
+    #   > 0  =  real-speed of transfer between sender and reciever + unpacker.py
+    #   > 1  =  10 updates per second (Smooth, readable)
+    DISPLAY_RATE = 0.1
+    
+    # Dashboard Data Store
+    latest = {'imu': None, 'uwb': None}
+    last_draw_time = 0
+    
+    
+    # --- MAIN DEBUGGER  ---
+    streamer = SerialStreamer(port='COM3', baud=115200)
+    
+    try:
+        while True:
+            new_packets = streamer.read_new_packets()
+            
+            # PROCESS / STORE
+            for pkt in new_packets:
+                if pkt['type'] == 'IMU':
+                    latest['imu'] = pkt
+                    # In History mode, print immediately
+                    if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'IMU']:
+                        # Print last sample of batch
+                        s = pkt['samples'][-1]
+                        print(f"[IMU #{pkt['id']}] Acc: {s['acc']}")
+                        
+                elif pkt['type'] == 'UWB':
+                    latest['uwb'] = pkt
+                    if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'UWB']:
+                        print(f">>> [UWB #{pkt['id']}] Pos: {pkt['pos']}")
+
+            # LIVE VISUALIZATION (Throttled via DISPLAY RATE)
+            if VIEW_MODE == 'LIVE' and (time.time() - last_draw_time > DISPLAY_RATE):
+                os.system('cls' if os.name == 'nt' else 'clear')
+                print(f"=========== STREAMER DEBUG ({DISPLAY_RATE}s) ==========")
+                
+                if FILTER_MODE in ['BOTH', 'IMU'] and latest['imu']:
+                    s = latest['imu']['samples'][-1]
+                    q = s['quat']
+                    print(f"\n[IMU #{latest['imu']['id']}]")
+                    print(f"  Force: {s['force']:.2f}")
+                    print(f"  Accel: {s['acc']}")
+                    print(f"  Quat:  {q[0]:.2f}, {q[1]:.2f}, {q[2]:.2f}, {q[3]:.2f}")
+
+                if FILTER_MODE in ['BOTH', 'UWB'] and latest['uwb']:
+                    u = latest['uwb']
+                    print(f"\n[UWB #{u['id']}]")
+                    print(f"  Pos  : X={u['pos'][0]:.2f}, Y={u['pos'][1]:.2f}")
+                    print(f"  Dists: {u['dists'][0]:.2f}, {u['dists'][1]:.2f}, {u['dists'][2]:.2f}")
+                
+                print("\n============================================")
+                last_draw_time = time.time()
+                
+    except KeyboardInterrupt:
+        print("\nStopping...")
+        streamer.close()
+        

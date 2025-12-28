@@ -71,9 +71,9 @@ float uwbX = 0, uwbY = 0;
 
 struct Position { float x, y; };  // UWB Anchor Config
 Position* base_stations[8] = {
-  new Position{0.90, 0.00}, 
   new Position{0.90, 0.90}, 
   new Position{0.00, 0.90}, 
+  new Position{0.00, 0.00}, 
   NULL, NULL, NULL, NULL, NULL    // --- note: anchor 3-7 are offline
 };
 

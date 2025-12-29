@@ -93,6 +93,29 @@ class SerialStreamer:
         """
         Main interface function.
         Returns: A list of packet dictionaries found in the buffer.
+        
+        Returns (list[dict]):
+            A list of packet dictionaries found in the buffer.
+            Each dictionary is produced by the corresponding parser
+            (`_parse_imu` or `_parse_uwb`) and represents one complete frame.
+
+            Example:
+            [
+                {
+                    "type": "imu",
+                    "timestamp": 12345678,
+                    "accel": (ax, ay, az),
+                    "gyro": (gx, gy, gz)
+                },
+                {
+                    "type": "uwb",
+                    "timestamp": 12345690,
+                    "range": 2.34,
+                    "anchor_id": 3
+                }
+            ]
+
+            Returns an empty list if no complete valid packets are available.
         """
         packets_found = []
         

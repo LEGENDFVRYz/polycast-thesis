@@ -9,6 +9,26 @@ class Config:
         [1.21, 1.21, 0.00], 
         [0.00, 1.21, 0.00]
     ])
+    
+    # --- CALIBRATION MAP ---
+    # Format: [Raw_X, Raw_Y]
+    # Based on your observations:
+    CALIB_OBSERVED = np.array([
+        [0.25, 0.25],  # Bottom Left (Raw)
+        [1.50, 0.25],  # Bottom Right (Raw)
+        [0.25, 1.25],  # Top Left (Raw)
+        [1.50, 1.55]   # Top Right (Raw)
+    ])
+
+    # Format: [Real_X, Real_Y]
+    # Where they SHOULD be:
+    CALIB_REAL = np.array([
+        [0.00, 0.00],  # Bottom Left (Real)
+        [1.20, 0.00],  # Bottom Right (Real)
+        [0.00, 1.20],  # Top Left (Real)
+        [1.20, 1.20]   # Top Right (Real)
+    ])
+    
 
     # --- PHASE 1: IMU SETTINGS ---
     IMU_ZUPT_THRESH = 0.15     # m/s^2. Below this, we force 0.0 (noise floor)

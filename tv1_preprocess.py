@@ -174,10 +174,12 @@ class UWBCleaner:
     def __init__(self):
         self.last_valid_pos = None
         self.last_valid_time = 0
+        self.mapper = CoordinateMapper()
         
         self.state = {
             'status': 'WAITING',
             'raw_pos': np.zeros(2),
+            'mapped_pos': np.zeros(2),
             'final_pos': np.zeros(2),
             'speed': 0.0,
             'reject_reason': ''
@@ -204,21 +206,26 @@ class UWBCleaner:
         """
         # 1. GEOMETRY
         dists_vec = np.array(raw_dists[:3])
-        raw_pos = self._solve_geometry(dists_vec)
-        self.state['raw_pos'] = raw_pos[:2]
+        raw_geo_pos = self._solve_geometry(dists_vec)[:2]
+        self.state['raw_pos'] = raw_geo_pos
+        
+        # 2. APPLY CALIBRATION MAPPING (The Fix)
+        mapped_pos = self.mapper.apply(raw_geo_pos)
+        self.state['mapped_pos'] = mapped_pos
         
         status = "VALID"
         reason = ""
-        speed = 0.0
-        final_pos = raw_pos[:2]
+        # speed = 0.0
+        final_pos = mapped_pos
         
         # 2. PHYSICS GATE
         if self.last_valid_pos is not None:
             dt = timestamp - self.last_valid_time
             
             # A. Speed Check
-            dist_moved = np.linalg.norm(raw_pos[:2] - self.last_valid_pos[:2])
+            dist_moved = np.linalg.norm(mapped_pos - self.last_valid_pos)
             speed = dist_moved / dt if dt > 0 else 0
+            self.state['speed'] = speed
             
             # B. IMU Truth Check
             imu_acc = syncer_ref.get_acceleration_at(timestamp)
@@ -235,8 +242,6 @@ class UWBCleaner:
                 status = "REJECTED"
                 reason = "GHOST_STATIC"
                 final_pos = self.last_valid_pos 
-            else:
-                final_pos = raw_pos[:2]
         
         # 3. UPDATE STATE
         if status == "VALID":
@@ -245,10 +250,41 @@ class UWBCleaner:
         
         self.state['status'] = status
         self.state['reject_reason'] = reason
-        self.state['speed'] = speed
+        # self.state['speed'] = speed
         self.state['final_pos'] = final_pos
             
         return final_pos, status
+
+
+
+# ==============================================================================
+# --- HELPER ---
+# ==============================================================================
+class CoordinateMapper:
+    def __init__(self):
+        # Calculate Linear Scaling Factors (y = mx + b)
+        # 1. Get Ranges
+        obs_min = np.min(Config.CALIB_OBSERVED, axis=0) # [0.25, 0.25]
+        obs_max = np.max(Config.CALIB_OBSERVED, axis=0) # [1.50, 1.55]
+        
+        real_min = np.min(Config.CALIB_REAL, axis=0)    # [0.00, 0.00]
+        real_max = np.max(Config.CALIB_REAL, axis=0)    # [1.20, 1.20]
+        
+        # 2. Calculate Scale (Slope)
+        # Scale = (Real_Max - Real_Min) / (Obs_Max - Obs_Min)
+        self.scale_x = (real_max[0] - real_min[0]) / (obs_max[0] - obs_min[0])
+        self.scale_y = (real_max[1] - real_min[1]) / (obs_max[1] - obs_min[1])
+        
+        # 3. Calculate Offset (Intercept)
+        self.offset_x = obs_min[0]
+        self.offset_y = obs_min[1]
+        
+    def apply(self, raw_pos):
+        # Map Raw -> Real
+        clean_x = (raw_pos[0] - self.offset_x) * self.scale_x
+        clean_y = (raw_pos[1] - self.offset_y) * self.scale_y
+        return np.array([clean_x, clean_y])
+
 
 
 # ==============================================================================

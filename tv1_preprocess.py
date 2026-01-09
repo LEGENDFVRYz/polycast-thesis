@@ -11,8 +11,11 @@ from tv1_config import Config
 # Responsibility: Physics, Rotation, & Drift Killing
 # ==============================================================================
 class IMUCleaner:
-    def __init__(self):
-        # Public State for Debugging
+    def __init__(self, smooth_alpha: float = 0.7):
+        """
+        smooth_alpha: optional low-pass smoothing for world-frame acceleration
+        """
+        # Public state for debugging
         self.state = {
             'is_static': False,
             'raw_mag': 0.0,
@@ -20,37 +23,92 @@ class IMUCleaner:
             'last_clean_acc': np.zeros(3)
         }
 
-    def process(self, raw_sample):
+        # Internal states for ZUPT
+        self.last_acc_body = np.zeros(3)
+        self.last_ts = None
+        self.static_time = 0.0
+
+        # Smoothing factor
+        self.smooth_alpha = smooth_alpha
+
+    def process(self, raw_sample: dict) -> np.ndarray:
         """
-        Input: Raw Dictionary from SerialStreamer
-        Output: Clean World Acceleration Vector (np.array) [x, y, z]
+        Input: raw_sample from SerialStreamer
+            - 'acc': body-frame linear acceleration [ax, ay, az] (gravity-free)
+            - 'quat': rotation quaternion [qx, qy, qz, qw]
+            - 'ts': timestamp in microseconds (optional)
+            - 'force': force sensor (optional)
+        Output: Clean acceleration in WORLD FRAME (np.array[3])
         """
-        # 1. ROTATION (Standard Mode)
-        q = Quaternion(
-            raw_sample['quat'][3], 
-            raw_sample['quat'][0], 
-            raw_sample['quat'][1], 
-            raw_sample['quat'][2]
-        )
-        
-        acc_raw_vec = np.array(raw_sample['acc'])
-        acc_world = q.rotate(acc_raw_vec)
-        
-        # 2. ZUPT (Zero-Velocity Update)
-        mag = np.linalg.norm(acc_world)
-        self.state['raw_mag'] = mag
-        
-        if mag < Config.IMU_ZUPT_THRESH:
-            clean_acc = np.array([0.0, 0.0, 0.0])
-            self.state['is_static'] = True
+        # ---------------------------
+        # 1. Extract data
+        # ---------------------------
+        acc_body = np.array(raw_sample['acc'])
+        q = Quaternion(raw_sample['quat'][3], raw_sample['quat'][0], 
+                       raw_sample['quat'][1], raw_sample['quat'][2])
+        ts = raw_sample.get('ts', None)
+        force = raw_sample.get('force', None)
+
+        # ---------------------------
+        # 2. Compute dt safely
+        # ---------------------------
+        if ts is None or self.last_ts is None:
+            dt = 0.0
         else:
-            clean_acc = acc_world
-            self.state['is_static'] = False
-            
-        self.state['clean_mag'] = np.linalg.norm(clean_acc)
-        self.state['last_clean_acc'] = clean_acc
-        
-        return clean_acc
+            dt = max((ts - self.last_ts) * 1e-6, 1e-4)  # µs → s, min 0.1 ms
+
+        # ---------------------------
+        # 3. Compute jerk in BODY FRAME
+        # ---------------------------
+        if dt > 0.0:
+            jerk = np.linalg.norm(acc_body - self.last_acc_body) / dt
+        else:
+            jerk = 0.0
+
+        # ---------------------------
+        # 4. ZUPT gate
+        # ---------------------------
+        mag = np.linalg.norm(acc_body)
+        force_ok = True if force is None else (force > Config.FORCE_CONTACT_THRESH)
+
+        static_now = (
+            mag < Config.ZUPT_ACC_THRESH and
+            jerk < Config.ZUPT_JERK_THRESH and
+            force_ok
+        )
+
+        # Update static timer
+        if static_now:
+            self.static_time += dt
+        else:
+            self.static_time = 0.0
+
+        is_static = self.static_time >= Config.ZUPT_TIME_THRESH
+
+        # ---------------------------
+        # 5. Compute output
+        # ---------------------------
+        # Zero body acceleration if static
+        clean_body = np.zeros(3) if is_static else acc_body
+        # Rotate to world frame
+        clean_world = q.rotate(clean_body)
+
+        # Optional smoothing (reduces micro-jitter in world frame)
+        clean_world = (self.smooth_alpha * self.state['last_clean_acc'] +
+                       (1 - self.smooth_alpha) * clean_world)
+
+        # ---------------------------
+        # 6. Update state
+        # ---------------------------
+        self.state['is_static'] = is_static
+        self.state['raw_mag'] = mag
+        self.state['clean_mag'] = np.linalg.norm(clean_world)
+        self.state['last_clean_acc'] = clean_world
+
+        self.last_acc_body = acc_body
+        self.last_ts = ts
+
+        return clean_world
 
 
 # ==============================================================================
@@ -164,7 +222,8 @@ class UWBCleaner:
             
             # B. IMU Truth Check
             imu_acc = syncer_ref.get_acceleration_at(timestamp)
-            is_moving = np.linalg.norm(imu_acc) > 0.0
+            # is_moving = np.linalg.norm(imu_acc) > 0.0
+            is_moving = np.linalg.norm(imu_acc) > Config.IMU_ZUPT_THRESH
             
             # C. Rules
             if speed > Config.MAX_HUMAN_SPEED:

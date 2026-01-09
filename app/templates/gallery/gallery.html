@@ -6,12 +6,39 @@
 {% block extra_css %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
     
+    <style>
+        /* Define the smooth "pop-in" animation */
+        @keyframes modalPopIn {
+            0% {
+                opacity: 0;
+                transform: scale(0.95) translateY(10px);
+            }
+            100% {
+                opacity: 1;
+                transform: scale(1) translateY(0);
+            }
+        }
+
+        /* Apply it to the modal content box */
+        .modal-content {
+            animation: modalPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+        }
+
+        /* Optional: Smooth fade for the background overlay */
+        .modal-overlay {
+            animation: fadeIn 0.3s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; }
+            to { opacity: 1; }
+        }
+    </style>
 {% endblock %}
 
 {% block content %}
     <div class="gallery-wrap gallery-scope">
 
-        <!-- Quick Actions -->
         <section class="quick-actions">
             
             <a href="{{ url_for('gallery_page', view='all') }}" 
@@ -37,12 +64,10 @@
         </section>
 
 
-        <!-- Recents -->
         {% if active_view == 'all' %}
             <section class="recently-added">
                 <h2 class="section-title">Recently Added</h2>
                 <div class="recently-added__scroll-container">
-                    <!-- File Card 1 -->
                     <div class="file-card">
                         <div class="fc-preview">
                             <image src="../static/images/icons/image1.svg">
@@ -54,7 +79,6 @@
                             </button>
                         </div>
                     </div>
-                    <!-- File Card 2 -->
                     <div class="file-card">
                         <div class="fc-preview">
                             <image src="../static/images/icons/image1.svg">
@@ -66,7 +90,6 @@
                             </button>
                         </div>
                     </div>
-                    <!-- File Card 3 -->
                     <div class="file-card">
                         <div class="fc-preview">
                             <image src="../static/images/icons/image1.svg">
@@ -82,7 +105,6 @@
             </section>
         {% endif %}
 
-        <!-- Folders -->
         <section class="folders">
             <h2 class="section-title">
                 {% if active_view == 'favorites' %}
@@ -185,10 +207,6 @@
         {% call modal_shell(modal_id='favoriteGalleryModal', modal_title='Manage Favorites') %}
             
             <div class="text-center">
-                <!-- <div class="mb-3">
-                    <img src="{{ url_for('static', filename='images/icons/star-filled.svg') }}" width="50" height="50">
-                </div> -->
-
                 <p>Do you want to change the <strong>favorite status</strong> of this gallery?</p>
                 <p class="text-muted small">This will move the gallery to/from your favorites list.</p>
                 
@@ -206,7 +224,6 @@
     </div>
 
 
-    <!-- QUICK ACTIONS SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', () => {
 
@@ -229,7 +246,6 @@
     </script>
 
 
-    <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
     <script>

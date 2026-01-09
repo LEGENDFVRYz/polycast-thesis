@@ -1,586 +1,567 @@
-
 /* --- PHASE 0 of 3: GALLERY SCOPE STYLINGS --- */
 .gallery-scope {
 
-    /* --- Quick Actions (Icon Buttons) --- */
-    .quick-actions {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem;
-        margin-bottom: 2rem;
-    
-        .qa-button {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 0.25rem;
+  /* --- Quick Actions (Icon Buttons) --- */
+  .quick-actions {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 0.75rem;
+    margin-bottom: 2rem;
 
-            padding: 1rem 0.5rem;
-            background-color: #ffffff;
-            border: 1px solid #000425;
-            border-radius: 1rem;
+    .qa-button {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 0.25rem;
 
-            font-family: 'Inter';
+      padding: 1rem 0.5rem;
+      background-color: #ffffff;
+      border: 1px solid #000425;
+      border-radius: 1rem;
+
+      font-family: 'Inter';
+      font-size: 0.875rem;
+      font-weight: 500;
+      cursor: pointer;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+
+      color: inherit;
+      text-decoration: none;
+
+      &:hover {
+        background-color: #DBEEFF;
+      }
+
+      img {
+        width: 24px;
+        height: 24px;
+        filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
+        transition: color 0.2s;
+      }
+    }
+
+    .qa-button.active {
+      background-color: #DBEEFF;
+      border: none;
+    }
+  }
+
+  /* --- Folders List --- */
+  .folders {
+    .folder-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      font-size: 22px;
+
+      .section-title {
+        color: #102E4A;
+      }
+    }
+
+    .folder-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+
+      a {
+        all: unset;
+        display: inline;
+        text-decoration: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .folder-item {
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        padding: 1rem;
+        background-color: #FFFFFF;
+        border-radius: 0.75rem;
+        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+        border: 1px solid #E5E7EB;
+        transition: background-color 0.2s ease;
+
+        &:hover {
+          background-color: #F3F4F6;
+          cursor: pointer;
+        }
+
+        .item-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 40px;
+          height: 40px;
+          border-radius: 0.5rem;
+
+          img {
+            width: 35px;
+            height: 35px;
+            filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+          }
+        }
+
+        .item-info {
+          flex-grow: 1;
+          overflow: hidden;
+
+          .item-title {
+            font-family: "Poppins-SB";
+            font-size: 1rem;
+            color: #102E4A;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+            max-width: 48vw;
+          }
+
+          .item-subtitle {
+            font-family: "Poppins-M";
             font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-
-            color: inherit;        
-            text-decoration: none; 
-
-            &:hover {
-                background-color: #DBEEFF;
-            }
-
-            img {
-                width: 24px;
-                height: 24px;
-                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);   
-                transition: color 0.2s;
-            }
+            color: #102E4A;
+          }
         }
-    
-        .qa-button.active {
-            background-color: #DBEEFF;
-            border: none;
-            /* box-shadow: 0 4px 14px 0 rgba(59, 130, 246, 0.25); */
-    
-            /* .lucide {
-                color: #2563eb;
-            } */
+
+        .icon-button {
+          background: none;
+          border: none;
+          padding: 0;
+          margin: 0;
+          cursor: pointer;
+          outline: none;
+
+          .edit {
+            filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+          }
+
+          .delete {
+            filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
+          }
         }
+
+        .item-menu {
+          flex-shrink: 0;
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: #6B7280;
+          display: flex;
+          align-items: center;
+
+          img {
+            display: none;
+            width: 20px;
+            height: 20px;
+            filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
+          }
+        }
+      }
     }
-
-    /* --- Folders List --- */
-    .folders {
-        /* margin-bottom: 2rem; */
-        .folder-header{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            font-size: 22px;
-
-            .section-title {
-                color: #102E4A;
-            }
-        }
-
-        .folder-list {
-            display: flex;           
-            flex-direction: column;  
-            gap: 0.75rem;           
-            
-            a {
-                all: unset;      /* Resets all inherited and non-inherited properties */
-                display: inline; /* Reset display if needed */
-                text-decoration: none;
-                color: inherit;
-                font: inherit;
-                cursor: pointer; /* Optional: for link behavior */
-            }
-
-            .folder-item {
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                padding: 1rem;
-                background-color: #FFFFFF;
-                border-radius: 0.75rem;
-                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-                border: 1px solid #E5E7EB;
-
-                .item-icon {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    flex-shrink: 0;
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 0.5rem;
-
-                    img {
-                        width: 35px;
-                        height: 35px;
-                        filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
-                    }
-                }
-
-                .item-info {
-                    flex-grow: 1;
-                    overflow: hidden;
-
-                    .item-title {
-                        font-family: "Poppins-SB";
-                        font-size: 1rem;
-                        color: #102E4A;
-                        white-space: nowrap; 
-                        overflow: hidden; 
-                        text-overflow: ellipsis; 
-                        min-width: 0;
-                        max-width: 48vw;
-                    }
-
-                    .item-subtitle {
-                        font-family: "Poppins-M";
-                        font-size: 0.875rem;
-                        color: #102E4A;
-                    }
-                }
-
-                .icon-button {
-                    background: none;      /* Removes the gray background */
-                    border: none;          /* Removes the border */
-                    padding: 0;            /* Removes the default spacing */
-                    margin: 0;             /* Removes default margins */
-                    cursor: pointer;       /* Keeps the hand cursor */
-                    outline: none;         /* Optional: Removes the blue ring on click (focus) */
-
-                    .edit {
-                        filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
-                    }
-
-                    .delete {
-                        filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
-                    }
-                }
-
-                .item-menu {
-                    flex-shrink: 0;
-                    background: none;
-                    border: none;
-                    cursor: pointer;
-                    color: #6B7280;
-                    display: flex;
-                    align-items: center ;
-
-                    img {
-                        display: none;
-                        width: 20px;
-                        height: 20px;
-                        filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
-                    }
-                }
-            }
-        }
-    }
+  }
 }
 
 
-
 /* --- PHASE 1 of 3: GALLERY --- */
-div.gallery-wrap{
+div.gallery-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+
+  /* --- Recents --- */
+  .recently-added {
+    margin-bottom: 2rem;
+
+    .section-title {
+      color: #102E4A;
+    }
+  }
+
+  .recently-added__scroll-container {
     display: flex;
-    flex-direction: column;
-    flex: 1;
+    overflow-x: auto;
+    gap: 1rem;
+    padding-bottom: 1rem;
 
+    /* Hide scrollbar */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 
-    /* --- Recents --- */
-    .recently-added {
-        margin-bottom: 2rem;
+  .recently-added__scroll-container::-webkit-scrollbar {
+    display: none;
+  }
 
-        .section-title {
-            color: #102E4A;
-        }
+  .file-card {
+    flex: 0 0 200px;
+    background-color: #FFFFFF;
+    border-radius: 1rem;
+    box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+    border: 1px solid #E5E7EB;
+    overflow: hidden;
+
+    .fc-preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 150px;
+      background-color: #F3F4F6;
+
+      img {
+        width: 32px;
+        height: 32px;
+        filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
+      }
     }
 
-    .recently-added__scroll-container {
-        display: flex;
-        overflow-x: auto;
-        gap: 1rem;
-        padding-bottom: 1rem; /* For scrollbar spacing */
-        /* Hide scrollbar */
-        -ms-overflow-style: none;  /* IE and Edge */
-        scrollbar-width: none;  /* Firefox */
-    }
-    
-    .recently-added__scroll-container::-webkit-scrollbar {
-        display: none; /* Chrome, Safari, Opera */
-    }
+    .fc-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0.75rem 0.75rem 1rem;
 
-    .file-card {
-        flex: 0 0 200px; /* Do not grow, do not shrink, base width 180px */
-        background-color: #FFFFFF; /* white */
-        border-radius: 1rem; /* 16px */
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        border: 1px solid #E5E7EB; /* light gray */
+      .fc-name {
+        font-size: 0.875rem;
+        color: #102E4A;
+        white-space: nowrap;
         overflow: hidden;
+        text-overflow: ellipsis;
+      }
 
-        .fc-preview {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 150px;
-            background-color: #F3F4F6; /* gray-100 */
+      .fc-menu-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #6B7280;
+        display: flex;
+        align-items: center;
 
-            img {
-                width: 32px;
-                height: 32px;
-                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-            }
+        img {
+          width: 16px;
+          height: 16px;
+          filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
         }
-
-        .fc-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem 0.75rem 0.75rem 1rem;
-
-            .fc-name {
-                font-size: 0.875rem;
-                color: #102E4A; /* dark gray */
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-    
-            .fc-menu-btn {
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: #6B7280; /* gray-500 */
-                display: flex;
-                align-items: center;
-    
-                img {
-                    width: 16px;
-                    height: 16px;
-                    filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-                }
-            }
-        }
+      }
     }
-
-    /* // div.folder-ctn{
-    //     display: flex;
-    //     flex-direction: column;
-    //     flex: 1;
-
-    //     border: 1px solid black;
-    //     border-radius: 1em;
-
-    //     div.folder-wrapper{
-    //         display: flex;
-    //         flex-direction: column;
-    //         flex: 1;
-    //         gap: 1em;
-
-    //         padding: 2em 1.5em;
-
-    //         .folder-card {
-    //             display: flex;
-    //             align-items: flex-start; // Aligns icon and text block to the top
-    //             gap: 12px;               // Space between icon and text
-                
-    //             background-color: $card-bg;
-    //             border-radius: $border-radius;
-    //             padding: $padding;
-                
-    //             max-width: 280px; // Set a max-width so it looks like the image
-    //             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    //             cursor: pointer;
-                
-    //             .folder-icon {
-                    
-    //                 // This styles the placeholder. 
-    //                 // You can replace this with your own <img> styles.
-    //                 .icon-placeholder {
-    //                     display: block;
-    //                     width: 40px;
-    //                     height: 40px;
-    //                     border: 2px solid $icon-color;
-    //                     border-radius: 6px;
-    //                     position: relative;
-                        
-    //                 }
-    //             }
-                
-    //             .folder-detail {
-    //                 display: flex;
-    //                 flex-direction: column;
-    //                 gap: 4px; // Vertical space between text elements
-
-    //                 .folder-name {
-    //                     font-size: 1rem; // 16px
-    //                     font-weight: 600;
-    //                     color: $primary-text;
-    //                     margin-top: 2px; // Small alignment fix
-    //                 }
-
-    //                 .folder-tag {
-    //                     font-size: 0.875rem; // 14px
-    //                     color: $secondary-text;
-    //                 }
-    //             }
-    //         }
-
-    //     }
-    // } */
+  }
 }
 
 
 /* --- PHASE 2 of 3: SESSION --- */
-div.session-wrap{
+div.session-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2em;
+
+  a {
     display: flex;
+    flex-wrap: wrap;
+  }
+
+  .icon-button {
+    display: flex;
+    justify-self: center;
+    align-self: center;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* FOLDER IDENTIFIER */
+  .folder-container {
+    display: flex;
+    align-items: center;
     flex-direction: column;
-    flex: 1;
-    gap: 2em;
+    gap: 0.75rem;
+    color: #102E4A;
 
-    a {
+    .folder-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      font-size: 22px;
+
+      .folder-name {
         display: flex;
-        flex-wrap: wrap; /* lets children flow to new lines if needed */
-    }
-
-    .icon-button {
-        display: flex;
-        justify-self: center;
-        align-self: center;
-        cursor: pointer;
-
-        background: none;      /* Removes the gray background */
-        border: none;          /* Removes the border */
-        padding: 0;            /* Removes the default spacing */
-        margin: 0;             /* Removes default margins */
-        cursor: pointer;       /* Keeps the hand cursor */
-        outline: none;         /* Optional: Removes the blue ring on click (focus) */
-    }
-
-    /* FOLDER IDENTIFIER */
-    .folder-container {
-        display: flex;
+        justify-content: center;
         align-items: center;
-        flex-direction: column;
-        gap: 0.75rem;
-        color: #102E4A;
+        gap: 1rem;
 
-        .folder-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            font-size: 22px;
-
-            .folder-name {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                gap: 1rem;
-
-                .back-icon {
-                    width: 22px;
-                    height: 22px;
-                    filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-                    transform: scaleX(-1); 
-                }
-                
-                .folder-icon {
-                    width: 30px;
-                    height: 30px;
-                    filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
-                }
-
-                .title {
-                    color: #102E4A;
-                    white-space: nowrap; 
-                    overflow: hidden; 
-                    text-overflow: ellipsis; 
-                    min-width: 0;
-                    max-width: 52vw;
-                }
-            }
-            
-            .info-icon {
-                width: 30px;
-                height: 30px;
-                /* filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%); */
-            }
+        .back-icon {
+          width: 22px;
+          height: 22px;
+          filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+          transform: scaleX(-1);
         }
 
-        .card-content {
-            display: flex;
-            align-items: center;
+        .folder-icon {
+          width: 30px;
+          height: 30px;
+          filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+        }
+
+        .title {
+          color: #102E4A;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          min-width: 0;
+          max-width: 52vw;
+        }
+      }
+
+      .info-icon {
+        width: 30px;
+        height: 30px;
+      }
+    }
+
+    .card-content {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      border: 1px solid #ABBAD3;
+      border-radius: 6px;
+      padding: 1rem 1.75rem;
+
+      .folder-details {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        gap: 0.5rem;
+
+        .specifics {
+          .detail-value {
+            font-family: "Poppins-M";
             width: 100%;
+          }
+
+          input {
+            padding: 0.5rem 1rem;
             border: 1px solid #ABBAD3;
             border-radius: 6px;
-            padding: 1rem 1.75rem;
+            color: #102E4A;
+            margin-top: 0.5rem;
+          }
 
-            .folder-details {
-                display: flex;
-                flex-direction: column;
-                width: 100%;
-                gap: 0.5rem;
+          input::placeholder {
+            color: #ABBAD3;
+          }
 
-                .specifics {
-
-                    .detail-value {
-                        font-family: "Poppins-M";
-                        width: 100%;
-                    }
-
-                    input {
-                        padding: 0.5rem 1rem;
-                        border: 1px solid #ABBAD3;
-                        border-radius: 6px;
-                        color: #102E4A;
-                        margin-top: 0.5rem;
-                    }
-
-                    input::placeholder {
-                        color: #ABBAD3;
-                    }
-
-                    &:last-child {
-                        padding-top: 1.5rem;
-                    }
-                }
-            }
+          &:last-child {
+            padding-top: 1.5rem;
+          }
         }
-
-        .card-content.hidden {
-            display: none;
-        }
+      }
     }
 
-    /* FOLDER LIST Customized */
-    .folders {
-        /* margin-bottom: 2rem; */
-        .folder-header{
-            img.recycle-toggle{
-                cursor: pointer;
-            }
-        }
+    .card-content.hidden {
+      display: none;
     }
+  }
+
+  /* FOLDER LIST Customized */
+  .folders {
+    .folder-header {
+      img.recycle-toggle {
+        cursor: pointer;
+      }
+    }
+  }
 }
 
 
 /* --- PHASE 3 of 3: FOLDERVIEW --- */
 div.view-wrap {
 
-    /* View Header */
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.875rem; /* 14px */
-        background-color: #ffffff;
-        border-radius: 0.75rem; /* 12px */
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-        margin-bottom: 1.5rem; /* 24px */
+  /* View Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.875rem;
+    background-color: #ffffff;
+    border-radius: 0.75rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    margin-bottom: 1.5rem;
 
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem; /* 12px */
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
 
-            img {
-                width: 22px;
-                height: 22px;
-                filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-                transform: scaleX(-1);  
-            }
-    
-            h1 {
-                font-size: 1.125rem; /* 18px */
-                line-height: 1.75rem; /* 28px */
-                color: #102E4A;
-                margin: 0;
-                white-space: nowrap; 
-                overflow: hidden; 
-                text-overflow: ellipsis; 
-                min-width: 0;
-                max-width: 48vw;
-            }
-        }
-        
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem; /* 8px */
-        }
+      img {
+        width: 22px;
+        height: 22px;
+        filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+        transform: scaleX(-1);
+      }
 
-        /* Icon Button Styles */
-        .icon-button {
-            background-color: transparent;
-            border: none;
-            cursor: pointer;
-            border-radius: 9999px; /* 'rounded-full' */
-            transition: background-color 0.15s ease;
-            display: flex; /* To center icon */
-            align-items: center;
-            justify-content: center;
-
-    
-            &.back-button {
-                padding: 0.25rem; /* 4px */
-                border-radius: 0.375rem; /* 6px */
-            }
-            
-            &.action-button {
-                padding: 0.5rem; /* 8px */
-            }
-        
-            &:hover {
-                background-color: #f3f4f6; /* gray-100 */
-            }
-        
-            &:active {
-                background-color: #e5e7eb; /* gray-200 */
-            }
-
-            svg {
-                width: 1.5rem; /* 24px */
-                height: 1.5rem; /* 24px */
-            }
-    
-            img {
-                width: 1.5rem; /* 24px */
-                height: 1.5rem; /* 24px */
-                filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-            }
-        }
+      h1 {
+        font-size: 1.125rem;
+        line-height: 1.75rem;
+        color: #102E4A;
+        margin: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+        max-width: 48vw;
+      }
     }
 
-    /* Simple styling to show images in a grid */
-    .image-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 15px;
-        padding: 18px;
-
-        /* Each Image */
-        .image-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-
-            background-color: #ffffff;
-            border-radius: 1rem; /* 16px */
-            padding: 0.5rem; /* 12px */
-            
-            img {
-                width: 100%;
-                height: auto;
-                display: block;
-                /* padding: 1em;
-                border: 2px solid #ddd; */
-            }
-        }
-
-        /* Lazy Image Stylings */
-        .lazy-image {
-            filter: blur(10px);
-            transition: filter 0.3s ease-out;
-            width: 100%;
-            height: 14rem; 
-            border-radius: 0.5rem;
-        }
-    
-        .lazy-image.loaded {
-            filter: blur(0);
-        }
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
     }
+
+    /* Icon Button Styles */
+    .icon-button {
+      background-color: transparent;
+      border: none;
+      cursor: pointer;
+      border-radius: 9999px;
+      transition: background-color 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      &.back-button {
+        padding: 0.25rem;
+        border-radius: 0.375rem;
+      }
+
+      &.action-button {
+        padding: 0.5rem;
+      }
+
+      &:hover {
+        background-color: #f3f4f6;
+      }
+
+      &:active {
+        background-color: #e5e7eb;
+      }
+
+      svg {
+        width: 1.5rem;
+        height: 1.5rem;
+      }
+
+      img {
+        width: 1.5rem;
+        height: 1.5rem;
+        filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+      }
+    }
+  }
+
+  /* Simple styling to show images in a grid */
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+    padding: 18px;
+
+    /* Each Image */
+    .image-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+      background-color: #ffffff;
+      border-radius: 1rem;
+      padding: 0.5rem;
+
+      img {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+    }
+
+    /* Lazy Image Stylings */
+    .lazy-image {
+      filter: blur(10px);
+      transition: filter 0.3s ease-out;
+      width: 100%;
+      height: 14rem;
+      border-radius: 0.5rem;
+    }
+
+    .lazy-image.loaded {
+      filter: blur(0);
+    }
+  }
+
+  @keyframes modalPopIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.95) translateY(10px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .modal-content,
+  #editGalleryModal .modal-content,
+  #deleteGalleryModal .modal-content,
+  #recoverGalleryModal .modal-content,
+  #forceDeleteGalleryModal .modal-content,
+  #favoriteGalleryModal .modal-content {
+    animation: modalPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  .modal-overlay {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+
+  .file-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s;
+  }
+
+  .file-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    background-color: #F9FAFB;
+    cursor: pointer;
+  }
+
+  .qa-button {
+    transition: transform 0.2s ease, background-color 0.2s;
+  }
+
+  .qa-button:hover {
+    transform: translateY(-2px);
+    background-color: #eff6ff;
+  }
 }

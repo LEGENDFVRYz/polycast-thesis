@@ -14,10 +14,10 @@ class Config:
     # Format: [Raw_X, Raw_Y]
     # Based on your observations:
     CALIB_OBSERVED = np.array([
-        [0.25, 0.25],  # Bottom Left (Raw)
-        [1.50, 0.25],  # Bottom Right (Raw)
-        [0.25, 1.25],  # Top Left (Raw)
-        [1.50, 1.55]   # Top Right (Raw)
+        [0.20, 0.00],  # Bottom Left (Raw)
+        [1.55, 0.00],  # Bottom Right (Raw)
+        [0.00, 1.45],  # Top Left (Raw)
+        [1.70, 1.65]   # Top Right (Raw)
     ])
 
     # Format: [Real_X, Real_Y]

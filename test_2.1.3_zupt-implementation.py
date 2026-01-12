@@ -1,83 +1,77 @@
 import time
-import os
 import numpy as np
 from tv1_unpacker import SerialStreamer
-from pyquaternion import Quaternion
 
 # --- CONFIG ---
 streamer = SerialStreamer(port='COM3', baud=115200)
-
-# --- TUNING ---
-# ZUPT THRESHOLD: Any movement smaller than this is treated as noise.
-# You saw noise of +/- 0.1. We set this to 0.2 to be safe.
-NOISE_THRESHOLD = 0.2 
+SAMPLE_TIME = 10.0  # seconds to collect static data
+PRINT_INTERVAL = 1.0
+K_STD = 3  # threshold = mean + K*std
 
 # --- STATE ---
-latest_sample = None
-last_print_time = 0
-display_interval = 0.1 
+acc_buffer = []
+jerk_buffer = []
+last_acc = None
+last_ts = None
+start_time = time.time()
+last_print = start_time
 
-def clear_screen():
-    os.system('cls' if os.name == 'nt' else 'clear')
-
-print("[TEST] Step 3 & 4: Gravity Check + Noise Filter")
-time.sleep(1)
+print("[AUTO-CALIBRATOR] Place pen still for static calibration...")
 
 try:
-    while True:
+    while time.time() - start_time < SAMPLE_TIME:
         packets = streamer.read_new_packets()
         for pkt in packets:
-            if pkt['type'] == 'IMU':
-                latest_sample = pkt['samples'][-1]
+            if pkt['type'] != 'IMU':
+                continue
+            sample = pkt['samples'][-1]
+            acc = np.array(sample['acc'])
+            ts = sample['ts']
 
-        if latest_sample and (time.time() - last_print_time > display_interval):
-            
-            # 1. UNPACK & SCALE
-            ax, ay, az = latest_sample['acc']
-            qx, qy, qz, qw = latest_sample['quat']
-            
-            # 2. ROTATE (Standard Mode)
-            q = Quaternion(qw, qx, qy, qz)
-            acc_body = np.array([ax, ay, az])
-            acc_world = q.rotate(acc_body)
-            
-            # 3. GRAVITY REMOVAL (Hardware handles this)
-            # We just copy the value. We do NOT subtract 9.81.
-            acc_linear = acc_world.copy()
-            
-            # 4. ZUPT (The Noise Filter)
-            # Calculate total magnitude of movement
-            mag = np.linalg.norm(acc_linear)
-            
-            clean_acc = np.array([0.0, 0.0, 0.0])
-            status = ""
-
-            if mag < NOISE_THRESHOLD:
-                # CASE A: STATIONARY
-                # Force everything to exactly 0.0
-                clean_acc = np.array([0.0, 0.0, 0.0])
-                status = "[ IDLE ] Silence"
+            # dt in seconds
+            if last_ts is None:
+                dt = 0.0
             else:
-                # CASE B: MOVING
-                # Allow the data through
-                clean_acc = acc_linear
-                status = ">>> MOVING <<<"
+                dt = max((ts - last_ts) * 1e-6, 1e-4)
 
-            # --- VISUALIZATION ---
-            clear_screen()
-            print(f"=== PHASE 1 COMPLETE: PRE-CLEANING ===")
-            print("-" * 50)
-            print(f"{'AXIS':<10} | {'RAW':<10} | {'WORLD':<10} | {'CLEAN (Final)':<15}")
-            print("-" * 50)
-            print(f"X          | {ax:<10.2f} | {acc_world[0]:<10.2f} | {clean_acc[0]:<10.2f}")
-            print(f"Y          | {ay:<10.2f} | {acc_world[1]:<10.2f} | {clean_acc[1]:<10.2f}")
-            print(f"Z          | {az:<10.2f} | {acc_world[2]:<10.2f} | {clean_acc[2]:<10.2f}")
-            print("-" * 50)
-            print(f"Noise Threshold: {NOISE_THRESHOLD}")
-            print(f"Current Mag:     {mag:.3f}")
-            print(f"Status:          {status}")
+            # store acceleration
+            acc_buffer.append(np.linalg.norm(acc))
 
-            last_print_time = time.time()
+            # compute jerk in body frame
+            if last_acc is None or dt == 0.0:
+                jerk = 0.0
+            else:
+                jerk = np.linalg.norm(acc - last_acc) / dt
+            jerk_buffer.append(jerk)
+
+            last_acc = acc
+            last_ts = ts
+
+        # optional live print
+        if time.time() - last_print > PRINT_INTERVAL:
+            print(f"Collected {len(acc_buffer)} samples...")
+            last_print = time.time()
+
+    # --- COMPUTE THRESHOLDS ---
+    acc_mean = np.mean(acc_buffer)
+    acc_std = np.std(acc_buffer)
+    jerk_mean = np.mean(jerk_buffer)
+    jerk_std = np.std(jerk_buffer)
+
+    zupt_acc_thresh = acc_mean + K_STD * acc_std
+    zupt_jerk_thresh = jerk_mean + K_STD * jerk_std
+    zupt_time_thresh = 0.08  # keep default
+
+    print("\n[AUTO-CALIBRATION COMPLETE]")
+    print(f"STATIC ACC MAG: mean={acc_mean:.3f}, std={acc_std:.3f}")
+    print(f"STATIC JERK:   mean={jerk_mean:.3f}, std={jerk_std:.3f}")
+    print("\n--- Suggested ZUPT thresholds ---")
+    print(f"ZUPT_ACC_THRESH  = {zupt_acc_thresh:.3f}  # m/s²")
+    print(f"ZUPT_JERK_THRESH = {zupt_jerk_thresh:.3f}  # m/s³")
+    print(f"ZUPT_TIME_THRESH = {zupt_time_thresh:.3f}  # seconds")
 
 except KeyboardInterrupt:
+    print("Calibration interrupted.")
+
+finally:
     streamer.close()

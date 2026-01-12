@@ -174,88 +174,62 @@ class UWBCleaner:
     def __init__(self):
         self.last_valid_pos = None
         self.last_valid_time = 0
-        self.mapper = CoordinateMapper()
+        self.mapper = CoordinateMapper() # <--- INITIALIZE MAPPER
         
         self.state = {
-            'status': 'WAITING',
-            'raw_pos': np.zeros(2),
-            'mapped_pos': np.zeros(2),
-            'final_pos': np.zeros(2),
-            'speed': 0.0,
-            'reject_reason': ''
+            'status': 'WAITING', 'raw_pos': np.zeros(2), 
+            'mapped_pos': np.zeros(2), # <--- New State Field
+            'final_pos': np.zeros(2), 'speed': 0.0, 'reject_reason': ''
         }
 
     def _solve_geometry(self, dists):
         def residuals(guess, anchors, measured_dists):
             return np.linalg.norm(anchors - guess, axis=1) - measured_dists
-
         x0 = np.mean(Config.ANCHORS, axis=0)
-        res = least_squares(
-            residuals, 
-            x0, 
-            bounds=(Config.GEO_BOUNDS_MIN, Config.GEO_BOUNDS_MAX), 
-            args=(Config.ANCHORS, dists), 
-            loss='soft_l1'
-        )
+        res = least_squares(residuals, x0, bounds=(Config.GEO_BOUNDS_MIN, Config.GEO_BOUNDS_MAX), 
+                            args=(Config.ANCHORS, dists), loss='soft_l1')
         return res.x
 
     def process(self, raw_dists, timestamp, syncer_ref):
-        """
-        Input: Raw Distances, Timestamp, TimeSyncer Ref
-        Output: Valid Position Vector, Status String
-        """
-        # 1. GEOMETRY
+        # 1. GEOMETRY SOLVE (Raw Physics)
         dists_vec = np.array(raw_dists[:3])
         raw_geo_pos = self._solve_geometry(dists_vec)[:2]
         self.state['raw_pos'] = raw_geo_pos
         
         # 2. APPLY CALIBRATION MAPPING (The Fix)
+        # This converts [0.25, 0.25] -> [0.0, 0.0]
         mapped_pos = self.mapper.apply(raw_geo_pos)
         self.state['mapped_pos'] = mapped_pos
         
         status = "VALID"
         reason = ""
-        # speed = 0.0
         final_pos = mapped_pos
         
-        # 2. PHYSICS GATE
+        # 3. PHYSICS GATE (Checked against MAPPED position)
         if self.last_valid_pos is not None:
             dt = timestamp - self.last_valid_time
             
-            # A. Speed Check
             dist_moved = np.linalg.norm(mapped_pos - self.last_valid_pos)
             speed = dist_moved / dt if dt > 0 else 0
             self.state['speed'] = speed
             
-            # B. IMU Truth Check
             imu_acc = syncer_ref.get_acceleration_at(timestamp)
-            # is_moving = np.linalg.norm(imu_acc) > 0.0
-            is_moving = np.linalg.norm(imu_acc) > Config.IMU_ZUPT_THRESH
+            is_moving = np.linalg.norm(imu_acc) > 0.0
             
-            # C. Rules
             if speed > Config.MAX_HUMAN_SPEED:
-                status = "REJECTED"
-                reason = "SPEED_LIMIT"
-                final_pos = self.last_valid_pos 
-                
+                status, reason, final_pos = "REJECTED", "SPEED_LIMIT", self.last_valid_pos
             elif (not is_moving) and (speed > Config.GHOST_SPEED_LIMIT):
-                status = "REJECTED"
-                reason = "GHOST_STATIC"
-                final_pos = self.last_valid_pos 
+                status, reason, final_pos = "REJECTED", "GHOST_STATIC", self.last_valid_pos
         
-        # 3. UPDATE STATE
         if status == "VALID":
             self.last_valid_pos = final_pos
             self.last_valid_time = timestamp
         
         self.state['status'] = status
         self.state['reject_reason'] = reason
-        # self.state['speed'] = speed
         self.state['final_pos'] = final_pos
-            
+        
         return final_pos, status
-
-
 
 # ==============================================================================
 # --- HELPER ---

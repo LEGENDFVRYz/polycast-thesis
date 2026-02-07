@@ -1,5 +1,37 @@
 @import url('fonts.css');
 
+/* --- Animation Keyframes --- */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideUp {
+    from {
+        transform: translateY(100%);
+    }
+    to {
+        transform: translateY(0);
+    }
+}
+
 /* --- Global Resets & Font --- */
 * {
     box-sizing: border-box;
@@ -41,10 +73,16 @@ html, body {
         .logo-header {
             padding: 3.5rem 2rem 2rem;
             text-align: center;
+            animation: fadeInDown 0.6s ease-out forwards;
 
             img {
                 width: 70%;
                 filter: brightness(0) saturate(100%) invert(53%) sepia(18%) saturate(1036%) hue-rotate(167deg) brightness(92%) contrast(89%) drop-shadow(3px 3px 6px rgba(0, 0, 0, 0.5));
+                transition: transform 0.3s ease, filter 0.3s ease;
+                
+                &:hover {
+                    transform: scale(1.02);
+                }
             }
         }
 
@@ -62,6 +100,7 @@ html, body {
                 flex-direction: column;
                 flex: 1;
                 box-shadow: 0 -5px 15px rgba(0, 0, 0, 0.1);
+                animation: slideUp 0.5s ease-out forwards;
 
                 h2 {
                     font-size: 1.75rem;
@@ -69,6 +108,8 @@ html, body {
                     margin-bottom: 2.5rem;
                     color: #1a2c47;
                     white-space: pre-line;
+                    animation: fadeInUp 0.6s ease-out 0.3s forwards;
+                    opacity: 0;
                 }
 
                 #signInForm {
@@ -76,6 +117,8 @@ html, body {
                     flex-direction: column;
                     gap: 1.25rem;
                     flex: 1;
+                    animation: fadeInUp 0.6s ease-out 0.4s forwards;
+                    opacity: 0;
 
                     .form-group {
                         display: flex;
@@ -89,10 +132,17 @@ html, body {
                             border-radius: 0.5rem;
                             font-size: 1rem;
                             font-family: 'Inter', sans-serif;
+                            transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
 
                             &:focus {
-                                outline: 2px solid #1a2c47;
-                                border-color: transparent;
+                                outline: none;
+                                border-color: #1a2c47;
+                                box-shadow: 0 0 0 3px rgba(26, 44, 71, 0.15);
+                                transform: translateY(-1px);
+                            }
+                            
+                            &:hover:not(:focus) {
+                                border-color: #9ca3af;
                             }
                         }
 
@@ -119,10 +169,16 @@ html, body {
                         font-size: 1rem;
                         cursor: pointer;
                         margin-top: 1rem;
-                        transition: background-color 0.3s;
+                        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
                         &:hover {
                             background-color: #2b4a7a;
+                            transform: translateY(-2px);
+                            box-shadow: 0 6px 20px rgba(26, 44, 71, 0.3);
+                        }
+                        
+                        &:active {
+                            transform: scale(0.98);
                         }
                     }
                 }
@@ -278,4 +334,111 @@ html, body {
     margin-bottom: 1rem;
     border-radius: 0.25rem;
     text-align: center;
+}
+
+
+/* ==========================================
+   RESPONSIVE STYLES FOR AUTH
+   ========================================== */
+
+/* Tablet (768px and below) */
+@media (max-width: 768px) {
+    .auth-ctn {
+        .auth-wrapper {
+            max-width: 100%;
+            
+            .logo-header {
+                padding: 2.5rem 1.5rem 1.5rem;
+                
+                img {
+                    width: 60%;
+                }
+            }
+            
+            .signin-container {
+                .signin-card {
+                    border-radius: 2.5rem 2.5rem 0 0;
+                    padding: 1.75rem;
+                    
+                    h2 {
+                        font-size: 1.5rem;
+                        margin-bottom: 2rem;
+                    }
+                    
+                    #signInForm {
+                        gap: 1rem;
+                        
+                        .form-group {
+                            input[type='text'],
+                            input[type='password'] {
+                                padding: 0.875rem;
+                                font-size: 0.95rem;
+                            }
+                        }
+                        
+                        .btn {
+                            padding: 0.875rem;
+                            font-size: 0.95rem;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Mobile (480px and below) */
+@media (max-width: 480px) {
+    .auth-ctn {
+        .auth-wrapper {
+            .logo-header {
+                padding: 2rem 1rem 1rem;
+                
+                img {
+                    width: 55%;
+                }
+            }
+            
+            .signin-container {
+                .signin-card {
+                    border-radius: 2rem 2rem 0 0;
+                    padding: 1.5rem;
+                    
+                    h2 {
+                        font-size: 1.3rem;
+                        margin-bottom: 1.5rem;
+                    }
+                    
+                    #signInForm {
+                        gap: 0.875rem;
+                        
+                        .form-group {
+                            input[type='text'],
+                            input[type='password'] {
+                                padding: 0.75rem;
+                                font-size: 0.9rem;
+                                border-radius: 0.4rem;
+                            }
+                        }
+                        
+                        .btn {
+                            padding: 0.75rem;
+                            font-size: 0.9rem;
+                        }
+                    }
+                }
+            }
+            
+            .link-footer {
+                font-size: 0.9rem;
+                margin-top: 1rem;
+            }
+        }
+    }
+    
+    .alert-error,
+    .alert-success {
+        padding: 0.6rem 1rem;
+        font-size: 0.85rem;
+    }
 }

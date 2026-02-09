@@ -55,7 +55,11 @@
                 font-size: 15px;
                 cursor: pointer;
                 font-family: inherit;
-                transition: background-color 0.2s ease, opacity 0.2s ease;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                
+                &:active {
+                    transform: scale(0.97);
+                }
                 
                 &.btn-primary {
                     background-color: #0084FF;
@@ -63,6 +67,8 @@
     
                     &:hover {
                         background-color: #0b5ed7;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(0, 132, 255, 0.3);
                     }
                 }
 
@@ -82,10 +88,17 @@
                     img {
                         width: 2em;
                         height: 2em;
+                        transition: transform 0.3s ease;
                     }
     
                     &:hover {
                         background-color: #0b5ed7;
+                        transform: translateY(-2px);
+                        box-shadow: 0 4px 12px rgba(46, 124, 246, 0.3);
+                        
+                        img {
+                            transform: scale(1.1);
+                        }
                     }
                 }
 
@@ -109,10 +122,17 @@
                     font-size: 1rem;
                     font-family: 'Inter', sans-serif;
                     color: #343a40;
+                    transition: border-color 0.3s ease, box-shadow 0.3s ease, transform 0.2s ease;
     
                     &:focus {
-                        outline: 2px solid #1a2c47;
-                        border-color: transparent;
+                        outline: none;
+                        border-color: #1a2c47;
+                        box-shadow: 0 0 0 3px rgba(26, 44, 71, 0.15);
+                        transform: translateY(-1px);
+                    }
+                    
+                    &:hover:not(:focus) {
+                        border-color: #9ca3af;
                     }
                 }
     
@@ -147,33 +167,59 @@
 
         /* --- Cards & Display --- */
         .config-card {
-            background-color: #FFFFFF;
+            background: linear-gradient(135deg, #FFFFFF 0%, #FAFBFF 100%);
             padding: 24px 30px;
-            /* box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); */
             border-radius: 8px;
-            border: 1px solid #ABBAD3;
-            border-left: 8px solid #2E7CF6;
+            border: 1px solid #E2E8F0;
+            border-left: 8px solid #3B82F6;
+            transition: transform 0.3s ease, box-shadow 0.3s ease, border-left-color 0.3s ease;
+            animation: fadeInUp 0.5s ease-out forwards;
+            opacity: 0;
+            
+            &:hover {
+                transform: translateY(-3px);
+                box-shadow: 0 8px 25px rgba(59, 130, 246, 0.15);
+            }
+            
+            /* Varied accent colors for different cards */
+            &:nth-child(1) {
+                border-left-color: #3B82F6; /* Blue */
+            }
+            &:nth-child(2) {
+                border-left-color: #6366F1; /* Indigo */
+            }
+            &:nth-child(3) {
+                border-left-color: #14B8A6; /* Teal */
+            }
+            &:nth-child(4) {
+                border-left-color: #8B5CF6; /* Purple */
+            }
 
             /* Disabled style */
             &.disabled {
-                background-color: #f8f9fa;
-                border-left-color: #dee2e6;
+                background: linear-gradient(135deg, #F8FAFC 0%, #F1F5F9 100%);
+                border-left-color: #CBD5E1;
                 
                 h2 {
-                    color: #adb5bd;
+                    color: #94A3B8;
                     margin-bottom: 0;
+                }
+                
+                &:hover {
+                    transform: none;
+                    box-shadow: none;
                 }
             }
 
             /* Success style */
             &.success {
-                /* box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04); */
-                border-left: 0.5em solid #22BC31; 
+                border-left: 0.5em solid #10B981;
+                background: linear-gradient(135deg, #FFFFFF 0%, #F0FDF4 100%);
             }
 
             h2 {
                 font-size: 18px;
-                color: #102E4A;
+                color: #1E293B;
             }
 
             p {
@@ -181,6 +227,7 @@
                 font-weight: 400;
                 padding-top: 0.5em;
                 padding-bottom: 0;
+                color: #64748B;
             }
         }
 
@@ -212,5 +259,157 @@
             }
         }
 
+
+    }
+}
+
+
+/* ==========================================
+   RESPONSIVE STYLES FOR ADMIN
+   ========================================== */
+
+/* Tablet (768px and below) */
+@media (max-width: 768px) {
+    .admin-ctn {
+        .admin-wrapper {
+            gap: 1.5rem;
+            
+            h1.page-title {
+                font-size: 1.25rem;
+                margin-bottom: 12px;
+            }
+            
+            .config-card {
+                padding: 18px 20px;
+                border-left-width: 6px;
+                
+                h2 {
+                    font-size: 16px;
+                }
+                
+                p {
+                    font-size: 0.9rem;
+                }
+            }
+            
+            form {
+                margin-top: 1rem;
+                
+                .btn {
+                    padding: 10px 16px;
+                    font-size: 14px;
+                }
+                
+                .btn-secondary {
+                    width: 3.5em;
+                    
+                    img {
+                        width: 1.5em;
+                        height: 1.5em;
+                    }
+                }
+                
+                .input-group {
+                    input[type='text'],
+                    select {
+                        padding: 0.875rem;
+                        font-size: 0.9rem;
+                    }
+                    
+                    .input-with-button {
+                        gap: 8px;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Mobile (480px and below) */
+@media (max-width: 480px) {
+    .admin-ctn {
+        .admin-wrapper {
+            gap: 1rem;
+            
+            h1.page-title {
+                font-size: 1.1rem;
+                margin-bottom: 8px;
+            }
+            
+            img {
+                width: 24px;
+                height: 24px;
+            }
+            
+            .config-card {
+                padding: 14px 16px;
+                border-left-width: 5px;
+                border-radius: 6px;
+                
+                h2 {
+                    font-size: 14px;
+                }
+                
+                p {
+                    font-size: 0.85rem;
+                    padding-top: 0.35em;
+                }
+            }
+            
+            form {
+                margin-top: 0.75rem;
+                
+                label {
+                    font-size: 12px;
+                    margin-bottom: 6px;
+                }
+                
+                .btn {
+                    padding: 8px 14px;
+                    font-size: 13px;
+                }
+                
+                .btn-secondary {
+                    width: 3em;
+                    
+                    img {
+                        width: 1.25em;
+                        height: 1.25em;
+                    }
+                }
+                
+                .btn-full {
+                    padding: 12px;
+                    font-size: 14px;
+                }
+                
+                .input-group {
+                    margin-bottom: 0.75rem;
+                    
+                    input[type='text'],
+                    select {
+                        padding: 0.75rem;
+                        font-size: 0.85rem;
+                        border-radius: 0.4rem;
+                    }
+                    
+                    .input-with-button {
+                        flex-direction: column;
+                        gap: 8px;
+                        
+                        button {
+                            width: 100%;
+                        }
+                    }
+                }
+            }
+            
+            section.manage-block {
+                a button {
+                    padding: 0.875rem 1.5rem;
+                    font-size: 0.9rem;
+                }
+            }
+        }
     }
 }

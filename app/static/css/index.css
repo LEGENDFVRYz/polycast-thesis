@@ -4,6 +4,29 @@ body{
     background-color: rgba(30, 35, 40, 0.85);
 }
 
+/* --- Animation Keyframes --- */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 /* --- Main Page Container --- */
 .landing-container {
     min-height: 100vh;
@@ -25,6 +48,7 @@ body{
         display: flex;
         justify-content: end;
         align-items: center;
+        animation: fadeInDown 0.6s ease-out forwards;
 
         .logo {
             background-color: #ffffff;
@@ -32,6 +56,12 @@ body{
             height: 40px;
             padding: 0.2rem 1rem;
             border-radius: 9999px;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            
+            &:hover {
+                transform: scale(1.05);
+                box-shadow: 0 4px 15px rgba(255, 255, 255, 0.3);
+            }
 
             img {
                 width: 100%;
@@ -54,6 +84,7 @@ body{
             font-size: 3.2rem;
             line-height: 1.2;
             max-width: 450px;
+            animation: fadeInUp 0.8s ease-out forwards;
         }
 
         /* --- Buttons --- */
@@ -63,6 +94,8 @@ body{
             gap: 1rem;
             width: 100%;
             max-width: 300px;
+            animation: fadeInUp 0.8s ease-out 0.2s forwards;
+            opacity: 0;
 
             .btn {
                 display: inline-block;
@@ -72,7 +105,11 @@ body{
                 border-radius: 9999px;
                 border: 2px solid #ffffff;
                 cursor: pointer;
-                transition: all 0.2s ease-in-out;
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                
+                &:active {
+                    transform: scale(0.97);
+                }
 
                 &.btn-primary {
                     background-color: #ffffff;
@@ -81,6 +118,8 @@ body{
                     &:hover {
                         background-color: #f0f0f0;
                         border-color: #f0f0f0;
+                        transform: translateY(-3px);
+                        box-shadow: 0 8px 25px rgba(255, 255, 255, 0.25);
                     }
                 }
 
@@ -89,7 +128,9 @@ body{
                     color: #ffffff;
 
                     &:hover {
-                        background-color: rgba(255, 255, 255, 0.1);
+                        background-color: rgba(255, 255, 255, 0.15);
+                        transform: translateY(-3px);
+                        box-shadow: 0 8px 25px rgba(255, 255, 255, 0.15);
                     }
                 }
             }
@@ -118,12 +159,48 @@ body{
 @media (max-width: 576px) {
     /* Styles for small screens (mobile phones) */
     .landing-container {
+        padding: 1.5rem;
+        
+        .landing-header {
+            .logo {
+                width: 120px;
+                height: 35px;
+            }
+        }
+        
         .landing-main {
-            gap: 6rem;  /* temporary fix */
+            gap: 4rem;
 
             .headline {
                 text-align: start;
-                font-size: 3rem;
+                font-size: 2.5rem;
+            }
+            
+            .button-group {
+                max-width: 100%;
+                
+                .btn {
+                    font-size: 0.9rem;
+                    padding: 0.8rem 1.2rem;
+                }
+            }
+        }
+        
+        .landing-footer {
+            .footer-link {
+                font-size: 0.8rem;
+            }
+        }
+    }
+}
+
+@media (max-width: 400px) {
+    .landing-container {
+        padding: 1rem;
+        
+        .landing-main {
+            .headline {
+                font-size: 2rem;
             }
         }
     }

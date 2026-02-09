@@ -26,22 +26,36 @@
             </div>
             
             <div class="card-content">
-                <div class="folder-details">
-                    <div class="specifics">
-                        <p class="detail-label">CYS</p>
-                        <p class="detail-value">BSCPE 4-3</p>
+                <div class="folder-details" data-gallery-id="{{ gallery.id }}">
+                    <div class="detail-row">
+                        <span class="detail-label">Gallery Name</span>
+                        <span class="detail-value">{{ gallery.name }}</span>
                     </div>
-                    <div class="specifics">
-                        <p class="detail-label">Modified on</p>
-                        <p class="detail-value">November XX, 20XX</p>
+                    <div class="detail-row">
+                        <span class="detail-label">Total Sessions</span>
+                        <span class="detail-value">{{ sessions|length }} session{% if sessions|length != 1 %}s{% endif %}</span>
                     </div>
-                    <div class="specifics">
-                        <p class="detail-label">Created on</p>
-                        <p class="detail-value">November XX, 20XX</p>
+                    <div class="detail-row">
+                        <span class="detail-label">Status</span>
+                        <span class="detail-value">{% if gallery.is_favorite %}<span class="favorite-badge">★ Favorite</span>{% else %}Active{% endif %}</span>
                     </div>
-                    <div class="specifics">
-                        <p class="detail-label">Description</p>
-                        <input class="detail-value" placeholder="Add a description"/>
+                    <div class="detail-row description-row">
+                        <span class="detail-label">Description</span>
+                        <div class="description-container">
+                            {% if gallery.description %}
+                                <div class="description-display">
+                                    <span class="description-text">{{ gallery.description }}</span>
+                                    <button type="button" class="description-edit-btn" title="Edit description">
+                                        <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Edit" width="16" height="16">
+                                    </button>
+                                </div>
+                            {% endif %}
+                            <input type="text" 
+                                   class="description-input {% if gallery.description %}hidden{% endif %}" 
+                                   value="{{ gallery.description or '' }}"
+                                   placeholder="Add a description..."
+                                   data-gallery-id="{{ gallery.id }}"/>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -131,77 +145,6 @@
         </section>
     </div>
 
-    {# 
-    ==========================================
-    DELETE CONFIRMATION MODAL (SESSION)
-    ==========================================
-    #}
-    {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
-        <p>Are you sure you want to move this session to the recycle bin?</p>
-        
-        <form id="deleteSessionForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
-            </div>
-        </form>
-    {% endcall %}
-    
-    {# 
-    ==========================================
-    UPDATE CONFIRMATION MODAL (SESSION)
-    ==========================================
-    #}
-    {% call modal_shell(modal_id='editSessionModal', modal_title='EDIT SESSION NAME') %}
-        <form id="editSessionForm" method="POST" action=""> 
-            <div class="form-group">
-                <label for="new_session_name">Session Name:</label>
-                <input type="text" id="new_session_name" name="session_name" required>
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Name</button>
-            </div>
-        </form>
-    {% endcall %}
-    
-    {# 
-    ==========================================
-    RECOVER CONFIRMATION MODAL (SESSION)
-    ==========================================
-    #}
-    {% call modal_shell(modal_id='recoverSessionModal', modal_title='CONFIRM RECOVERY') %}
-        <p>Are you sure you want to restore this session?</p>
-        <p>It will be moved back to the active gallery.</p>
-        
-        <form id="recoverSessionForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-success">Yes, Restore Session</button>
-            </div>
-        </form> 
-    {% endcall %}
-    
-    {# 
-    ==========================================
-    FORCE DELETE MODAL (SESSION)
-    ==========================================
-    #}
-    {% call modal_shell(modal_id='forceDeleteSessionModal', modal_title='PERMANENT DELETION') %}
-        <div class="alert alert-danger">
-            <strong>Warning:</strong> This action cannot be undone.
-        </div>
-        <p>Are you sure you want to <strong>permanently delete</strong> this session?</p>
-        <p>The folder and all images inside it will be erased from the disk.</p>
-        
-        <form id="forceDeleteSessionForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
-            </div>
-        </form>
-    {% endcall %}
-
 
 
     <!-- DETAILS TOGGLE SCRIPT -->
@@ -212,6 +155,101 @@
             toggleButton.addEventListener('click', function(event) {
                 event.preventDefault(); 
                 cardContent.classList.toggle('hidden');
+            });
+        });
+    </script>
+
+    <!-- DESCRIPTION INLINE EDIT SCRIPT -->
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const descriptionContainer = document.querySelector('.description-container');
+            if (!descriptionContainer) return;
+            
+            const descriptionDisplay = descriptionContainer.querySelector('.description-display');
+            const descriptionInput = descriptionContainer.querySelector('.description-input');
+            const editBtn = descriptionContainer.querySelector('.description-edit-btn');
+            const galleryId = descriptionInput.dataset.galleryId;
+            
+            // Click edit button to edit
+            if (editBtn) {
+                editBtn.addEventListener('click', function() {
+                    descriptionDisplay.classList.add('hidden');
+                    descriptionInput.classList.remove('hidden');
+                    descriptionInput.focus();
+                    descriptionInput.select();
+                });
+            }
+            
+            // Save on blur or Enter key
+            function saveDescription() {
+                const newDescription = descriptionInput.value.trim();
+                
+                fetch(`/gallery/${galleryId}/description`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ description: newDescription })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        if (newDescription) {
+                            // Create or update display element
+                            let displayEl = descriptionContainer.querySelector('.description-display');
+                            if (!displayEl) {
+                                displayEl = document.createElement('div');
+                                displayEl.className = 'description-display';
+                                
+                                const textEl = document.createElement('span');
+                                textEl.className = 'description-text';
+                                
+                                const btnEl = document.createElement('button');
+                                btnEl.type = 'button';
+                                btnEl.className = 'description-edit-btn';
+                                btnEl.title = 'Edit description';
+                                btnEl.innerHTML = '<img src="/static/images/icons/pen-line.svg" alt="Edit" width="16" height="16">';
+                                btnEl.addEventListener('click', function() {
+                                    displayEl.classList.add('hidden');
+                                    descriptionInput.classList.remove('hidden');
+                                    descriptionInput.focus();
+                                    descriptionInput.select();
+                                });
+                                
+                                displayEl.appendChild(textEl);
+                                displayEl.appendChild(btnEl);
+                                descriptionContainer.insertBefore(displayEl, descriptionInput);
+                            }
+                            
+                            displayEl.querySelector('.description-text').textContent = newDescription;
+                            displayEl.classList.remove('hidden');
+                            descriptionInput.classList.add('hidden');
+                        } else {
+                            // No description - keep input visible, remove display
+                            const displayEl = descriptionContainer.querySelector('.description-display');
+                            if (displayEl) displayEl.remove();
+                            descriptionInput.classList.remove('hidden');
+                        }
+                    }
+                })
+                .catch(err => console.error('Error saving description:', err));
+            }
+            
+            descriptionInput.addEventListener('blur', saveDescription);
+            descriptionInput.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    descriptionInput.blur();
+                }
+                if (e.key === 'Escape') {
+                    // Cancel editing - restore original value
+                    const displayEl = descriptionContainer.querySelector('.description-display');
+                    if (displayEl) {
+                        descriptionInput.value = displayEl.querySelector('.description-text').textContent;
+                        displayEl.classList.remove('hidden');
+                        descriptionInput.classList.add('hidden');
+                    }
+                }
             });
         });
     </script>
@@ -293,4 +331,65 @@
             });
         });
     </script>
+{% endblock %}
+
+{# ==========================================
+   MODALS BLOCK - Outside main-content for full-page overlay
+   ==========================================
+#}
+{% block modals %}
+    {# DELETE CONFIRMATION MODAL (SESSION) #}
+    {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
+        <p>Are you sure you want to move this session to the recycle bin?</p>
+        
+        <form id="deleteSessionForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
+            </div>
+        </form>
+    {% endcall %}
+    
+    {# UPDATE CONFIRMATION MODAL (SESSION) #}
+    {% call modal_shell(modal_id='editSessionModal', modal_title='EDIT SESSION NAME') %}
+        <form id="editSessionForm" method="POST" action=""> 
+            <div class="form-group">
+                <label for="new_session_name">Session Name:</label>
+                <input type="text" id="new_session_name" name="session_name" required>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-primary">Update Name</button>
+            </div>
+        </form>
+    {% endcall %}
+    
+    {# RECOVER CONFIRMATION MODAL (SESSION) #}
+    {% call modal_shell(modal_id='recoverSessionModal', modal_title='CONFIRM RECOVERY') %}
+        <p>Are you sure you want to restore this session?</p>
+        <p>It will be moved back to the active gallery.</p>
+        
+        <form id="recoverSessionForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-success">Yes, Restore Session</button>
+            </div>
+        </form> 
+    {% endcall %}
+    
+    {# FORCE DELETE MODAL (SESSION) #}
+    {% call modal_shell(modal_id='forceDeleteSessionModal', modal_title='PERMANENT DELETION') %}
+        <div class="alert alert-danger">
+            <strong>Warning:</strong> This action cannot be undone.
+        </div>
+        <p>Are you sure you want to <strong>permanently delete</strong> this session?</p>
+        <p>The folder and all images inside it will be erased from the disk.</p>
+        
+        <form id="forceDeleteSessionForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+            </div>
+        </form>
+    {% endcall %}
 {% endblock %}

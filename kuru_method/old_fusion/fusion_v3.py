@@ -11,7 +11,7 @@ import sys
 # -------------------------
 # CONFIG
 # -------------------------
-SERIAL_PORT = 'COM5'
+SERIAL_PORT = 'COM5'  # CHECK YOUR COM PORT
 BAUD_RATE = 115200
 
 ANCHORS = np.array([
@@ -25,13 +25,13 @@ PEN_TIP_OFFSET = np.array([0.0, 0.0, 0.0])
 # System Constants
 TRAP_DT_MAX = 0.15
 IMU_SAMPLES_PER_PACKET = 5
-FORCE_ACTIVATION_THRESHOLD = 10
+FORCE_ACTIVATION_THRESHOLD = 8
 
 # Filter & Bias Constants
 BIAS_ALPHA = 0.01
 VELOCITY_DECAY = 0.98
 
-# Motion Thresholds (Used for ZVUP - Zero Velocity Update)
+# Motion Thresholds
 ACCEL_NOISE_FLOOR = 0.01
 STATIC_ACCEL_THRESH = 0.06
 
@@ -54,14 +54,13 @@ CONTACT_VEL_AVG_WINDOW = 4
 MAX_HANDWRITING_VELOCITY = 1.0
 
 # -------------------------
-# BOUNDING BOX CONFIG (for _prototype_thread compatibility)
+# BOUNDING BOX CONFIG
 # -------------------------
 BBOX_CONFIG = {
     'b_min': 0.0,
     'b_max': 1.2,
 }
 
-# [REST OF ORIGINAL CODE - MotionState class unchanged]
 class MotionState:
     STATIC = 0
     JITTER = 1
@@ -71,7 +70,6 @@ class MotionState:
     TRAJECTORY = 5
     HOVER = 6
 
-# [MotionAnalyzer class unchanged]
 class MotionAnalyzer:
     def __init__(self, window_size=20):
         self.vel_history = deque(maxlen=window_size)
@@ -83,7 +81,6 @@ class MotionAnalyzer:
         self.is_contact_detected = False
 
     def update(self, vel, accel, accel_mag, pos, dt):
-        # [Implementation unchanged]
         self.vel_history.append(vel.copy())
         self.accel_history.append(accel.copy())
         self.accel_mag_history.append(accel_mag)
@@ -102,7 +99,6 @@ class MotionAnalyzer:
         return self.current_state, features
 
     def _compute_features(self, vel_mag, accel_mag):
-        # [Implementation unchanged]
         return {
             'vel_mag': vel_mag,
             'accel_mag': accel_mag,
@@ -113,7 +109,6 @@ class MotionAnalyzer:
         }
 
     def _detect_jitter(self):
-        # [Implementation unchanged]
         if len(self.vel_history) < 3: return False
         vels = list(self.vel_history)
         vel_mags = [np.linalg.norm(v) for v in vels[-JITTER_WINDOW:]]
@@ -121,7 +116,6 @@ class MotionAnalyzer:
         return np.var(vel_mags) > JITTER_VARIANCE_THRESH and max(vel_mags) < JITTER_MAX_VEL
 
     def _compute_curvature(self):
-        # [Implementation unchanged]
         if len(self.pos_history) < 3: return 0.0
         positions = list(self.pos_history)
         v1 = positions[-2] - positions[-3]
@@ -132,7 +126,6 @@ class MotionAnalyzer:
         return np.arccos(dot_product) / np.pi
 
     def _classify_motion(self, features):
-        # [Implementation unchanged]
         vel_mag = features['vel_mag']
         accel_mag = features['accel_mag']
         is_jittering = features['is_jittering']
@@ -148,7 +141,6 @@ class MotionAnalyzer:
         if vel_mag > VELOCITY_FAST_THRESH: return MotionState.TRAJECTORY
         return MotionState.NORMAL_DRAW
 
-# [UWBIMUFusionFilter class unchanged]
 class UWBIMUFusionFilter:
     def __init__(self):
         self.filtered_pos = np.zeros(3)
@@ -159,7 +151,6 @@ class UWBIMUFusionFilter:
         self.measurement_count = 0
         
     def update_with_uwb(self, raw_uwb_pos, imu_vel, current_time):
-        # [Implementation unchanged]
         if self.measurement_count > 0 and self.last_uwb_time > 0:
             dt = current_time - self.last_uwb_time
             if dt > 0 and dt < 1.0:
@@ -193,7 +184,6 @@ class UWBIMUFusionFilter:
         return self.filtered_pos.copy()
     
     def reset(self):
-        # [Implementation unchanged]
         self.filtered_pos[:] = 0
         self.last_uwb_pos[:] = 0
         self.last_uwb_time = 0
@@ -202,16 +192,10 @@ class UWBIMUFusionFilter:
         self.measurement_count = 0
 
 # ==========================================
-# NEW: STROKE TRACKER WRAPPER CLASS
-# This wraps the fusion_v14 logic to be compatible with _prototype_thread.py
+# STROKE TRACKER WRAPPER CLASS
 # ==========================================
 class StrokeTracker:
-    """
-    Wrapper class for _prototype_thread.py compatibility.
-    Provides get_bbox() and process_packet() interface.
-    """
     def __init__(self):
-        # Initialize all state variables from the original main code
         self.pos = np.zeros(3)
         self.vel = np.zeros(3)
         self.accel_filtered = np.zeros(3)
@@ -240,33 +224,20 @@ class StrokeTracker:
         self.imu_heading_offset = 0.0
         
     def get_bbox(self):
-        """Returns the render bounds config for _prototype_thread.py"""
         return BBOX_CONFIG.copy()
     
     def process_packet(self, line_bytes):
-        """
-        Process raw serial packet and return (x, y, is_drawing) tuple.
-        Compatible with _prototype_thread.py interface.
-        
-        Args:
-            line_bytes: Raw bytes from serial port
-            
-        Returns:
-            tuple: (x_meters, y_meters, is_drawing_bool) or None
-        """
         try:
             raw = line_bytes.decode('utf-8', errors='ignore').strip()
             if not raw:
                 return None
                 
             toks = raw.split(',')
-            
-            # Check packet length (96 fields expected)
             if len(toks) < 48:
                 return None
             
             # ========================================
-            # 1. PROCESS UWB DATA
+            # 1. PROCESS UWB DATA (The Guide)
             # ========================================
             d0 = float(toks[0])
             d1 = float(toks[1])
@@ -278,36 +249,30 @@ class StrokeTracker:
                 raw_uwb_3d[2],
                 raw_uwb_3d[1]
             ])
-            
             self.raw_uwb_pos[:] = raw_uwb_3d_transformed[:]
             
+            # Calculate correction vector per step (Default to 0)
+            correction_per_step = np.zeros(3)
+
             if d0 > 0 and d1 > 0 and d2 > 0:
                 current_time = time.time()
-                
-                raw_uwb_3d = self._trilaterate([d0, d1, d2], ANCHORS)
-                raw_uwb_3d_transformed = np.array([
-                    raw_uwb_3d[0],
-                    raw_uwb_3d[2],
-                    raw_uwb_3d[1]
-                ])
                 
                 if not self.has_first_fix:
                     self.uwb_pos[:] = raw_uwb_3d_transformed[:]
                     self.pos[:] = raw_uwb_3d_transformed[:]
-                    self.last_uwb_pos[:] = raw_uwb_3d_transformed[:]
                     self.vel[:] = 0
                     self.has_first_fix = True
-                    return None  # Wait for more data
+                    return None 
                 
-                # Outlier rejection
                 dist_jump = np.linalg.norm(raw_uwb_3d_transformed - self.uwb_pos)
                 if dist_jump <= 1.0 or np.linalg.norm(self.uwb_pos) <= 0.1:
-                    # UWB-IMU Fusion
+                    
                     if len(self.motion_analyzer.vel_history) > 0:
                         recent_imu_vel = self.motion_analyzer.vel_history[-1]
                     else:
                         recent_imu_vel = np.zeros(3)
                     
+                    # Get the Clean UWB Position
                     filtered_pos, kgain = self.uwb_imu_fusion.update_with_uwb(
                         raw_uwb_3d_transformed,
                         recent_imu_vel,
@@ -315,15 +280,19 @@ class StrokeTracker:
                     )
                     self.uwb_pos[:] = filtered_pos
                     
-                    pos_error = self.uwb_pos - self.pos
-                    correction_strength = 0.00 if self.is_writing else 0.15
-                    self.pos[:] += pos_error * correction_strength
+                    # -----------------------------------------------------
+                    # NEW STRATEGY: IMU AS FILLER
+                    # -----------------------------------------------------
+                    # 1. Calculate the TOTAL Gap between current IMU pos and UWB target
+                    total_error = self.uwb_pos - self.pos
                     
-                    self.last_uwb_pos[:] = self.uwb_pos.copy()
-                    self.last_uwb_time = current_time
+                    # 2. Divide this gap by 5 (IMU_SAMPLES_PER_PACKET)
+                    # This ensures we close the gap smoothly over this exact batch
+                    correction_per_step = total_error / IMU_SAMPLES_PER_PACKET
+                    # -----------------------------------------------------
             
             # ========================================
-            # 2. PROCESS IMU SAMPLES
+            # 2. PROCESS IMU SAMPLES (The Filler)
             # ========================================
             last_valid_result = None
             
@@ -334,18 +303,17 @@ class StrokeTracker:
                 force = float(toks[s+7])
                 t_us = int(toks[s+8])
                 
-                result = self._process_imu_sample(qx, qy, qz, qw, ax, ay, az, force, t_us)
+                # Pass the calculated correction step to the processor
+                result = self._process_imu_sample(qx, qy, qz, qw, ax, ay, az, force, t_us, correction_per_step)
                 if result:
                     last_valid_result = result
             
-            # Return the last valid IMU processing result
             return last_valid_result
             
         except (ValueError, IndexError, UnicodeDecodeError) as e:
             return None
     
     def _trilaterate(self, distances, anchors):
-        """Internal trilateration helper"""
         def residuals(x, anchors, dists):
             return np.linalg.norm(anchors - x, axis=1) - dists
         x0 = np.mean(anchors, axis=0)
@@ -354,24 +322,18 @@ class StrokeTracker:
         return res.x
     
     def _micros_dt(self, last, now):
-        """Calculate time delta in seconds from microseconds"""
         if last is None:
             return None
         diff = now - last
         if diff < 0:
-            diff += 4294967296  # Handle overflow
+            diff += 4294967296 
         return diff / 1e6
     
     def _calibrate_alignment_with_quat(self, r):
-        """Calibrate heading offset"""
         yaw = r.as_euler('xyz', degrees=False)[2]
         self.imu_heading_offset = -yaw
     
-    def _process_imu_sample(self, qx, qy, qz, qw, ax_s, ay_s, az_s, force, t_us):
-        """
-        Process a single IMU sample.
-        Returns: (x, y, is_drawing) tuple or None
-        """
+    def _process_imu_sample(self, qx, qy, qz, qw, ax_s, ay_s, az_s, force, t_us, correction_step):
         accel_local = np.array([ax_s, ay_s, az_s], dtype=float)
         dt = self._micros_dt(self.last_timestamp_us, t_us)
         self.last_timestamp_us = t_us
@@ -379,12 +341,12 @@ class StrokeTracker:
         if dt is None or dt <= 0 or dt > TRAP_DT_MAX:
             return None
         
-        # 1. Rotation (Local -> Global)
+        # 1. Rotation
         r = R.from_quat([qx, qy, qz, qw])
         accel_world = r.apply(accel_local)
-        accel_world[1] *= -1
+        accel_world[1] *= -1 
         
-        # 2. Startup Calibration
+        # 2. Calibration
         if self.is_calibrating:
             self.calib_count += 1
             if self.calib_count >= self.CALIB_SAMPLES:
@@ -392,22 +354,18 @@ class StrokeTracker:
                 self.is_calibrating = False
             return None
         
-        # 3. Force Sensor Logic
+        # 3. Force Sensor
         is_touching = force > FORCE_ACTIVATION_THRESHOLD
         
-        # State Transition: Hover -> Write
         if is_touching and not self.is_writing:
             self.is_writing = True
-            # Snap to UWB position when starting new stroke
             if self.has_first_fix and np.linalg.norm(self.uwb_pos) > 0.1:
-                self.pos[:] = self.uwb_pos[:]
-                self.vel[:] = 0
+                self.vel[:] = 0 # Reset velocity on touch down
         
-        # State Transition: Write -> Hover
         elif not is_touching and self.is_writing:
             self.is_writing = False
         
-        # 4. Filter accel with high-pass (ITrackU approach)
+        # 4. Filter accel
         cutoff_freq = 0.05
         RC = 1.0 / (cutoff_freq * 2 * np.pi)
         dynamic_alpha = RC / (RC + dt)
@@ -422,12 +380,15 @@ class StrokeTracker:
             self.vel, self.accel_filtered, accel_mag, self.pos, dt
         )
         
-        # 6. Integration
+        # 6. Integration + FILLER LOGIC
         if motion_state == MotionState.STATIC:
             self.accel_bias[:] = (1 - BIAS_ALPHA) * self.accel_bias + BIAS_ALPHA * self.accel_filtered
             self.vel[:] = 0.0
+            # Even if static, we apply correction to drift back to anchor
+            self.pos += correction_step 
         elif motion_state in [MotionState.JITTER, MotionState.HOVER]:
             self.vel[:] *= VELOCITY_DECAY
+            self.pos += (self.vel * dt) + correction_step
         else:
             accel_corrected = self.accel_filtered - self.accel_bias
             if self.prev_accel is None:
@@ -436,7 +397,12 @@ class StrokeTracker:
             
             self.vel += 0.5 * (self.prev_accel + accel_corrected) * dt
             self.vel *= VELOCITY_DECAY
+            
+            # --- THE CORE FUSION ---
+            # Position = (IMU Displacement) + (UWB Correction Step)
             self.pos += 0.5 * (self.prev_vel + self.vel) * dt
+            self.pos += correction_step # Apply 1/5th of the error
+            # -----------------------
             
             self.prev_accel = accel_corrected.copy()
             self.prev_vel = self.vel.copy()
@@ -446,38 +412,18 @@ class StrokeTracker:
         rotated_offset = rot_matrix @ PEN_TIP_OFFSET
         tip_pos = self.pos + rotated_offset
         
-        # 8. Return (x, y, is_drawing) for _prototype_thread.py
         final_x = tip_pos[0]
-        final_y = tip_pos[2]  # Use Z as Y in 2D space
+        final_y = tip_pos[2]  
         is_drawing_now = self.is_writing
         
         return (final_x, final_y, is_drawing_now)
 
-
 # ==========================================
-# ORIGINAL STANDALONE TESTING CODE (kept for backwards compatibility)
+# MAIN EXECUTION
 # ==========================================
-# [All original global variables and functions remain below for standalone testing]
-
-# -------------------------
-# STARTUP CALIBRATION
-# -------------------------
-is_calibrating = True
-calib_count = 0
-CALIB_SAMPLES = 30  
-imu_heading_offset = 0.0 
-
-# [... rest of original standalone code unchanged ...]
-# [Serial setup, GUI setup, update loop, etc. - omitted for brevity but unchanged]
-
 if __name__ == "__main__":
-    # When run standalone, use the original GUI-based testing approach
-    # [Original main code unchanged]
-    
-    # For testing the StrokeTracker wrapper:
-    print("Testing StrokeTracker wrapper...")
+    print("Initializing PolyCast Visualization (Fast Sync Mode)...")
     tracker = StrokeTracker()
-    print(f"BBox: {tracker.get_bbox()}")
     
     try:
         ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=0.1)
@@ -488,35 +434,34 @@ if __name__ == "__main__":
     
     _serial_buf = ""
     
-    # [Original GUI and update loop code would go here]
-    # Setup plot, info window, etc...
-    
     app = QtWidgets.QApplication([])
-    yz_win = pg.plot(title="Advanced Motion Tracking - XY Plane")
+    yz_win = pg.plot(title="PolyCast - Fast Sync Fusion")
     yz_win.setLabel('bottom', 'X (m)')
     yz_win.setLabel('left', 'Y (m)')
     yz_win.setAspectLocked(True)
     yz_win.showGrid(x=True, y=True)
-    yz_dot = yz_win.plot(symbol='o', symbolSize=8, symbolBrush='r')
-    uwb_ghost = yz_win.plot(pen=pg.mkPen('g', width=2))
-    uwb_raw_trail = yz_win.plot(
-        pen=pg.mkPen(color='y', width=1)
-    )
+    
+    yz_dot = yz_win.plot(symbol='o', symbolSize=10, symbolBrush='r', name="Fused Position")
+    uwb_ghost = yz_win.plot(pen=pg.mkPen(color=(0, 255, 0, 120), width=2), name="UWB Filtered")
+    uwb_raw_trail = yz_win.plot(pen=pg.mkPen(color=(255, 255, 0, 100), width=1), name="UWB Raw")
+    
     yz_win.show()
     
-    info_win = QtWidgets.QGroupBox("System State & Motion Analysis")
+    info_win = QtWidgets.QGroupBox("System Status")
     info_layout = QtWidgets.QVBoxLayout(info_win)
     info_label = QtWidgets.QLabel("Status: Waiting...")
+    info_label.setStyleSheet("font-size: 14px; font-weight: bold;")
     info_layout.addWidget(info_label)
     info_win.show()
+    info_win.setGeometry(100, 100, 250, 100)
     
     status_btn = QtWidgets.QPushButton("Wait for Input...", parent=yz_win)
-    status_btn.setGeometry(10, 10, 260, 30)
+    status_btn.setGeometry(10, 10, 150, 30)
     status_btn.setStyleSheet("background-color: #555555; color: white; font-weight: bold;")
     status_btn.show()
     
     auto_follow_cb = QtWidgets.QCheckBox("Auto-Follow", parent=yz_win)
-    auto_follow_cb.setGeometry(280, 10, 100, 30)
+    auto_follow_cb.setGeometry(170, 10, 100, 30)
     auto_follow_cb.setStyleSheet("color: black; font-weight: bold; background: rgba(255,255,255,0.5);")
     auto_follow_cb.setChecked(True)
     auto_follow_cb.show()
@@ -528,9 +473,9 @@ if __name__ == "__main__":
     uwb_filt_history = deque(maxlen=300)
     
     legend = yz_win.addLegend()
-    legend.addItem(yz_dot, "IMU + Fusion (Pen Tip)")
-    legend.addItem(uwb_ghost, "Filtered UWB (Trail)")
-    legend.addItem(uwb_raw_trail, "Raw UWB (Trail)")
+    legend.addItem(yz_dot, "Fusion (Pen)")
+    legend.addItem(uwb_ghost, "UWB (Filtered)")
+    legend.addItem(uwb_raw_trail, "UWB (Raw)")
     
     def update():
         global _serial_buf, current_stroke, stroke_items, yz_strokes
@@ -553,56 +498,51 @@ if __name__ == "__main__":
                 if result:
                     x, y, is_drawing = result
                     
-                    # Update visualization
+                    # Update Dot
                     yz_dot.setData([x], [y])
-                    # ---- FILTERED UWB TRAIL ----
+                    
+                    # Update UWB Trails
                     if np.linalg.norm(tracker.uwb_pos) > 0.01:
-                        uwb_filt_history.append(
-                            (tracker.uwb_pos[0], tracker.uwb_pos[2])
-                        )
+                        uwb_filt_history.append((tracker.uwb_pos[0], tracker.uwb_pos[2]))
                         fx, fy = zip(*uwb_filt_history)
                         uwb_ghost.setData(fx, fy)
 
-                    # ---- RAW UWB TRAIL ----
                     if np.linalg.norm(tracker.raw_uwb_pos) > 0.01:
-                        uwb_raw_history.append(
-                            (tracker.raw_uwb_pos[0], tracker.raw_uwb_pos[2])
-                        )
+                        uwb_raw_history.append((tracker.raw_uwb_pos[0], tracker.raw_uwb_pos[2]))
                         rx, ry = zip(*uwb_raw_history)
                         uwb_raw_trail.setData(rx, ry)
 
-                    
+                    # Drawing Logic
                     if is_drawing:
-                        if not current_stroke or len(stroke_items) == 0:
+                        if not current_stroke:
                             current_stroke = []
                             yz_strokes.append(current_stroke)
-                            new_curve = pg.PlotDataItem(pen=pg.mkPen('c', width=2))
+                            new_curve = pg.PlotDataItem(pen=pg.mkPen('c', width=3))
                             yz_win.addItem(new_curve)
                             stroke_items.append(new_curve)
                         
                         current_stroke.append((x, y))
                         stroke_items[-1].setData([p[0] for p in current_stroke], [p[1] for p in current_stroke])
                         
-                        status_btn.setText("Writing")
+                        status_btn.setText("WRITING")
                         status_btn.setStyleSheet("background-color: green; color: white; font-weight: bold;")
                     else:
-                        status_btn.setText("Hovering")
-                        status_btn.setStyleSheet("background-color: #8B0000; color: white; font-weight: bold;")
+                        current_stroke = []
+                        status_btn.setText("HOVERING")
+                        status_btn.setStyleSheet("background-color: #AA0000; color: white; font-weight: bold;")
                     
-                    # Auto-follow camera
+                    # Auto Camera
                     if auto_follow_cb.isChecked():
-                        view_radius = 0.15
-                        yz_win.setXRange(x - view_radius, x + view_radius, padding=0)
-                        yz_win.setYRange(y - view_radius, y + view_radius, padding=0)
+                        yz_win.setXRange(x - 0.2, x + 0.2, padding=0)
+                        yz_win.setYRange(y - 0.2, y + 0.2, padding=0)
                     
                     info_label.setText(
-                        f"Status: {'CALIBRATING...' if tracker.is_calibrating else 'READY'}\n"
-                        f"Pos X: {x:.3f} | Y: {y:.3f}\n"
-                        f"Drawing: {is_drawing}"
+                        f"IMU: ({tracker.accel_filtered[0]:.2f}, {tracker.accel_filtered[1]:.2f})\n"
+                        f"POS: ({x:.2f}, {y:.2f})"
                     )
         
         except Exception as ex:
-            print(f"Update loop error: {ex}")
+            print(f"Error: {ex}")
     
     timer = QtCore.QTimer()
     timer.timeout.connect(update)

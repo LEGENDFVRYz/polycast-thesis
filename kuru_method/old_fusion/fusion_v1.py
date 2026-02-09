@@ -15,7 +15,7 @@ SERIAL_PORT = 'COM5'
 BAUD_RATE = 115200
 
 ANCHORS = np.array([
-    [1.22, 0.00, 0.00],
+    [0.615, 0.00, 0.00],
     [1.22, 1.22, 0.00],
     [0.00, 1.22, 0.00]
 ])
@@ -25,7 +25,7 @@ PEN_TIP_OFFSET = np.array([0.0, 0.0, 0.0])
 # System Constants
 TRAP_DT_MAX = 0.15
 IMU_SAMPLES_PER_PACKET = 5
-FORCE_ACTIVATION_THRESHOLD = 10
+FORCE_ACTIVATION_THRESHOLD = 10.1
 
 # Filter & Bias Constants
 BIAS_ALPHA = 0.01
@@ -333,6 +333,7 @@ class StrokeTracker:
                 ax, ay, az = map(float, toks[s+4:s+7])
                 force = float(toks[s+7])
                 t_us = int(toks[s+8])
+                print(force)
                 
                 result = self._process_imu_sample(qx, qy, qz, qw, ax, ay, az, force, t_us)
                 if result:
@@ -609,3 +610,10 @@ if __name__ == "__main__":
     timer.start(10)
     
     sys.exit(pg.exec())
+    
+
+# OBSERVATIONS:
+# The drawing/strokes from the fusion of UWB and IMU (named as yz_dot) seems to not follow the filtered UWB path when writing continuously.
+# The fusion output gives a decent output when drawing circles but not when doing straight lines or complex shapes.
+# When hovering, the fusion output seems to follow the filtered UWB path more closely.
+# Sample Scenario: When writing circle continuously but moving in another place, the raw and filtered UWB trails moves (changes coordinates) but the fusion output does not follow it closely. In return, the fused output lags behind the right coordinate. It will only be corrected once stopped writing and goes back to writing again (it teleports to the filtered UWB).

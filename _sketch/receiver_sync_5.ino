@@ -7,6 +7,7 @@
 #include <esp_wifi.h>
 
 #define WIFI_CHANNEL 1
+#define SERIAL_BAUD_RATE 115200
 
 // --- STRUCTS (Must Match) ---
 struct ImuSample {
@@ -23,6 +24,7 @@ struct Packet {
   ImuSample samples[5]; 
 }; 
 Packet myPacket;
+volatile bool newPacket = false;
 
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
   if (len != sizeof(Packet)) {
@@ -31,40 +33,50 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, in
   }
 
   memcpy(&myPacket, incomingData, sizeof(Packet));
-
-  // CSV Output: PKT_START, Dist0, Dist1, Dist2, [Sample 1...]
-  // Serial.print("PKT_START,");
-  Serial.print(myPacket.dist0); Serial.print(",");
-  Serial.print(myPacket.dist1); Serial.print(",");
-  Serial.print(myPacket.dist2);
-
-  for (int i = 0; i < 5; i++) {
-    Serial.print(",");
-    Serial.print(myPacket.samples[i].qx); Serial.print(",");
-    Serial.print(myPacket.samples[i].qy); Serial.print(",");
-    Serial.print(myPacket.samples[i].qz); Serial.print(",");
-    Serial.print(myPacket.samples[i].qw); Serial.print(",");
-    Serial.print(myPacket.samples[i].ax); Serial.print(",");
-    Serial.print(myPacket.samples[i].ay); Serial.print(",");
-    Serial.print(myPacket.samples[i].az); Serial.print(",");
-    Serial.print(myPacket.samples[i].force); Serial.print(",");
-    Serial.print(myPacket.samples[i].ts);
-  }
-  Serial.println();
+  newPacket = true;
 }
 
 void setup() {
-  Serial.begin(115200);
+  Serial.begin(SERIAL_BAUD_RATE);
   WiFi.mode(WIFI_STA);
   esp_wifi_set_ps(WIFI_PS_NONE);
   esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
   if (esp_now_init() != ESP_OK)
+    Serial.println("Error initializing ESP-NOW");
     delay(1000);
+    ESP.restart();
+
   esp_now_register_recv_cb(OnDataRecv);
-  Serial.println("Receiver Ready (3 Anchors).");
+  Serial.println("Receiver Ready. Waiting for packets...");
 }
 
 void loop() { 
-    delay(100);
+  if (newPacket) {
+    newPacket = false; // Reset flag
+
+    // --- CSV FORMAT OUTPUT ---
+    // Header: DIST0, DIST1, DIST2
+    Serial.print(myPacket.dist0, 3); Serial.print(",");
+    Serial.print(myPacket.dist1, 3); Serial.print(",");
+    Serial.print(myPacket.dist2, 3);
+
+    // Loop through the 5 batched IMU samples
+    for (int i = 0; i < 5; i++) {
+      Serial.print(",");
+      // Quaternions (4)
+      Serial.print(myPacket.samples[i].qx, 4); Serial.print(",");
+      Serial.print(myPacket.samples[i].qy, 4); Serial.print(",");
+      Serial.print(myPacket.samples[i].qz, 4); Serial.print(",");
+      Serial.print(myPacket.samples[i].qw, 4); Serial.print(",");
+      // Acceleration (3)
+      Serial.print(myPacket.samples[i].ax, 2); Serial.print(",");
+      Serial.print(myPacket.samples[i].ay, 2); Serial.print(",");
+      Serial.print(myPacket.samples[i].az, 2); Serial.print(",");
+      // Force & Time
+      Serial.print(myPacket.samples[i].force, 1); Serial.print(",");
+      Serial.print(myPacket.samples[i].ts);
+    }
+    Serial.println();
+  }
 }

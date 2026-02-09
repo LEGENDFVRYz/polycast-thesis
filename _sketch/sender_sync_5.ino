@@ -45,7 +45,7 @@ sh2_SensorValue_t sensorValue;
 // "Latest" variables (Sample & Hold)
 float latest_qx, latest_qy, latest_qz, latest_qw;
 float latest_ax, latest_ay, latest_az;
-float latest_d0 = -1, latest_d1 = -1, latest_d2 = -1; // Default to -1 if no signal
+float latest_d0 = 0.0, latest_d1 = 0.0, latest_d2 = 0.0; // Default to 0 if no signal
 
 // --- UWB DECODER (Extracts 3 Distances) ---
 void pollUWB() {
@@ -56,13 +56,16 @@ void pollUWB() {
   while (Serial1.available()) {
     uint8_t b = Serial1.read();
     
-    // 1. Find Header 0xAA
+    // Find Header 0xAA
     if (!started) {
       if (b == 0xAA) { started = true; idx = 0; buf[idx++] = b; }
     } else {
       buf[idx++] = b;
       
-      // 2. Wait for full packet (35 bytes based on your previous code)
+      // Prevent buffer overflow if packet is garbage
+      if (idx >= 64) { started = false; idx = 0; }
+
+      // Wait for full packet
       if (idx >= 35) {
         // Check Header match
         if (buf[1] == 0x25 && buf[2] == 0x01) {
@@ -87,7 +90,13 @@ void pollUWB() {
 
 // --- IMU READER ---
 void pollIMU() {
-  if (bno08x.getSensorEvent(&sensorValue)) {
+
+  while (bno08x.wasReset()) {
+    bno08x.enableReport(SH2_ROTATION_VECTOR, 10000);
+    bno08x.enableReport(SH2_LINEAR_ACCELERATION, 10000);
+  }
+
+  while (bno08x.getSensorEvent(&sensorValue)) {
     if (sensorValue.sensorId == SH2_ROTATION_VECTOR) {
       latest_qx = sensorValue.un.rotationVector.i;
       latest_qy = sensorValue.un.rotationVector.j;
@@ -104,14 +113,19 @@ void pollIMU() {
 
 void setup() {
   Serial.begin(115200);
+  Serial1.setRxBufferSize(1024);
   Serial1.begin(115200, SERIAL_8N1, UWB_RX, UWB_TX);
   Wire.begin();
   pinMode(FORCE_PIN, INPUT);
 
-  if (bno08x.begin_I2C(0x4A, &Wire)) {
-    bno08x.enableReport(SH2_ROTATION_VECTOR, 10000); 
-    bno08x.enableReport(SH2_LINEAR_ACCELERATION, 10000); 
+  // Retry BNO085 init
+  while (!bno08x.begin_I2C(0x4A, &Wire)) {
+    Serial.println("BNO085 not detected. Retrying...");
+    delay(100);
   }
+
+  bno08x.enableReport(SH2_ROTATION_VECTOR, 10000); 
+  bno08x.enableReport(SH2_LINEAR_ACCELERATION, 10000);
 
   WiFi.mode(WIFI_STA);
   esp_wifi_set_ps(WIFI_PS_NONE);
@@ -137,15 +151,13 @@ void loop() {
     int rawForce = analogRead(FORCE_PIN);
     float forceVal = (rawForce / 4095.0f) * 100.0f; 
 
-    myPacket.samples[sampleCounter].qx = latest_qx;
-    myPacket.samples[sampleCounter].qy = latest_qy;
-    myPacket.samples[sampleCounter].qz = latest_qz;
-    myPacket.samples[sampleCounter].qw = latest_qw;
-    myPacket.samples[sampleCounter].ax = latest_ax;
-    myPacket.samples[sampleCounter].ay = latest_ay;
-    myPacket.samples[sampleCounter].az = latest_az;
-    myPacket.samples[sampleCounter].force = forceVal;
-    myPacket.samples[sampleCounter].ts = now;
+    // Fill Buffer
+    myPacket.samples[sampleCounter] = {
+        latest_qx, latest_qy, latest_qz, latest_qw,
+        latest_ax, latest_ay, latest_az,
+        forceVal,
+        (uint32_t)now
+    };
 
     sampleCounter++;
 

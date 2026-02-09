@@ -638,6 +638,41 @@ def toggle_gallery_favorite(gallery_id):
     return redirect(request.referrer or url_for('gallery_page'))
 
 
+@app.route("/gallery/<int:gallery_id>/description", methods=['POST'])
+def update_gallery_description(gallery_id):
+    """Update the description for a gallery"""
+    
+    if "user" not in session:
+        return jsonify({"success": False, "error": "Not authenticated"}), 401
+    
+    current_user_id = session['id']
+    gallery = Gallery.query.get_or_404(gallery_id)
+
+    # Security Check
+    if gallery.admin_id != current_user_id:
+        return jsonify({"success": False, "error": "Forbidden"}), 403
+
+    try:
+        data = request.get_json()
+        new_description = data.get('description', '').strip()
+        
+        # Limit description length
+        if len(new_description) > 255:
+            new_description = new_description[:255]
+        
+        gallery.description = new_description
+        db.session.commit()
+
+        return jsonify({
+            "success": True, 
+            "description": gallery.description,
+            "message": "Description updated successfully"
+        })
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"success": False, "error": str(e)}), 500
+
 
 
 
@@ -894,8 +929,8 @@ def gallery_page():
         current_view = 'all'
         base_query = base_query.filter(Gallery.deleted_at.is_(None))
 
-    # Fetch galleries
-    admin_galleries = base_query.order_by(Gallery.name).all()
+    # Fetch galleries - favorites first, then alphabetically by name
+    admin_galleries = base_query.order_by(Gallery.is_favorite.desc(), Gallery.name).all()
 
     # Check if gallery folder exists on disk
     user_filepath = os.path.join(GALLERY_PATH, str(current_admin.id))
@@ -969,6 +1004,7 @@ def session_page(galleryname):
     return render_template(
         "gallery/session.html",
         selected_gallery=gallery.name,
+        gallery=gallery,
         sessions=sessions,
         active_view=current_view,
         is_current_user=is_current_user

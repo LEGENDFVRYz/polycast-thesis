@@ -39,11 +39,20 @@ document.addEventListener('DOMContentLoaded', function() {
     // --- Helper Functions ---
     function openModal(modal) {
         if (modal == null) return;
+        modal.classList.remove('closing');
         modal.style.display = 'flex';
     }
 
     function closeModal(modal) {
         if (modal == null) return;
-        modal.style.display = 'none';
+        
+        // Add closing class for smooth exit animation
+        modal.classList.add('closing');
+        
+        // Wait for animation to finish before hiding
+        setTimeout(() => {
+            modal.style.display = 'none';
+            modal.classList.remove('closing');
+        }, 250); // Match the CSS animation duration
     }
 });

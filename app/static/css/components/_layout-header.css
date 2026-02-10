@@ -16,7 +16,6 @@ header.app-wrapper {
         max-width: 1000px;
         margin: 0 auto;
 
-        @media (max-width: 768px) { padding: 1rem; }
         @media (max-width: 480px) { padding: 0.75rem; }
 
         a {
@@ -69,7 +68,6 @@ header.app-wrapper {
         margin: 0 auto;
         position: relative;
         
-        @media (max-width: 768px) { padding: 0 1rem; }
 
         .app-tab {
             width: 7em;
@@ -105,6 +103,66 @@ header.app-wrapper {
             transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); 
             pointer-events: none; 
             z-index: 1;
+        }
+    }
+}
+
+
+/* Table to Larger size */
+@media (min-width: 769px) {
+    header.app-wrapper {
+        flex-direction: row;
+        align-items: center;
+        justify-content: space-between;
+        height: 6em;
+
+        position: sticky;   /* Temporary, header stylings */
+        top: 0;             /* Temporary, header stylings */
+        z-index: 1;
+
+
+        /* Header Section */
+        .app-header {
+            padding: 1rem;
+        }
+        
+        /* Navigation Section */
+        .app-navigation {
+            background-color: #f0f7ff;
+            border-radius: 100rem;
+            padding: 0rem;
+            width: 25em;
+            border: 0;
+
+            position: absolute;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+
+
+            .nav-marker { display: none; }      /* hide the tab marker */
+
+            .app-tab {
+                background-color: #00000000;
+                border-radius: 100rem;
+                color: #112C75;
+                flex: 1;
+
+                &.active {
+                    background-color: #112C75;
+                    color: #FFFFFF; 
+
+                    box-shadow:
+                        inset 0 1px 0 rgba(255, 255, 255, 0.08),
+                        0 0 0 1px rgba(17, 44, 117, 0.25),
+                        0 1px 2px rgba(17, 44, 117, 0.18),
+                        0 4px 12px rgba(17, 44, 117, 0.22);
+                }
+
+                &:hover {
+                    transform: translateY(0px);
+                }
+            }
         }
     }
 }

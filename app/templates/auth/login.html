@@ -1,4 +1,4 @@
-{% extends "auth/base_admin.html" %}
+{% extends "_layouts/auth.html" %}
 
 
 {% block card_header %}
@@ -7,26 +7,12 @@
 {% endblock %}
 
 {% block card_content %}
-        <!-- 
-    This block displays flashed messages, like the success 
-    message after redirecting from a successful registration.
-    -->
-    {% with messages = get_flashed_messages(with_categories=true) %}
-        {% if messages %}
-            {% for category, message in messages %}
-                <div class="alert-{{ category }}">{{ message }}</div>
-            {% endfor %}
-        {% endif %}
-    {% endwith %}
 
-    <!-- 
-        This block displays errors from the same page load, 
-        like a password mismatch.
-    -->
+    <!-- Auth Error Block  -->
     {% if error %}
         <div class="alert-error">{{ error }}</div>
     {% endif %}
-
+    
     
     <!-- Sign In Form -->
     <form method="POST" id="signInForm">

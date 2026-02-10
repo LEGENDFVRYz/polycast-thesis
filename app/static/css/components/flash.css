@@ -1,0 +1,57 @@
+#flash-container {
+    position: fixed;  /* Fixes it to the screen */
+    top: 20px;        /* Distance from top */
+    left: 50%;        /* Center horizontally */
+    transform: translateX(-50%); /* Actually centers the container */
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 9999;    /* On top of everything */
+    width: 80%;      /* Let width adjust based on content */
+    max-width: 90%;   /* Prevent it from being too wide on mobile */
+    padding: 0 10px;  /* Small padding around the container */
+    align-items: center; /* Center messages inside container */
+}
+
+/* Individual flash message */
+.flash-message {
+    color: white;
+    padding: 15px 25px;  /* Add padding inside each message */
+    border-radius: 8px;  /* Rounded corners */
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    min-width: 200px;    /* Optional minimum width */
+    text-align: center;  /* Center text inside message */
+    animation: slideIn 0.5s ease-out; /* Slide in animation */
+}
+
+/* Fade out effect */
+.flash-message.fade-out {
+    opacity: 0;
+    transform: translateY(-20px);
+    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+}
+
+/* Styles by category */
+.flash-message.error {
+    background-color: #dc3545;
+}
+
+.flash-message.success {
+    background-color: #28a745;
+}
+
+.flash-message:not(.error):not(.success) {
+    background-color: #007aff;
+}
+
+/* Slide in animation */
+@keyframes slideIn {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

@@ -1,0 +1,17 @@
+:root {
+    /* --- Palette --- */
+    --slate-50: #F8FAFC;
+    --slate-800: #1E293B;
+    --blue-50: #EFF6FF;
+    --indigo-50: #EEF2FF;
+    --border-color: #E5E7EB;
+
+    /* --- Semantics --- */
+    --text-primary: #102E4A;
+    --text-secondary: #6B7280;
+    --primary-blue: #2E7CF6;
+    
+    /* Gradients */
+    --bg-gradient: linear-gradient(135deg, var(--slate-50) 0%, var(--blue-50) 50%, var(--indigo-50) 100%);
+    --btn-primary-grad: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+}

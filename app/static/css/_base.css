@@ -1,0 +1,86 @@
+/* Global Resets */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+
+    html {
+        height: 100%;
+    }
+    
+    body {
+        font-family: 'Poppins-M', sans-serif;
+        background: var(--bg-gradient);
+        background-attachment: fixed;
+        color: var(--slate-800);
+        line-height: 1.5;
+        height: 100%;
+        
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+    }
+}
+
+
+/* Main content Wrapper */
+.main-content {
+    padding: 1rem 1.25rem;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    width: 100%; 
+    max-width: 1000px;
+    margin: 0 auto;
+    animation: fadeInUp 0.5s ease-out forwards;
+
+    @media (max-width: 768px) {
+        padding: 1rem;
+    }
+
+    @media (max-width: 480px) {
+        padding: 0.75rem;
+    }
+}
+
+.section-title {
+    font-family: "Poppins-SB";
+    font-size: 1.1rem;
+    margin-bottom: 0.75rem;
+    color: var(--text-primary);
+}
+
+
+/* Animations */
+@keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInDown {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes modalPopIn {
+    0% { opacity: 0; transform: scale(0.9) translateY(20px); }
+    100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+@keyframes modalPopOut {
+    0% { opacity: 1; transform: scale(1) translateY(0); }
+    100% { opacity: 0; transform: scale(0.9) translateY(20px); }
+}
+
+@keyframes slideIn {
+    from { opacity: 0; transform: translateY(-20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+/* Animation Utilities */
+.animate-stagger {
+    & > *:nth-child(1) { animation-delay: 0.05s; }
+    & > *:nth-child(2) { animation-delay: 0.1s; }
+    & > *:nth-child(3) { animation-delay: 0.15s; }
+}

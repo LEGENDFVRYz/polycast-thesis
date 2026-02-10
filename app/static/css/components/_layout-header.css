@@ -1,0 +1,110 @@
+header.app-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFF 100%);
+    animation: fadeInDown 0.4s ease-out forwards;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+    /* Header Section */
+    .app-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 1.25rem 1.25rem;
+        width: 100%;
+        max-width: 1000px;
+        margin: 0 auto;
+
+        @media (max-width: 768px) { padding: 1rem; }
+        @media (max-width: 480px) { padding: 0.75rem; }
+
+        a {
+            all: unset;
+            cursor: pointer; 
+            display: flex;
+            align-items: center;
+            
+            .header-logo {
+                width: 140px;
+                object-fit: cover; 
+                filter: drop-shadow(0px 4px 2px rgba(184, 176, 176, 0.6));
+                transition: filter 0.3s ease, transform 0.3s ease;
+    
+                &:hover {
+                    filter: drop-shadow(0px 4px 2px rgba(153, 147, 147, 0.6));
+                    transform: scale(1.02);
+                }
+
+                @media (max-width: 768px) { width: 120px; }
+                @media (max-width: 480px) { width: 100px; }
+            }
+        }
+    
+        .header-profile {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+            
+            &:hover {
+                transform: scale(1.1);
+                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+            }
+
+            @media (max-width: 768px) { width: 36px; height: 36px; }
+            @media (max-width: 480px) { width: 32px; height: 32px; }
+        }
+    }
+    
+    /* Navigation Section */
+    .app-navigation {
+        display: flex;
+        justify-content: space-around;
+        padding: 0 1.25rem;
+        border-bottom: 1px solid var(--border-color);
+        width: 100%;
+        max-width: 1000px;
+        margin: 0 auto;
+        position: relative;
+        
+        @media (max-width: 768px) { padding: 0 1rem; }
+
+        .app-tab {
+            width: 7em;
+            text-align: center;
+            padding: 0.5rem 0.5rem 0.75rem;
+            font-size: 1rem;
+            color: var(--text-secondary);
+            text-decoration: none;
+            cursor: pointer;
+            position: relative;
+            transition: color 0.3s ease, transform 0.2s ease;
+            
+            &:hover {
+                color: var(--primary-blue);
+                transform: translateY(-2px);
+            }
+    
+            &.active {
+                color: var(--primary-blue); 
+            }
+
+            @media (max-width: 768px) { font-size: 0.9rem; padding: 0.4rem; width: auto; }
+            @media (max-width: 480px) { font-size: 0.85rem; padding: 0.35rem; }
+        }
+
+        .nav-marker {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            height: 4px;
+            background-color: var(--primary-blue);
+            border-radius: 99px 99px 0 0;
+            transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); 
+            pointer-events: none; 
+            z-index: 1;
+        }
+    }
+}

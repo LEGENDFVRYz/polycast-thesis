@@ -10,9 +10,9 @@
     
     body {
         font-family: 'Poppins-M', sans-serif;
-        background: var(--bg-gradient);
+        background: var(--color-background);
         background-attachment: fixed;
-        color: var(--slate-800);
+        color: var(--color-foreground);
         line-height: 1.5;
         height: 100%;
         
@@ -33,7 +33,7 @@
     width: 100%; 
     max-width: 1000px;
     margin: 0 auto;
-    animation: fadeInUp 0.5s ease-out forwards;
+    /* animation: fadeInUp 0.5s ease-out forwards; */
 
     @media (max-width: 768px) {
         padding: 1rem;

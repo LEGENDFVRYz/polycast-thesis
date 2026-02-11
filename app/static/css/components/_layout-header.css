@@ -2,9 +2,10 @@ header.app-wrapper {
     display: flex;
     flex-direction: column;
     width: 100%;
-    background: linear-gradient(180deg, #FFFFFF 0%, #FAFBFF 100%);
+    background: var(--color-background);
     animation: fadeInDown 0.4s ease-out forwards;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 1px 3px hsl(var(--color-shadow) / 0.08);
+    
 
     /* Header Section */
     .app-header {
@@ -48,8 +49,8 @@ header.app-wrapper {
             transition: transform 0.3s ease, box-shadow 0.3s ease;
             
             &:hover {
-                transform: scale(1.1);
-                box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+                transform: scale(1.05);
+                box-shadow: 0 4px 12px hsl(var(--color-shadow) / 0.15);
             }
 
             @media (max-width: 768px) { width: 36px; height: 36px; }
@@ -62,7 +63,7 @@ header.app-wrapper {
         display: flex;
         justify-content: space-around;
         padding: 0 1.25rem;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--color-border);
         width: 100%;
         max-width: 1000px;
         margin: 0 auto;
@@ -74,19 +75,19 @@ header.app-wrapper {
             text-align: center;
             padding: 0.5rem 0.5rem 0.75rem;
             font-size: 1rem;
-            color: var(--text-secondary);
+            color: var(--color-foreground);
             text-decoration: none;
             cursor: pointer;
             position: relative;
             transition: color 0.3s ease, transform 0.2s ease;
             
             &:hover {
-                color: var(--primary-blue);
+                color: var(--color-secondary);
                 transform: translateY(-2px);
             }
     
             &.active {
-                color: var(--primary-blue); 
+                color: var(--color-primary); 
             }
 
             @media (max-width: 768px) { font-size: 0.9rem; padding: 0.4rem; width: auto; }
@@ -98,7 +99,7 @@ header.app-wrapper {
             bottom: 0;
             left: 0;
             height: 4px;
-            background-color: var(--primary-blue);
+            background-color: var(--color-primary);
             border-radius: 99px 99px 0 0;
             transition: all 0.3s cubic-bezier(0.4, 0.0, 0.2, 1); 
             pointer-events: none; 
@@ -128,7 +129,7 @@ header.app-wrapper {
         
         /* Navigation Section */
         .app-navigation {
-            background-color: #f0f7ff;
+            background-color: var(--color-muted);
             border-radius: 100rem;
             padding: 0rem;
             width: 25em;
@@ -144,23 +145,24 @@ header.app-wrapper {
 
             .app-tab {
                 background-color: #00000000;
+                color: var(--color-accent-foreground);
                 border-radius: 100rem;
-                color: #112C75;
                 flex: 1;
 
+                &:hover {
+                    /* color: var(--color-accent-foreground); */
+                    transform: translateY(0px);
+                }
+
                 &.active {
-                    background-color: #112C75;
-                    color: #FFFFFF; 
+                    background-color: var(--color-primary);
+                    color: var(--color-primary-foreground-2); 
 
                     box-shadow:
                         inset 0 1px 0 rgba(255, 255, 255, 0.08),
                         0 0 0 1px rgba(17, 44, 117, 0.25),
                         0 1px 2px rgba(17, 44, 117, 0.18),
                         0 4px 12px rgba(17, 44, 117, 0.22);
-                }
-
-                &:hover {
-                    transform: translateY(0px);
                 }
             }
         }

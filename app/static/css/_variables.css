@@ -1,17 +1,50 @@
 :root {
-    /* --- Palette --- */
-    --slate-50: #F8FAFC;
-    --slate-800: #1E293B;
-    --blue-50: #EFF6FF;
-    --indigo-50: #EEF2FF;
-    --border-color: #E5E7EB;
+    /* --- Brand Color --- */
+    --blue-500:  #112C75;
+    --blue-200:  #2586F5;
+    --cyan-300:  #00C0DA;
 
-    /* --- Semantics --- */
-    --text-primary: #102E4A;
-    --text-secondary: #6B7280;
-    --primary-blue: #2E7CF6;
+    /* --- Neutral Color --- */
+    --slate-50:  #F8FAFC;
+    --slate-100: #F1F5F9;
+    --slate-200: #E2E8F0;
+    --slate-300: #CBD5E1;
+    --slate-400: #94A3B8;
+    --slate-500: #64748B;
+    --slate-600: #475569;
+    --slate-700: #334155;
+    --slate-800: #1E293B;
+    --slate-900: #111827;
     
-    /* Gradients */
-    --bg-gradient: linear-gradient(135deg, var(--slate-50) 0%, var(--blue-50) 50%, var(--indigo-50) 100%);
-    --btn-primary-grad: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+    --white-900: #C0FDFB;   /* --- good white based on primary 2 --- */
+    --white-800: #E5F8FF;   /* --- good white based on primary 1 --- */
+    --white-100: #FFFFFF;
+    
+
+
+    /* ========================= */
+    /*         Semantics         */
+    /* ========================= */
+
+    --color-primary:                var(--blue-500);
+    --color-primary-foreground:     var(--white-100);
+    --color-primary-foreground-2:   var(--white-800);
+
+    --color-secondary:              var(--blue-200);
+    --color-secondary-foreground:   var(--white-100);
+
+    --color-accent:                 var(--white-800);
+    --color-accent-foreground:      var(--cyan-300);
+
+    --color-muted:                  var(--white-800);
+    --color-muted-foreground:       var(--slate-600);
+
+
+    /* --- Surfaces --- */
+    --color-background:     var(--white-100);
+    --color-foreground:     var(--slate-600);
+    --color-shadow:         222 47% 11%;
+
+    /* --- UI Components --- */
+    --color-border:         var(--slate-200);
 }

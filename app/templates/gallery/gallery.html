@@ -5,35 +5,8 @@
 
 {% block extra_css %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/_quick-menu.css') }}">
     
-    <style>
-        /* Define the smooth "pop-in" animation */
-        @keyframes modalPopIn {
-            0% {
-                opacity: 0;
-                transform: scale(0.95) translateY(10px);
-            }
-            100% {
-                opacity: 1;
-                transform: scale(1) translateY(0);
-            }
-        }
-
-        /* Apply it to the modal content box */
-        .modal-content {
-            animation: modalPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
-        }
-
-        /* Optional: Smooth fade for the background overlay */
-        .modal-overlay {
-            animation: fadeIn 0.3s ease-out;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; }
-            to { opacity: 1; }
-        }
-    </style>
 {% endblock %}
 
 {% block content %}
@@ -70,71 +43,9 @@
             </a>
         </section>
 
-        {% if active_view == 'all' %}
-            <section class="recently-added">
-                <h2 class="section-title">Recently Added</h2>
-                <div class="recently-added__scroll-container">
-                    <div class="file-card">
-                        <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
-                        </div>
-                        <div class="fc-info">
-                            <span class="fc-name">IMG_1230</span>
-                            <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
-                            </button>
-                        </div>
-                    </div>
-                    <div class="file-card">
-                        <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
-                        </div>
-                        <div class="fc-info">
-                            <span class="fc-name">IMG_7381</span>
-                            <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
-                            </button>
-                        </div>
-                    </div>
-                    <div class="file-card">
-                        <div class="fc-preview">
-                            <image src="../static/images/icons/image1.svg">
-                        </div>
-                        <div class="fc-info">
-                            <span class="fc-name">IMG_4212</span>
-                            <button class="fc-menu-btn">
-                                <image src="../static/images/icons/dots.svg">
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            </section>
-        {% endif %}
-
-        <section class="folders">
-            <h2 class="section-title">
-                {% if active_view == 'favorites' %}
-                    Favorites
-                {% elif active_view == 'trash' %}
-                    Recover
-                {% else %}
-                    Folders
-                {% endif %}
-            </h2>
-
-            <div class="folder-list">
-                {% if folders %}  
-                    {% for folder in folders %}
-                        {{ render_folder_card(folder, active_view) }}
-                    {% endfor %}
-                {% else %}
-                    <div class="empty-state" style="text-align: center; padding: 40px; color: #6c757d; background: #f9fafb; border-radius: 12px; margin-top: 10px;">
-                        <p style="font-size: 1.1em; margin-bottom: 5px;">No items found in {{ active_view }}!</p>
-                    </div>
-                {% endif %}
-            </div>
-        </section>
-
+        <div class="content">
+            
+        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>

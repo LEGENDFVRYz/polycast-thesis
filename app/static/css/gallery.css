@@ -1,50 +1,14 @@
 
 /* --- PHASE 0 of 3: GALLERY SCOPE STYLINGS --- */
 .gallery-scope {
-    
-    /* --- Quick Actions (Icon Buttons) --- */
-    .quick-actions {
-        display: grid;
-        grid-template-columns: repeat(2, 2fr);
-        gap: 0.75rem;
-        margin-bottom: 2rem;
-        
-        .qa-button {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 0.75rem;
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    gap: 1rem;
 
-            padding: 1rem 0.5rem;
-            background-color: #ffffff;
-            border: 1px solid #000425;
-            border-radius: 1rem;
-
-            font-family: 'Poppins-M';
-            font-size: 1rem;
-            font-weight: 500;
-            cursor: pointer;
-            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-
-            color: inherit;        
-            text-decoration: none; 
-
-            &:hover {
-                background-color: #DBEEFF;
-            }
-
-            img {
-                width: 20px;
-                height: 20px;
-                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);   
-                transition: color 0.2s;
-            }
-        }
-    
-        .qa-button.active {
-            background-color: #DBEEFF;
-            border: none;
-        }
+    .content {
+        flex: 1;
+        background: red;    /* temp[orary */
     }
 
     /* --- Folders List --- */
@@ -162,13 +126,25 @@
     }
 }
 
+@media (min-width: 769px) {
+    .gallery-scope {
+        display: flex;
+        flex-direction: row;
+        
+        .content {
+            flex: 3;
+        }
+    }
+}
+
+
 
 
 /* --- PHASE 1 of 3: GALLERY --- */
 div.gallery-wrap{
-    display: flex;
-    flex-direction: column;
-    flex: 1;
+    /* display: flex; */
+    /* flex-direction: column; */
+    /* flex: 1; */
 
 
     /* --- Recents --- */

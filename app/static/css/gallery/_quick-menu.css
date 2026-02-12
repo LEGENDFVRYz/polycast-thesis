@@ -1,5 +1,5 @@
 /* --- Quick Actions (Icon Buttons) --- */
-.gallery-scope .quick-actions {
+.quick-actions {
     display: grid;
     grid-template-columns: repeat(2, 2fr);
     gap: 0.75rem;
@@ -45,7 +45,7 @@
 
 /* Table to Larger size */
 @media (min-width: 769px) {
-    .gallery-scope .quick-actions {
+    .quick-actions {
         display: flex;
         flex-direction: column;
         flex: 1;

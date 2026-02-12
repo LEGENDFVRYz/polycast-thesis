@@ -44,6 +44,21 @@
     }
 }
 
+@media (min-width: 769px) {
+    .main-content {
+        display: flex;
+        flex-direction: row;
+        gap: 1rem;
+        
+        .content {
+            flex: 3;
+        }
+    }
+}
+
+
+
+
 .section-title {
     font-family: "Poppins-SB";
     font-size: 1.1rem;

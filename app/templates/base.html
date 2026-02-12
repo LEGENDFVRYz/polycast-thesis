@@ -15,7 +15,7 @@
 
         <!-- Global Stylings -->
         <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
-        
+
         <!-- Page-specific styles will go here -->
         {% block extra_css %}{% endblock %}
     </head>
@@ -67,10 +67,12 @@
         
         <!-- Main content -->
         <main class="main-content">
-            {% block content %}
-                <!-- Page-specific content will go here -->
-                
-            {% endblock %}
+            <!-- Page-specific header variant will go here -->
+            {% block content_header %}{% endblock %}
+
+            <!-- Page-specific content will go here -->
+            {% block content %}{% endblock %}
+            
         </main>
         
 

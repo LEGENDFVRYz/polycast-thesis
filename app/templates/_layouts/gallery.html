@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+
+{# 
+    NOTE:
+    This page is a base template variant, 
+    it just have  a quick menu for all the gallery pages...
+#}
+
+{% block content_header %}
+    <section class="quick-actions">
+        <a href="{{ url_for('gallery_page', view='all') }}" 
+           class="qa-button {% if active_view == 'all' %}active{% endif %}" 
+           data-icon-btn="home">
+            <img src="{{ url_for('static', filename='images/icons/home.svg') }}">
+            <span>Home</span>
+        </a>
+        
+        <a href="{{ url_for('gallery_page', view='folders') }}" 
+           class="qa-button {% if active_view == 'folders' %}active{% endif %}" 
+           data-icon-btn="folder">
+            <img src="{{ url_for('static', filename='images/icons/folder.svg') }}"> 
+            <span>Folders</span>
+        </a>
+
+        <a href="{{ url_for('gallery_page', view='favorites') }}" 
+           class="qa-button {% if active_view == 'favorites' %}active{% endif %}" 
+           data-icon-btn="favorites">
+            <img src="{{ url_for('static', filename='images/icons/star-filled.svg') }}">
+            <span>Favorites</span>
+        </a>
+
+        <a href="{{ url_for('gallery_page', view='trash') }}" 
+           class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
+           data-icon-btn="trash">
+            <img src="{{ url_for('static', filename='images/icons/trash.svg') }}">
+            <span>Trash</span>
+        </a>
+    </section>
+{% endblock %}

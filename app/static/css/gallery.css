@@ -6,10 +6,7 @@
     flex: 1;
     gap: 1rem;
 
-    .content {
-        flex: 1;
-        background: red;    /* temp[orary */
-    }
+    background: red;    /* temp[orary */
 
     /* --- Folders List --- */
     .folders {
@@ -125,18 +122,6 @@
         }
     }
 }
-
-@media (min-width: 769px) {
-    .gallery-scope {
-        display: flex;
-        flex-direction: row;
-        
-        .content {
-            flex: 3;
-        }
-    }
-}
-
 
 
 

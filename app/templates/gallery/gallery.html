@@ -1,7 +1,7 @@
 {% from '_components/_modal.html' import modal_shell %}
 {% from "gallery/_render_folder_card.html" import render_folder_card %}
 
-{% extends "base.html" %}
+{% extends "_layouts/gallery.html" %}
 
 {% block extra_css %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
@@ -10,42 +10,11 @@
 {% endblock %}
 
 {% block content %}
-    <div class="gallery-wrap gallery-scope">
+    <div class="content gallery-wrap gallery-scope">
+        <!-- CONTENT -->
+        
 
-        <!-- Quick Actions -->
-        <section class="quick-actions">
-            <a href="{{ url_for('gallery_page', view='all') }}" 
-               class="qa-button {% if active_view == 'all' %}active{% endif %}" 
-               data-icon-btn="home">
-                <image src="{{ url_for('static', filename='images/icons/home.svg') }}">
-                <span>Home</span>
-            </a>
-            
-            <a href="{{ url_for('gallery_page', view='trash') }}" 
-               class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
-               data-icon-btn="trash">
-                <image src="{{ url_for('static', filename='images/icons/trash.svg') }}">
-                <span>Folders</span>
-            </a>
 
-            <a href="{{ url_for('gallery_page', view='favorites') }}" 
-               class="qa-button {% if active_view == 'favorites' %}active{% endif %}" 
-               data-icon-btn="favorites">
-                <image src="{{ url_for('static', filename='images/icons/star-filled.svg') }}">
-                <span>Favorites</span>
-            </a>
-
-            <a href="{{ url_for('gallery_page', view='trash') }}" 
-               class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
-               data-icon-btn="trash">
-                <image src="{{ url_for('static', filename='images/icons/trash.svg') }}">
-                <span>Trash</span>
-            </a>
-        </section>
-
-        <div class="content">
-            
-        </div>
     </div>
 
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>

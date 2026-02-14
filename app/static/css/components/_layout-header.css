@@ -41,20 +41,25 @@ header.app-wrapper {
             }
         }
     
-        .header-profile {
-            width: 40px;
-            height: 40px;
-            border-radius: 50%;
-            object-fit: cover;
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-            
-            &:hover {
-                transform: scale(1.05);
-                box-shadow: 0 4px 12px hsl(var(--color-shadow) / 0.15);
+        .right-header {
+            .header-profile {
+                width: 40px;
+                height: 40px;
+                border-radius: 50%;
+                object-fit: cover;
+                transition: transform 0.3s ease, box-shadow 0.3s ease;
+                
+                &:hover {
+                    transform: scale(1.05);
+                    box-shadow: 0 4px 12px hsl(var(--color-shadow) / 0.15);
+                }
+
+                @media (max-width: 768px) { width: 36px; height: 36px; }
+                @media (max-width: 480px) { width: 32px; height: 32px; }
             }
 
-            @media (max-width: 768px) { width: 36px; height: 36px; }
-            @media (max-width: 480px) { width: 32px; height: 32px; }
+            .profile-info { display: none;}
+            .chevron { display: none;}
         }
     }
     
@@ -125,6 +130,36 @@ header.app-wrapper {
         /* Header Section */
         .app-header {
             padding: 1rem;
+
+            .right-header {
+                display: flex;
+                flex-direction: row;
+                align-items: center;
+                gap: 0.5rem;
+
+                border: 0.0625rem solid #afafaf;
+                border-radius: 100rem; 
+                cursor: pointer;
+
+                .profile-info {
+                    display: block;
+                    max-width: 4rem;
+                    font-size: 0.75em;
+
+                    .name {
+                        font-weight: bold;
+                        white-space: nowrap;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                    }
+                }
+
+                .chevron {
+                    display: block;
+                    width: 2rem;
+                    height: 2rem;
+                }
+            }
         }
         
         /* Navigation Section */

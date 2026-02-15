@@ -1,6 +1,5 @@
-// SENDER CODE - ARDUINO NANO ESP32
-// IMU - 100 Hz
-// UWB - 20 Hz
+// RECEIVER CODE - ESP32 WROOM
+// IMU - 100 Hz | UWB - 20 Hz
 
 #include <esp_now.h>
 #include <WiFi.h>
@@ -9,7 +8,7 @@
 #define WIFI_CHANNEL 1
 #define SERIAL_BAUD_RATE 115200
 
-// --- STRUCTS (Must Match) ---
+// --- STRUCTS (Must Match Sender) ---
 struct ImuSample {
   float qx, qy, qz, qw; 
   float ax, ay, az;     
@@ -23,29 +22,34 @@ struct Packet {
   float dist2; 
   ImuSample samples[5]; 
 }; 
+
 Packet myPacket;
 volatile bool newPacket = false;
 
+// Callback function that runs when data is received
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
   if (len != sizeof(Packet)) {
-    Serial.println("Size Mismatch");
+    // Determine if we should warn about size mismatch (optional)
     return;
   }
-
   memcpy(&myPacket, incomingData, sizeof(Packet));
-  newPacket = true;
+  newPacket = true; // Signal to loop() that data is ready
 }
 
 void setup() {
   Serial.begin(SERIAL_BAUD_RATE);
+  
   WiFi.mode(WIFI_STA);
-  esp_wifi_set_ps(WIFI_PS_NONE);
+  esp_wifi_set_ps(WIFI_PS_NONE); // Disable power saving for max performance
   esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
 
-  if (esp_now_init() != ESP_OK)
+  // --- FIX APPLIED HERE: Added { } braces ---
+  if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     delay(1000);
     ESP.restart();
+  }
+  // ------------------------------------------
 
   esp_now_register_recv_cb(OnDataRecv);
   Serial.println("Receiver Ready. Waiting for packets...");
@@ -53,7 +57,7 @@ void setup() {
 
 void loop() { 
   if (newPacket) {
-    newPacket = false; // Reset flag
+    newPacket = false; // Reset flag so we don't print twice
 
     // --- CSV FORMAT OUTPUT ---
     // Header: DIST0, DIST1, DIST2
@@ -77,6 +81,6 @@ void loop() {
       Serial.print(myPacket.samples[i].force, 1); Serial.print(",");
       Serial.print(myPacket.samples[i].ts);
     }
-    Serial.println();
+    Serial.println(); // End the line
   }
 }

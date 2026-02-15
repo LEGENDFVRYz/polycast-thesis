@@ -28,17 +28,22 @@
             background-color: #DBEEFF;
         }
 
-        img {
-            width: 20px;
-            height: 20px;
-            filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);   
-            transition: color 0.2s;
+        svg.qa-icon {
+            width: 1rem;
+            height: 1rem;
+            color: var(--color-primary);
+            fill: var(--color-primary);
         }
     }
 
     .qa-button.active {
         background-color: #DBEEFF;
         border: none;
+
+        svg.qa-icon {
+            color: #DBEEFF;
+            fill: #DBEEFF;
+        }
     }
 }
 
@@ -93,9 +98,24 @@
             flex-direction: row;
             align-items: center;
             justify-content: start;
+
+            padding: 0.5em 1.5em;
+            border-radius: 0.5em;
+            color: #288bfd;
+            box-shadow: none;
             
             flex: 0;
             border: 0;
+
+            &.active {
+                background-color: var(--color-secondary);
+                color: var(--color-secondary-foreground);
+            }
+
+            svg.icon {
+                color: #f84949;
+                fill: #f84949;
+            }
         }
     }
 }

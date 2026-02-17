@@ -6,7 +6,11 @@
     flex: 1;
     gap: 1rem;
 
-    background: red;    /* temp[orary */
+    /* background: var(--color-primary-foreground-2);    temp[orary */
+    padding: 0.5rem 1em;
+    background: var(--color-background);
+    /* box-shadow: 0 6px 12.1px 0px #6eb2ff8c; */
+    border-radius: 2em;
 
     /* --- Folders List --- */
     .folders {

@@ -4,6 +4,10 @@
     --blue-200:  #2586F5;
     --cyan-300:  #00C0DA;
 
+    /* --- Brand Accents --- */
+    --accent-light: #CDE0FF;  
+    --accent-pale: #E2F0FF;   
+
     /* --- Neutral Color --- */
     --slate-50:  #F8FAFC;
     --slate-100: #F1F5F9;
@@ -15,12 +19,25 @@
     --slate-700: #334155;
     --slate-800: #1E293B;
     --slate-900: #111827;
-    
+
+    --cl-text-dark: #1F1F1F;     /* Dark Gray / Black */
+    --cl-text-medium: #6A6E83;   /* Medium Gray */
+    --cl-gray-light: #AAB8CE;    /* Light Gray */
+
+    /* Whites Color */
     --white-900: #C0FDFB;   /* --- good white based on primary 2 --- */
     --white-800: #E5F8FF;   /* --- good white based on primary 1 --- */
+    --white-200: #FDFDFD;   /* --- off white --- */
     --white-100: #FFFFFF;
-    
 
+    /* Status Color */
+    --green-100: #e8f5e9;
+    --green-500: #198754;
+
+    /* --- HSL Color Type --- */
+    --cl-shadow:    222 47% 11%;    /* used for shadows */
+    --cl-accent:    210 100% 56%;   /* used for system background */
+    
 
     /* ========================= */
     /*         Semantics         */
@@ -41,10 +58,23 @@
 
 
     /* --- Surfaces --- */
-    --color-background:     var(--white-100);
-    --color-foreground:     var(--slate-600);
-    --color-shadow:         222 47% 11%;
+    --color-background:         var(--white-100);
+    --color-background-2:       var(--white-200);
+    --color-foreground:         var(--slate-600);
+    --color-foreground-light:   var(--slate-500);
+    --color-shadow:             var(--cl-shadow);
 
     /* --- UI Components --- */
     --color-border:         var(--slate-200);
+
+    /* --- Status Color --- */
+    --green-muted:          var(--green-100);
+    --green-muted-fg:       var(--green-500);
+
+    /* --- Gradients --- */
+    --app-background-gradient: radial-gradient(
+        120.72% 84.4% at 49.99% 95.6%,
+        hsl(var(--cl-accent) / 0.15),
+        transparent 82.59%
+    );
 }

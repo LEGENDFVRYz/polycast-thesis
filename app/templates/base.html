@@ -24,6 +24,21 @@
         <!-- Icons Sprites -->
         {% include '_includes/_icons-gallery.html' %}           <!-- Temporary location, we split and preload it soon -->
 
+        <!-- Flash Message Popups -->
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div id="flash-container">
+                {% for category, message in messages %}
+                    <!-- The category (e.g., 'error') is added as a class -->
+                    <div class="flash-message {{ category }}">
+                        {{ message }}
+                    </div>
+                {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Header -->
         <header class="app-wrapper">
             <!-- Header -->
             <div class="app-header">
@@ -68,20 +83,6 @@
                 </a>
             </nav>
         </header>
-
-        <!-- Flash Message Popups -->
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                <div id="flash-container">
-                {% for category, message in messages %}
-                    <!-- The category (e.g., 'error') is added as a class -->
-                    <div class="flash-message {{ category }}">
-                        {{ message }}
-                    </div>
-                {% endfor %}
-                </div>
-            {% endif %}
-        {% endwith %}
         
         <!-- Main content -->
         <main class="main-content">
@@ -92,7 +93,67 @@
             {% block content %}{% endblock %}
             
         </main>
-        
+
+        {% include '_includes/_icons-gallery.html' %}
+
+        <!-- Footer -->
+        <footer class="site-footer">
+            <div class="footer-content-wrapper">
+                
+                <div class="footer-brand">
+                    <h3>PolyCast</h3>
+                    <p class="footer-desc">
+                        A centralized broadcasting and gallery management system for efficient content distribution.
+                    </p>
+                    <div class="system-status">
+                        <span class="status-dot"></span>
+                        <span>All Systems Operational</span>
+                    </div>
+                </div>
+
+                <div class="footer-col">
+                    <h4>Platform</h4>
+                    <ul class="footer-nav">
+                        <li><a href="{{ url_for('gallery_page') }}">Gallery View</a></li>
+                        <li><a href="{{ url_for('admin_page') }}">Admin Dashboard</a></li>
+                        <li><a href="#">Live Stream</a></li>
+                        </ul>
+                </div>
+
+                <div class="footer-col">
+                    <h4>Support</h4>
+                    <ul class="footer-nav">
+                        <li><a href="#">Documentation</a></li>
+                        <li><a href="#">API Reference</a></li>
+                        <li><a href="#">Release Notes</a></li>
+                        <li><a href="#">Report Issue</a></li>
+                    </ul>
+                </div>
+
+                <div class="footer-col">
+                    <h4>Contact</h4>
+                    <ul class="footer-nav">
+                        <li><a href="#">BSCPE 4-3 Dept.</a></li>
+                        <li><a href="mailto:admin@polycast.local">admin@polycast.local</a></li>
+                    </ul>
+                    <div style="margin-top: 15px; color: #888; font-size: 12px;">
+                        v1.0.2 <span class="badge-beta">BETA</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="footer-bottom">
+                <div class="bottom-flex">
+                    <div>
+                        &copy; <span id="year"></span> PolyCast System. All rights reserved.
+                    </div>
+                    <div class="legal-links">
+                        <a href="#">Privacy Policy</a>
+                        <a href="#">Terms of Service</a>
+                    </div>
+                </div>
+            </div>
+        </footer>
 
         <!-- Profile Menu Modal -->
         {% call modal_shell(modal_id='profileModal', modal_title='User Profile') %}

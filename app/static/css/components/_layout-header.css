@@ -4,9 +4,8 @@ header.app-wrapper {
     width: 100%;
     background: var(--color-background);
     animation: fadeInDown 0.4s ease-out forwards;
-    box-shadow: 0 1px 3px hsl(var(--color-shadow) / 0.08);
+    box-shadow: 0rem 0.05rem 0.5rem hsl(var(--color-shadow) / 0.08);
     
-
     /* Header Section */
     .app-header {
         display: flex;
@@ -130,14 +129,14 @@ header.app-wrapper {
         /* Header Section */
         .app-header {
             padding: 1rem;
-
+            
             .right-header {
                 display: flex;
                 flex-direction: row;
                 align-items: center;
                 gap: 0.5rem;
 
-                border: 0.0625rem solid #afafaf;
+                border: 0.0625rem solid var(--color-border);
                 border-radius: 100rem; 
                 cursor: pointer;
 
@@ -175,14 +174,17 @@ header.app-wrapper {
             top: 50%;
             transform: translate(-50%, -50%);
 
-
             .nav-marker { display: none; }      /* hide the tab marker */
-
+            
             .app-tab {
+                padding: 0.75em;
                 background-color: #00000000;
                 color: var(--color-accent-foreground);
                 border-radius: 100rem;
                 flex: 1;
+                
+                color: var(--color-accent-foreground);
+                font: bold;
 
                 &:hover {
                     /* color: var(--color-accent-foreground); */
@@ -191,13 +193,9 @@ header.app-wrapper {
 
                 &.active {
                     background-color: var(--color-primary);
-                    color: var(--color-primary-foreground-2); 
+                    color: var(--color-primary-foreground); 
 
-                    box-shadow:
-                        inset 0 1px 0 rgba(255, 255, 255, 0.08),
-                        0 0 0 1px rgba(17, 44, 117, 0.25),
-                        0 1px 2px rgba(17, 44, 117, 0.18),
-                        0 4px 12px rgba(17, 44, 117, 0.22);
+                    box-shadow: 0px 4px 12px 0px #6eb2ff8c;
                 }
             }
         }

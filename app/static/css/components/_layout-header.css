@@ -143,10 +143,12 @@ header.app-wrapper {
                 .profile-info {
                     display: block;
                     max-width: 4rem;
-                    font-size: 0.75em;
+                    font-size: 0.7em;
+                    color: var(--color-foreground-light);
 
                     .name {
                         font-weight: bold;
+                        color: var(--color-primary);
                         white-space: nowrap;
                         overflow: hidden;
                         text-overflow: ellipsis;
@@ -155,8 +157,9 @@ header.app-wrapper {
 
                 .chevron {
                     display: block;
-                    width: 2rem;
-                    height: 2rem;
+                    color: var(--slate-400);
+                    width: 1.75rem;
+                    height: 1.75rem;
                 }
             }
         }

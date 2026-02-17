@@ -22,6 +22,7 @@
 
     <body>
         <!-- Icons Sprites -->
+        {% include '_includes/_icons-core.html' %}
         {% include '_includes/_icons-gallery.html' %}           <!-- Temporary location, we split and preload it soon -->
 
         <!-- Flash Message Popups -->
@@ -57,15 +58,9 @@
                         <p class="role">Role</p>
                     </div>
 
-                    <!-- temporary chevron logo -->
-                    <svg viewBox="0 0 24 24"
-                        fill="none"
-                        xmlns="http://www.w3.org/2000/svg"
-                        class="chevron">
-                        <path d="M17 9.5L12 14.5L7 9.5"
-                            stroke="#000000"
-                            stroke-linecap="round"
-                            stroke-linejoin="round"/>
+                    <!-- chevron logo -->
+                    <svg class="chevron" width="28" height="28">
+                        <use href="#header-chevron"></use>
                     </svg>
                 </div>
             </div>

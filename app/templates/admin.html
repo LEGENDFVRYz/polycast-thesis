@@ -1,9 +1,9 @@
 {% from '_components/_modal.html' import modal_shell %}
 
 <!-- BASE STRUCT -->
-{% extends "base.html" %}
+{% extends "_layouts/base.html" %}
 
-{% block extra_css %}
+{% block inclusion %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
 {% endblock %}
 

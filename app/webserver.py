@@ -1103,7 +1103,7 @@ def stream_page():
         return redirect(url_for("client_page"))
         
     print("[CLIENT] Accessing /stream.")
-    return render_template("stream.html", ws_port=BROWSER_WS_PORT)
+    return render_template("stream/stream.html", ws_port=BROWSER_WS_PORT)
 
 
 @app.route("/video_feed")

@@ -1,7 +1,7 @@
-{% extends "base.html" %}
+{% extends "_layouts/base.html" %}
 
-{% block extra_css %}
-<link rel="stylesheet" href="{{ url_for('static', filename='css/gallery.css') }}">
+{% block inclusion %}
+<link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/gallery.css') }}">
 {% endblock %}
 
 {% block content %}

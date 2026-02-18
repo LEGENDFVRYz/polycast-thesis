@@ -1,9 +1,9 @@
 /* Config Stylings */
 @import url('_variables.css');
-@import url('fonts.css');
+@import url('_fonts.css');
 @import url('_animations.css');
 
-/* Layouts Stylings */
+/* Core Layouts Stylings */
 @import url('_base.css');
 @import url('components/_layout-header.css');
 

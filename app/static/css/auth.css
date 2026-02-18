@@ -1,4 +1,4 @@
-@import url('fonts.css');
+@import url('_fonts.css');
 
 /* --- Animation Keyframes --- */
 @keyframes fadeInUp {
@@ -41,9 +41,11 @@
 
 html, body {
     height: 100%;
-    font-family: 'Poppins-SB', sans-serif;
+    font-family: 'Poppins-M', sans-serif;
+    line-height: 1.5;
 }
 
+/* --- Auth Template Container--- */
 .auth-ctn {
     font-family: 'Poppins-SB', sans-serif;
     background: linear-gradient(
@@ -86,12 +88,12 @@ html, body {
             }
         }
 
-        .signin-container {
+        .auth-container {
             width: 100%;
             display: flex;
             flex: 1;
             
-            .signin-card {
+            .auth-card {
                 background-color: #ffffff;
                 border-radius: 3.5rem 3.5rem 0 0;
                 padding: 2rem;
@@ -219,226 +221,53 @@ html, body {
             }
         }
     }
-}
 
-
-
-/* 
-
-.register-ctn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-
-    .register-wrapper {
-        background-color: #ffffff;
-        padding: 2rem;
-        border-radius: 8px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-        width: 100%;
-        max-width: 400px;
-        box-sizing: border-box;
-
-        h2 {
-            text-align: center;
-            color: #333;
-            margin-top: 0;
-            margin-bottom: 1.5rem;
-        }
-
-        form {
-            br {
-                display: none;
-            }
-
-            label {
-                display: block;
-                font-weight: 600;
-                margin-bottom: 0.25rem;
-            }
-
-            input[type="text"],
-            input[type="password"] {
-                width: 100%;
-                padding: 12px;
-                border: 1px solid #ddd;
-                border-radius: 5px;
-                box-sizing: border-box;
-                font-size: 1rem;
-                margin-bottom: 1rem;
-
-                &:focus {
-                    outline: none;
-                    border-color: #007bff;
-                    box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.2);
-                }
-            }
-
-            button[type="submit"] {
-                width: 100%;
-                padding: 12px;
-                background-color: #007bff;
-                color: white;
-                border: none;
-                border-radius: 5px;
-                font-size: 1rem;
-                font-weight: 600;
-                cursor: pointer;
-                transition: background-color 0.2s ease;
-                margin-top: 0.5rem;
-
-                &:hover {
-                    background-color: #0056b3;
-                }
-            }
-        }
-
-        p {
-            text-align: center;
-            margin-top: 1.5rem;
-            color: #555;
-
-            a {
-                color: #007bff;
-                text-decoration: none;
-                font-weight: 600;
-
-                &:hover {
-                    text-decoration: underline;
-                }
-            }
-        }
+    /* Auth Component Stylings */
+    /* --- Alert Styles --- */
+    .alert-error {
+        color: #721c24;
+        background-color: #f8d7da;
+        border: 1px solid #f5c6cb;
+        padding: 0.75rem 1.25rem;
+        margin-bottom: 1rem;
+        border-radius: 0.25rem;
+        text-align: center;
     }
-} 
 
-*/
-
-
-/* --- Alert Styles --- */
-.alert-error {
-    color: #721c24;
-    background-color: #f8d7da;
-    border: 1px solid #f5c6cb;
-    padding: 0.75rem 1.25rem;
-    margin-bottom: 1rem;
-    border-radius: 0.25rem;
-    text-align: center;
-}
-
-.alert-success {
-    color: #155724;
-    background-color: #d4edda;
-    border-color: #c3e6cb;
-    padding: 0.75rem 1.25rem;
-    margin-bottom: 1rem;
-    border-radius: 0.25rem;
-    text-align: center;
-}
-
-
-/* ==========================================
-   RESPONSIVE STYLES FOR AUTH
-   ========================================== */
-
-/* Tablet (768px and below) */
-@media (max-width: 768px) {
-    .auth-ctn {
-        .auth-wrapper {
-            max-width: 100%;
-            
-            .logo-header {
-                padding: 2.5rem 1.5rem 1.5rem;
-                
-                img {
-                    width: 60%;
-                }
-            }
-            
-            .signin-container {
-                .signin-card {
-                    border-radius: 2.5rem 2.5rem 0 0;
-                    padding: 1.75rem;
-                    
-                    h2 {
-                        font-size: 1.5rem;
-                        margin-bottom: 2rem;
-                    }
-                    
-                    #signInForm {
-                        gap: 1rem;
-                        
-                        .form-group {
-                            input[type='text'],
-                            input[type='password'] {
-                                padding: 0.875rem;
-                                font-size: 0.95rem;
-                            }
-                        }
-                        
-                        .btn {
-                            padding: 0.875rem;
-                            font-size: 0.95rem;
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/* Mobile (480px and below) */
-@media (max-width: 480px) {
-    .auth-ctn {
-        .auth-wrapper {
-            .logo-header {
-                padding: 2rem 1rem 1rem;
-                
-                img {
-                    width: 55%;
-                }
-            }
-            
-            .signin-container {
-                .signin-card {
-                    border-radius: 2rem 2rem 0 0;
-                    padding: 1.5rem;
-                    
-                    h2 {
-                        font-size: 1.3rem;
-                        margin-bottom: 1.5rem;
-                    }
-                    
-                    #signInForm {
-                        gap: 0.875rem;
-                        
-                        .form-group {
-                            input[type='text'],
-                            input[type='password'] {
-                                padding: 0.75rem;
-                                font-size: 0.9rem;
-                                border-radius: 0.4rem;
-                            }
-                        }
-                        
-                        .btn {
-                            padding: 0.75rem;
-                            font-size: 0.9rem;
-                        }
-                    }
-                }
-            }
-            
-            .link-footer {
-                font-size: 0.9rem;
-                margin-top: 1rem;
-            }
-        }
-    }
-    
-    .alert-error,
     .alert-success {
-        padding: 0.6rem 1rem;
-        font-size: 0.85rem;
+        color: #155724;
+        background-color: #d4edda;
+        border-color: #c3e6cb;
+        padding: 0.75rem 1.25rem;
+        margin-bottom: 1rem;
+        border-radius: 0.25rem;
+        text-align: center;
+    }
+}
+
+
+/* === Auth Template Container (Responsiveness) === */
+
+@media (min-width: 640px) {
+    /* Small size */
+
+    .auth-ctn {
+        /* Start Here! */
+    }
+}
+
+@media (min-width: 769px) {
+    /* Medium size */
+
+    .auth-ctn {
+        /* Start Here! */
+    }
+}
+
+@media (min-width: 1024px) {
+    /* Larger size */
+    
+    .auth-ctn {
+        /* Start Here! */
     }
 }

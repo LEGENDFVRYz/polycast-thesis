@@ -3,9 +3,14 @@ header.app-wrapper {
     flex-direction: column;
     width: 100%;
     background: var(--color-background);
-    animation: fadeInDown 0.4s ease-out forwards;
     box-shadow: 0rem 0.05rem 0.5rem hsl(var(--color-shadow) / 0.08);
-    
+
+    position: sticky;   
+    top: 0;             
+    z-index: 1000;
+    transition: transform 0.3s ease;
+    transform: translateY(0); 
+
     /* Header Section */
     .app-header {
         display: flex;
@@ -110,6 +115,15 @@ header.app-wrapper {
             z-index: 1;
         }
     }
+
+    /* === STATES === */
+    &.hide {
+        transform: translateY(-100%);   /* Hide if scroll down */
+    }
+
+    &.animate-in {
+        animation: fadeInDown 0.4s ease-out;
+    }
 }
 
 
@@ -120,11 +134,6 @@ header.app-wrapper {
         align-items: center;
         justify-content: space-between;
         height: 6em;
-
-        position: sticky;   /* Temporary, header stylings */
-        top: 0;             /* Temporary, header stylings */
-        z-index: 1;
-
 
         /* Header Section */
         .app-header {

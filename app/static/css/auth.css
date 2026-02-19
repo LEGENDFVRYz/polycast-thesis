@@ -41,13 +41,15 @@
 
 html, body {
     height: 100%;
-    font-family: 'Poppins-M', sans-serif;
+    font-family: 'Poppins';
+    font-weight: 500;
     line-height: 1.5;
 }
 
 /* --- Auth Template Container--- */
 .auth-ctn {
-    font-family: 'Poppins-SB', sans-serif;
+    font-family: 'Poppins', sans-serif;
+    font-weight: 600;
     background: linear-gradient(
         90deg,       /* 180deg = top to bottom */
         #0D1720 0%,   /* start color */
@@ -162,7 +164,8 @@ html, body {
                     }
 
                     .signin-button {
-                        font-family: 'Poppins-SB';
+                        font-family: 'Poppins';
+                        font-weight: 600;
                         background-color: #1a2c47;
                         color: white;
                         padding: 1rem;

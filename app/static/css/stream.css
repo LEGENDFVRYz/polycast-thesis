@@ -43,9 +43,9 @@
         animation: fadeInUp 0.4s ease-out forwards;
 
         .header-title {
-            font-family: 'Poppins-M';
+            font-family: 'Poppins';
+            font-weight: 600;
             font-size: 1.25rem;
-            font-weight: 700;
             color: #1E293B;
             display: flex;
             align-items: center;
@@ -73,7 +73,8 @@
         
             #status-state {
                 color: #6366F1;
-                font-family: 'Poppins-SB';
+                font-family: 'Poppins';
+                font-weight: 600;
             }
             
             &:hover {

@@ -9,7 +9,8 @@
     }
     
     body {
-        font-family: 'Poppins-M', sans-serif;
+        font-family: 'Poppins';
+        font-weight: 500;
         /* background: var(--color-background); */
         background-attachment: fixed;
         color: var(--color-foreground);
@@ -49,7 +50,8 @@
     }
 
     .section-title {
-        font-family: "Poppins-SB";
+        font-family: "Poppins";
+        font-weight: 600;
         font-size: 1.1rem;
         margin-bottom: 0.75rem;
         color: var(--text-primary);

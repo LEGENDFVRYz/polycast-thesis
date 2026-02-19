@@ -72,7 +72,8 @@
                     overflow: hidden;
 
                     .item-title {
-                        font-family: "Poppins-SB";
+                        font-family: "Poppins";
+                        font-weight: 600;
                         font-size: 1rem;
                         color: #102E4A;
                         white-space: nowrap; 
@@ -83,7 +84,8 @@
                     }
 
                     .item-subtitle {
-                        font-family: "Poppins-M";
+                        font-family: "Poppins";
+                        font-weight: 500;
                         font-size: 0.875rem;
                         color: #102E4A;
                     }
@@ -374,7 +376,8 @@ div.session-wrap{
                 .specifics {
 
                     .detail-value {
-                        font-family: "Poppins-M";
+                        font-family: "Poppins";
+                        font-weight: 500;
                         width: 100%;
                     }
 

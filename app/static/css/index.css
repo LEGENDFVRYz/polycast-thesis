@@ -37,14 +37,14 @@
         position: sticky;
         top: 0;
         
-        background-image: var(--app-background-gradient);
+        background-image: url(../images/hero-banner.webp);
         background-size: cover;
         background-position: center;
 
         .landing-banner-content {
             font-family: 'Poppins', sans-serif;
             max-width: 850px;
-            padding: 10rem 1rem;
+            padding: 6rem 1rem;
             
             h1 {
                 color: var(--color-primary);

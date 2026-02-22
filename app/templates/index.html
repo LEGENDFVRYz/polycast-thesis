@@ -1,83 +1,59 @@
-{% from '_components/_footer.html' import layout_footer %}
-{% from '_components/_header.html' import layout_header %}
+{% extends "_layouts/landing.html" %}
 
-<!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PolyCast - Welcome</title>
+{# 
+    Landing Page (root):
+    - Note: this page is the root page (web static)
+    - Default route of the system for information and quick guides
+#}
+{% block inclusion %}
+    <title>PolyCast - Welcome</title>
+{% endblock %}
 
-        <!-- Global and Local Stylings -->
-        <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
-        <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">
-    </head>
 
-    <body class="auth">
-        <!-- Icons Sprites -->
-        {% include '_includes/_icons-core.html' %}
 
-        <!-- Header -->
-        {{ layout_header('index') }}
+{# --- Landing Banner Header --- #}
+{% block landing_header %}
+    <h1>Write once, capture forever.</h1>
+    <h2>Empowering classrooms to teach and learn with confidence</h2>
+{% endblock %}
 
-        <div class="landing-container">
-            <div class="landing-banner">
-                <div class="landing-banner-content">
-                    <h1>Write once, capture forever.</h1>
-                    <h2>Empowering classrooms to teach and learn with confidence</h2>
-                </div>
+{# --- Landing Banner Content --- #}
+{% block landing_content %}
+    <div class="content-block">
+        <div class="text-side">
+            <div class="content-block-info">
+                <h1>Creative solutions for your brand.</h1>
+                <p>
+                    Build a stunning presence with our modern toolkit. 
+                    We focus on clean aesthetics and high-performance 
+                    layouts that capture attention instantly.
+                </p>
             </div>
-
-            <!-- Landing Buffer for page hero and content -->
-            <svg class="landing-buffer" viewBox="0 0 1920 283" xmlns="http://www.w3.org/2000/svg">
-                <path d="M0 67v261.605h1920V67.278c-295.77 81.995-619.79 127.221-959.5 127.221C620.407 194.499 296.039 149.171 0 67Z"/>
-            </svg>
-
-            <section class="landing-content-section">
-                <div class="content-block">
-                    <div class="text-side">
-                        <div class="content-block-info">
-                            <h1>Creative solutions for your brand.</h1>
-                            <p>
-                                Build a stunning presence with our modern toolkit. 
-                                We focus on clean aesthetics and high-performance 
-                                layouts that capture attention instantly.
-                            </p>
-                        </div>
-                    </div>
-
-                    <div class="visual-side">
-                        <div class="illustration-placeholder">
-                            [ Illustration / Image ]
-                        </div>
-                    </div>
-                </div>
-
-                <div class="content-block">
-                    <div class="visual-side">
-                        <div class="illustration-placeholder">
-                            [ Illustration / Image ]
-                        </div>
-                    </div>
-    
-                    <div class="text-side">
-                        <div class="content-block-info">
-                            <h1>Creative solutions for your brand.</h1>
-                            <p>
-                                Build a stunning presence with our modern toolkit. 
-                                We focus on clean aesthetics and high-performance 
-                                layouts that capture attention instantly.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </section>
         </div>
 
-        <!-- Footer -->
-        {{ layout_footer() }}
-    </body>
+        <div class="visual-side">
+            <div class="illustration-placeholder">
+                [ Illustration / Image ]
+            </div>
+        </div>
+    </div>
 
-    <!-- HIDING LAYOUT HEADER -->
-    <script src="{{ url_for('static', filename='js/header.js') }}"></script>
-</html>
+    <div class="content-block">
+        <div class="visual-side">
+            <div class="illustration-placeholder">
+                [ Illustration / Image ]
+            </div>
+        </div>
+
+        <div class="text-side">
+            <div class="content-block-info">
+                <h1>Creative solutions for your brand.</h1>
+                <p>
+                    Build a stunning presence with our modern toolkit. 
+                    We focus on clean aesthetics and high-performance 
+                    layouts that capture attention instantly.
+                </p>
+            </div>
+        </div>
+    </div>
+{% endblock %}

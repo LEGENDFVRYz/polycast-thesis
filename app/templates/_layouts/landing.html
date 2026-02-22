@@ -1,0 +1,50 @@
+{% from '_components/_footer.html' import layout_footer %}
+{% from '_components/_header.html' import layout_header %}
+
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+        <!-- Global and Local Stylings -->
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
+        <link rel="stylesheet" href="{{ url_for('static', filename='css/index.css') }}">
+
+        <!-- Page-specific styles will go here -->
+        {% block inclusion %}{% endblock %}
+    </head>
+
+    <body class="auth">
+        <!-- Icons Sprites -->
+        {% include '_includes/_icons-core.html' %}
+
+        <!-- Header -->
+        {{ layout_header('index') }}
+
+        <div class="landing-container">
+            <div class="landing-banner">
+                <div class="landing-banner-content">
+                    <!-- Page-specific landing header will go here -->
+                    {% block landing_header %}{% endblock %}
+                </div>
+            </div>
+
+            <!-- Landing Buffer for page hero and content -->
+            <svg class="landing-buffer" viewBox="0 0 1920 283" xmlns="http://www.w3.org/2000/svg">
+                <path d="M0 67v261.605h1920V67.278c-295.77 81.995-619.79 127.221-959.5 127.221C620.407 194.499 296.039 149.171 0 67Z"/>
+            </svg>
+
+            <section class="landing-content-section">
+                <!-- Page-specific landing conteont will go here -->
+                {% block landing_content %}{% endblock %}
+            </section>
+        </div>
+
+        <!-- Footer -->
+        {{ layout_footer() }}
+    </body>
+
+    <!-- HIDING LAYOUT HEADER -->
+    <script src="{{ url_for('static', filename='js/header.js') }}"></script>
+</html>

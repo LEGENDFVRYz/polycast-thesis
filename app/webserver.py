@@ -72,6 +72,18 @@ def index():
     is_setup = admin_status.get_field("hosting_active")
     return render_template("index.html", is_setup=is_setup)
 
+@app.route("/about")
+def about_page():
+    is_setup = admin_status.get_field("hosting_active")
+    return render_template("web/about.html", is_setup=is_setup)
+
+@app.route("/privacy-policy")
+def privacy_page():
+    return render_template("web/privacy.html")
+
+@app.route("/terms-and-conditions")
+def terms_page():
+    return render_template("web/conditions.html")
 
 
 @app.route("/admin")

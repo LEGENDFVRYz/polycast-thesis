@@ -1,39 +1,69 @@
 <!-- Header -->
-<header class="app-wrapper">
-    <!-- Header -->
-    <div class="app-header">
-        <a href="{{ url_for('index') }}">
-            <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
-        </a>
-        <div class="right-header">
-            <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
-                alt="Profile Picture" 
-                class="header-profile"
-                id="profileBtn"
-                data-modal-target="#profileModal"
-                style="cursor: pointer;">
-            <div class="profile-info">
-                <p class="name">Dummy Name</p>
-                <p class="role">Role</p>
-            </div>
+<!-- 
+    NOTE (header type):
+    - "index" means the landing page template layout
+    - "base" means the standard layout for operations
+-->
 
-            <!-- chevron logo -->
-            <svg class="chevron" width="28" height="28">
-                <use href="#header-chevron"></use>
-            </svg>
+{% macro layout_header(template_type='base') %}
+
+    <header class="app-wrapper">
+        <!-- Header -->
+        <div class="app-header">
+            <a href="{{ url_for('index') }}">
+                <img class='header-logo' src="../../static/images/icons/polycast-blue.svg">
+            </a>
+
+            {% if template_type == 'base' %}
+                <div class="right-header base">
+                    <img src="{{ url_for('static', filename='images/icons/' ~ ('admin-icon.svg' if is_admin else 'guest-icon.svg')) }}" 
+                        alt="Profile Picture" 
+                        class="header-profile"
+                        id="profileBtn"
+                        data-modal-target="#profileModal"
+                        style="cursor: pointer;">
+                    <div class="profile-info">
+                        <p class="name">Dummy Name</p>
+                        <p class="role">Role</p>
+                    </div>
+
+                    <!-- chevron logo -->
+                    <svg class="chevron" width="28" height="28">
+                        <use href="#header-chevron"></use>
+                    </svg>
+                </div>
+            {% endif %}
+            
+            {% if template_type == 'index' %}
+                <div class="right-header index">
+                    <a href='#' class='about-us'>
+                        About Us
+                    </a>
+
+                    <a href="{{ url_for('client_page') }}" class='client'>
+                        Client
+                        <svg class="header-btn-arrow" width="20" height="20">
+                            <use href="#arrow-forward"></use>
+                        </svg>
+                    </a>
+                </div>
+            {% endif %}
         </div>
-    </div>
-
-    <!-- Navigation Tabs -->
-    <nav class="app-navigation">
-        <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
-        href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
-            Stream
-        </a>
         
-        <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
-        href="{{ url_for('gallery_page') }}">
-            Gallery
-        </a>
-    </nav>
-</header>
+        {% if template_type == 'base' %}
+            <!-- Navigation Tabs -->
+            <nav class="app-navigation">
+                <a class="app-tab {% if request.endpoint in ['client_page', 'stream_page', 'admin_page'] %}active{% endif %}"
+                href="{{ url_for('admin_page') if is_admin else url_for('stream_page') }}">
+                    Stream
+                </a>
+                
+                <a class="app-tab {% if request.endpoint in ['gallery_page', 'session_page', 'folderview_page'] %}active{% endif %}"
+                href="{{ url_for('gallery_page') }}">
+                    Gallery
+                </a>
+            </nav>
+        {% endif %}
+    </header>
+
+{% endmacro %}

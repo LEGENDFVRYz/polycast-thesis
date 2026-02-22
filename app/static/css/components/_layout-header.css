@@ -45,7 +45,7 @@ header.app-wrapper {
             }
         }
     
-        .right-header {
+        .right-header.base {
             .header-profile {
                 width: 40px;
                 height: 40px;
@@ -64,6 +64,56 @@ header.app-wrapper {
 
             .profile-info { display: none;}
             .chevron { display: none;}
+        }
+
+        .right-header.index {
+            display: flex;
+            border: none;
+            font-size: 0.85rem;
+            gap: 0.25em;
+
+            @media (min-width: 480px) { font-size: 0.90rem; gap: 0.5em; }
+
+            a.about-us {
+                padding: 0.5em 1em;
+                border-radius: 100em;
+                color: var(--color-primary);
+                font-weight: 600;
+
+                &:hover {
+                    background-color: var(--color-muted);
+                }
+            }
+
+            a.client {
+                background-color: var(--color-primary);
+                color: var(--color-primary-foreground);
+                font-size: 0.85rem;
+                font-weight: 500;
+                letter-spacing: 0.05rem;
+                padding: 0.5em 1em;
+                border-radius: 100em;
+                cursor: pointer;
+
+                display: flex;
+                align-items: center;
+                gap: 0.25rem;
+
+                @media (min-width: 480px) { 
+                    padding: 0.75em 1.25em;
+                    font-size: 0.90rem;
+                    font-weight: 600; 
+                }
+
+                .header-btn-arrow {
+                    fill: var(--color-primary-foreground);
+                }
+
+                &:hover {
+                    background-color: var(--color-secondary);
+                }
+            }
+            
         }
     }
     
@@ -139,7 +189,7 @@ header.app-wrapper {
         .app-header {
             padding: 1rem;
             
-            .right-header {
+            .right-header.base {
                 display: flex;
                 flex-direction: row;
                 align-items: center;
@@ -148,6 +198,12 @@ header.app-wrapper {
                 border: 0.0625rem solid var(--color-border);
                 border-radius: 100rem; 
                 cursor: pointer;
+                
+                &:hover {
+                    .header-profile {
+                        transform: scale(1.05);
+                    }
+                }
 
                 .profile-info {
                     display: block;
@@ -170,6 +226,28 @@ header.app-wrapper {
                     width: 1.75rem;
                     height: 1.75rem;
                 }
+            }
+
+            .right-header.index {
+                display: flex;
+                border: none;
+                font-size: 1rem;
+                gap: 1.5em;
+
+                a.about-us {
+                    padding: 0.75em 1.5em;
+                    border-radius: 100em;
+                }
+
+                a.client {
+                    background-color: var(--color-primary);
+                    color: var(--color-primary-foreground);
+                    font-size: 1rem;
+                    padding: 0.5em 1.5em;
+
+                    gap: 0.5rem;
+                }
+                
             }
         }
         

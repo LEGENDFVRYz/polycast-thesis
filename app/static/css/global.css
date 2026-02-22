@@ -6,6 +6,7 @@
 /* Core Layouts Stylings */
 @import url('_base.css');
 @import url('components/_layout-header.css');
+@import url('components/_layout-footer.css');
 
 /* Components Stylings */
 @import url('components/buttons.css');

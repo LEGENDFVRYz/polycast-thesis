@@ -1,3 +1,6 @@
+{% from '_components/_footer.html' import layout_footer %}
+{% from '_components/_header.html' import layout_header %}
+
 <!DOCTYPE html>
 <html lang="en">
     <head>
@@ -11,8 +14,11 @@
     </head>
 
     <body class="auth">
+        <!-- Icons Sprites -->
+        {% include '_includes/_icons-core.html' %}
+
         <!-- Header -->
-        {% include '_components/_header.html' %}
+        {{ layout_header('index') }}
 
         <div class="landing-container">
             <div class="landing-banner">
@@ -67,6 +73,9 @@
                 </div>
             </section>
         </div>
+
+        <!-- Footer -->
+        {{ layout_footer() }}
     </body>
 
     <!-- HIDING LAYOUT HEADER -->

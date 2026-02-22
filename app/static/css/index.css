@@ -19,8 +19,6 @@
 .landing-container {
     display: flex;
     flex-direction: column;
-    align-items: center;
-    justify-content: space-between;
     background-color: var(--color-background);
     color: var(--color-foreground);
     text-align: center;
@@ -38,8 +36,9 @@
         top: 0;
         
         background-image: url(../images/hero-banner.webp);
-        background-size: cover;
-        background-position: center;
+        background-size: 275%;
+        background-position: bottom;
+        background-repeat: no-repeat;
 
         .landing-banner-content {
             font-family: 'Poppins', sans-serif;
@@ -49,19 +48,21 @@
             h1 {
                 color: var(--color-primary);
                 
-                font-size: 5rem;
+                font-size: 3.5rem;
                 font-weight: 700;
                 line-height: 110%;
                 letter-spacing: 0.1rem;
+                text-align: start;
             }
 
             h2 {
                 padding-top: 2rem;
                 color: var(--color-secondary);
                 
-                font-size: 1.5rem;
+                font-size: 1.25rem;
                 font-weight: 500;
                 letter-spacing: 0.1rem;
+                text-align: start;
             }
         }
     }
@@ -88,6 +89,7 @@
 
         .content-block {
             display: flex;
+            flex-direction: column;
             align-items: center;
             gap: 2.5rem;
 
@@ -136,6 +138,164 @@
                     color: #777;
                     font-family: monospace;
                     font-size: 1.2rem;
+                }
+            }
+        }
+    }
+}
+
+/* Small size */
+@media (min-width: 640px) {
+    .landing-container {
+        text-align: center;
+
+        .landing-banner {
+            background-size: 200%;
+            background-position: bottom;
+            background-repeat: no-repeat;
+
+            .landing-banner-content {     
+                max-width: 650px;
+                
+                h1 {
+                    font-size: 4rem;
+                    text-align: center;
+                }
+
+                h2 {
+                    padding-top: 1.5rem;
+                    
+                    font-size: 1.5rem;
+                    text-align: center;
+                }
+            }
+        }
+    }
+}
+
+/* Medium size */
+@media (min-width: 769px) { 
+    .landing-container {
+        text-align: center;
+
+        .landing-banner {
+            background-size: 160%;
+            background-position: bottom;
+            background-repeat: no-repeat;
+
+            .landing-banner-content {
+                max-width: 750px;             
+
+                h1 {
+                    font-size: 5rem;
+                }
+
+                h2 {
+                    margin: 0 auto;
+                    width: 80%;
+                    padding-top: 2rem;
+                }
+            }
+        }
+    }
+}
+
+/* Large size */
+@media (min-width: 1024px) {
+    .landing-container {
+        text-align: center;
+
+        .landing-banner {
+            background-size: cover;
+            background-position: center;
+
+            .landing-banner-content {
+                max-width: 850px;
+                padding: 6rem 1rem;
+                
+                h1 {
+                    font-size: 5rem;
+                }
+
+                h2 {
+                    width: 100%;
+                    padding-top: 2rem;
+                    font-size: 1.5rem;
+                }
+            }
+        }
+
+        .landing-buffer {
+            fill: var(--color-background);
+            filter: drop-shadow(0px -5px 32px rgba(132, 144, 255, 0.38));   /* temporary */
+            z-index: 100;
+        }
+
+        section.landing-content-section {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            gap: 15rem;
+
+            padding: 5rem 0;
+
+            background: var(--color-background);
+            width: 100vw;
+            /* min-height: 90vh; */
+            z-index: 100;
+
+
+            .content-block {
+                display: flex;
+                align-items: center;
+                gap: 2.5rem;
+
+                width: 100%;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 1rem;
+        
+                .text-side {
+                    flex: 1;
+
+                    .content-block-info {
+                        max-width: 500px;
+            
+                        h1 {
+                            font-family: sans-serif;
+                            font-size: 3rem;
+                            color: #222;
+                            margin: 0 0 16px 0;
+                            line-height: 1.2;
+                        }
+            
+                        p {
+                            font-family: sans-serif;
+                            font-size: 1.125rem;
+                            color: #555;
+                            margin: 0;
+                            line-height: 1.6;
+                        }
+                    }
+                }
+        
+                .visual-side {
+                    flex: 1;
+
+                    /* Gives the visual half a distinct background to easily visualize the split */    
+                    .illustration-placeholder {
+                        display: flex;
+                        flex: 1;
+                        align-items: center;
+                        justify-content: center;
+                        height: 60vh;
+                        background-color: #e0e0e0;
+                        border: 2px dashed #b0b0b0;
+                        border-radius: 12px;
+                        color: #777;
+                        font-family: monospace;
+                        font-size: 1.2rem;
+                    }
                 }
             }
         }

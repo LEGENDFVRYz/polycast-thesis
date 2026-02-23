@@ -7,6 +7,7 @@
 #}
 {% block inclusion %}
     <title>PolyCast - About Us</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/web/about.css') }}">
 {% endblock %}
 
 
@@ -19,5 +20,30 @@
 
 {# --- Landing Banner Content --- #}
 {% block landing_content %}
+    {# 
+        Warning all of the div inside this block should start with "content-block"
+        - meaning all design should have a parent div class named "content-block"
+        - check the example below
+    #}
+    <div class="content-block --about">
+        <div class="placeholder">
+            Place Holder
+        </div>
+    </div>
 
+    <div class="content-block --about">
+        {# 
+            You can design your frontend freely inside the content block:
+            - Note: the placeholder div below is just an example
+            - Note: You can remove the placeholder and create your own div
+        #}
+
+        <div class="placeholder">
+            Place Holder
+        </div>
+
+        <div class="placeholder">
+            Place Holder
+        </div>
+    </div>
 {% endblock %}

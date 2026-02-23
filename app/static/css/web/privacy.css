@@ -1,0 +1,49 @@
+section.landing-content {
+    div.content-block.--privacy {
+        /* 
+            Start your stylings here...
+        */
+        
+        /* display: none !important; */
+    }
+
+}
+
+/* Small size */
+@media (min-width: 640px) {
+    section.landing-content {
+        div.content-block.--privacy {
+            /* 
+                Start your stylings here...
+            */
+            
+            /* background-color: red; */
+        }
+    }
+}
+
+/* Medium size */
+@media (min-width: 769px) { 
+    section.landing-content {
+        div.content-block.--privacy {
+            /* 
+                Start your stylings here...
+            */
+            
+            /* background-color: red; */
+        }
+    }
+}
+
+/* Large size */
+@media (min-width: 1024px) {
+    section.landing-content {
+        div.content-block.--privacy {
+            /* 
+                Start your stylings here...
+            */
+            
+            /* background-color: red; */
+        }
+    }
+}

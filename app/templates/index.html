@@ -19,41 +19,31 @@
 
 {# --- Landing Banner Content --- #}
 {% block landing_content %}
+    {# 
+        Warning all of the div inside this block should start with "content-block"
+        - meaning all design should have a parent div class named "content-block"
+        - check the example below
+    #}
     <div class="content-block">
-        <div class="text-side">
-            <div class="content-block-info">
-                <h1>Creative solutions for your brand.</h1>
-                <p>
-                    Build a stunning presence with our modern toolkit. 
-                    We focus on clean aesthetics and high-performance 
-                    layouts that capture attention instantly.
-                </p>
-            </div>
-        </div>
-
-        <div class="visual-side">
-            <div class="illustration-placeholder">
-                [ Illustration / Image ]
-            </div>
+        <div class="placeholder">
+            Place Holder
         </div>
     </div>
 
     <div class="content-block">
-        <div class="visual-side">
-            <div class="illustration-placeholder">
-                [ Illustration / Image ]
-            </div>
+        {# 
+            You can design your frontend freely inside the content block:
+            - Note: the placeholder div below is just an example
+            - Note: You can remove the placeholder and create your own div
+        #}
+
+        <div class="placeholder">
+            Place Holder
         </div>
 
-        <div class="text-side">
-            <div class="content-block-info">
-                <h1>Creative solutions for your brand.</h1>
-                <p>
-                    Build a stunning presence with our modern toolkit. 
-                    We focus on clean aesthetics and high-performance 
-                    layouts that capture attention instantly.
-                </p>
-            </div>
+        <div class="placeholder">
+            Place Holder
         </div>
     </div>
+
 {% endblock %}

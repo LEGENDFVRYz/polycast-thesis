@@ -32,21 +32,19 @@
     }
 }
 
-
-/* Global Resets */
+/* --- Global Resets & Font --- */
 * {
     box-sizing: border-box;
     margin: 0;
     padding: 0;
-
-    body.auth {
-        margin: 0;
-        overflow-x: hidden;
-        font-family: 'Poppins';
-        font-weight: 500;
-    }
 }
 
+html, body {
+    height: 100%;
+    font-family: 'Poppins';
+    font-weight: 500;
+    line-height: 1.5;
+}
 
 /* --- Auth Template Container--- */
 .auth-ctn {

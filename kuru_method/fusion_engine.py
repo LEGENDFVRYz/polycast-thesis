@@ -7,7 +7,7 @@ class FusionEngine:
         # We treat the wall as X (width) and Y (height). 
         # Z is depth (distance from wall).
         self.anchors = np.array([
-            [0.615, 0.00, 0.00], 
+            [1.23, 0.00, 0.00], 
             [1.23, 1.23, 0.00], 
             [0.00, 1.23, 0.00]
         ])

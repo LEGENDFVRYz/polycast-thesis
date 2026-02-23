@@ -130,31 +130,31 @@ def admin_configure():
     )
     print(f"[ADMIN] {admin_name} is configuring with Port: {selected_port}...")
     
-    try:
-        # 2. UPDATE CONFIG
-        prototype_config.SERIAL_PORT = selected_port
+    # try:
+    #     # 2. UPDATE CONFIG
+    #     prototype_config.SERIAL_PORT = selected_port
         
-        # 3. ATTEMPT TO START THREAD
-        # The PrototypeManager will now initialize the Serial Thread using the port we just set
-        result = thread_manager.start()
+    #     # 3. ATTEMPT TO START THREAD
+    #     # The PrototypeManager will now initialize the Serial Thread using the port we just set
+    #     result = thread_manager.start()
         
-        if result:
-            print("[PROTO] Serial thread started successfully")
-        else:
-            print("[PROTO] Thread was already running")
+    #     if result:
+    #         print("[PROTO] Serial thread started successfully")
+    #     else:
+    #         print("[PROTO] Thread was already running")
 
-        # 4. SUCCESS
-        admin_status._update_state(
-            status="CONFIGURED",
-        )
-        print(f"[ADMIN] {admin_name} finished configuration.")
-        flash(f"Connected to device on {selected_port}!", "success")
+    # 4. SUCCESS
+    admin_status._update_state(
+        status="CONFIGURED",
+    )
+    print(f"[ADMIN] {admin_name} finished configuration.")
+    flash(f"Connected to device on {selected_port}!", "success")
 
-    except Exception as e:
-        # 5. FAILURE
-        print(f"[ADMIN] Configuration failed: {e}")
-        admin_status._update_state(status="IDLE")
-        flash(f"Failed to open Serial Port {selected_port}. Error: {e}", "error")
+    # except Exception as e:
+    #     # 5. FAILURE
+    #     print(f"[ADMIN] Configuration failed: {e}")
+    #     admin_status._update_state(status="IDLE")
+    #     flash(f"Failed to open Serial Port {selected_port}. Error: {e}", "error")
 
     return redirect(url_for("admin_page"))
 
@@ -167,7 +167,8 @@ def scan_ports_route():
         return jsonify({'success': False, 'message': 'User not authenticated'}), 401
     
     # Use the helper method we added to your config.py earlier
-    ports = prototype_config.list_serial_ports()
+    # ports = prototype_config.list_serial_ports()
+    ports = ["COM3", "COM4", "COM5"]  # Placeholder for actual port scanning logic
     
     if ports:
         # Return the list of found ports (e.g., ["COM3", "COM4"])

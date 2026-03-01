@@ -1,49 +1,98 @@
-section.landing-content {
+    section.landing-content div.content-block.--conditions {
+        display: flex;
+        text-align:start;
+        gap: 6em;
+        font-family: "Archivo", sans-serif;
+        color: #444444;
+        padding: 1em 3em;
 
-    div.content-block.--conditions {
-        /* 
-            Start your stylings here...
-        */
-        
-        /* display: none; */
-    }
-}
-
-/* Small size */
-@media (min-width: 640px) {
-    section.landing-content {
-        div.content-block.--conditions {
-            /* 
-                Start your stylings here...
-            */
+        .terms-intro {
+            font-size: 20px;
+            text-align:left;
             
-            /* background-color: red; */
+            span {
+                font-weight: 700;
+            }
+        }
+
+        .terms-list {
+            display: flex;
+            flex-direction: column;
+            gap: 4em;
+        }
+
+        .terms-block {
+            display: flex;
+            flex-direction: column;
+            width: 100%;
+            gap: 1em;
+
+            span.terms-title {
+                color: #0D1720;
+                font-size: 24px;
+                font-weight: 600;
+            }
+
+            .terms-details {
+                display: flex;
+                flex-direction: column;
+                gap: 1em;
+                
+                ul.user-roles {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 1em;
+                    padding-left: 1.5rem;
+
+                    li.roles-list {
+                        span {
+                            font-weight: 700;
+                        }
+
+                        ul.user-responsibilities {
+                            padding: 1em 0em 0em 1.5em;
+                        }
+                    }
+                }
+            }
         }
     }
-}
 
-/* Medium size */
-@media (min-width: 769px) { 
-    section.landing-content {
-        div.content-block.--conditions {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
+    /* Small size */
+    @media (min-width: 640px) {
+        section.landing-content {
+            div.content-block.--conditions {
+                /* 
+                    Start your stylings here...
+                */
+                
+                /* background-color: red; */
+            }
         }
     }
-}
 
-/* Large size */
-@media (min-width: 1024px) {
-    section.landing-content {
-        div.content-block.--conditions {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
+    /* Medium size */
+    @media (min-width: 769px) { 
+        section.landing-content {
+            div.content-block.--conditions {
+                /* 
+                    Start your stylings here...
+                */
+                
+                /* background-color: red; */
+            }
         }
     }
-}
+
+    /* Large size */
+    @media (min-width: 1024px) {
+        section.landing-content {
+            div.content-block.--conditions {
+                /* 
+                    Start your stylings here...
+                */
+                
+                /* background-color: red; */
+            }
+        }
+    }

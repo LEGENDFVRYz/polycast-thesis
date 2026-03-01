@@ -1,7 +1,7 @@
 {% extends "_layouts/landing.html" %}
 
 {# 
-    Terms of Condition Page (root):
+    Terms of Service Page (root):
     - Note: this page is a web static
     - Page dedicated to learn our rules and scopes
 #}
@@ -14,7 +14,7 @@
 
 {# --- Landing Banner Header --- #}
 {% block landing_header %}
-    <h1>Terms and Conditions</h1>
+    <h1>Terms Of Service</h1>
     <h2>By accessing this website, you agree to comply with these terms.</h2>
 {% endblock %}
 
@@ -26,24 +26,93 @@
         - check the example below
     #}
     <div class="content-block --conditions">
-        <div class="placeholder">
-            Place Holder
+        <div class="terms-intro">
+            These <span>Terms of Service</span> govern your access to and use of the PolyCast web platform and its associated hardware system. 
+            This platform is an academic research prototype developed by undergraduate Computer Engineering students at the Polytechnic 
+            University of the Philippines – Manila.
+            <br/><br/>
+            By accessing or using the PolyCast platform—whether as a registered Class Administrator or a Guest Student—you agree to be 
+            bound by these Terms.
         </div>
-    </div>
-
-    <div class="content-block --conditions">
-        {# 
-            You can design your frontend freely inside the content block:
-            - Note: the placeholder div below is just an example
-            - Note: You can remove the placeholder and create your own div
-        #}
-
-        <div class="placeholder">
-            Place Holder
-        </div>
-
-        <div class="placeholder">
-            Place Holder
+        <div class="terms-list">
+            <div class="terms-block">
+                <span class="terms-title">
+                    Description of Service
+                </span>
+                <div class="terms-details collected-info">
+                    <div>
+                        PolyCast provides an assistive digital archiving platform designed to capture, organize, and store whiteboard notes 
+                        generated during face-to-face classroom instruction. The service relies on synchronized hardware (a sensor-equipped 
+                        marker) and a web database to translate physical writing into downloadable digital formats.
+                    </div>
+                </div>
+            </div>
+            <div class="terms-block">
+                <span class="terms-title">
+                    User Roles and Responsibilities
+                </span>
+                <div class="terms-details info-use">
+                    <div>
+                        The platform accommodates two distinct types of users, each with specific responsibilities:
+                    </div>
+                    <ul class="user-roles">
+                        <li class="roles-list">
+                            <span>Class Administrators (Account Security):</span> 
+                            Admins (instructors, class presidents, or designated representatives) 
+                            are responsible for maintaining the confidentiality of their login credentials.
+                            <ul class="user-responsibilities">
+                                <li>
+                                    <span>Content Management:</span>
+                                    Admins are solely responsible for configuring the digital workspace accurately (e.g., naming Subject and 
+                                    Session folders) and managing the generated archives.
+                                </li>
+                                <li>
+                                    <span>Appropriate Use:</span> 
+                                    Admins agree to initiate live streams only for educational, instructional, or relevant academic purposes.
+                                </li>
+                            </ul>
+                        </li>
+                        <li class="roles-list">
+                            <span>Students or Guest Users (Access):</span> 
+                                Students are granted guest access to view live streams, browse the gallery, and download note sequences.
+                            <ul class="user-responsibilities">
+                                <li>
+                                    <span>Appropriate Use:</span> 
+                                    Guests agree to use the platform and the downloaded notes strictly for personal study and academic 
+                                    reference. Users must not attempt to disrupt the platform's functionality or access unauthorized 
+                                    administrative directories.
+                                </li>
+                            </ul>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+            <div class="terms-block">
+                <span class="terms-title">
+                    Intellectual Property and Content Ownership
+                </span>
+                <div class="terms-details data-security">
+                    <div>
+                        The PolyCast platform, its underlying code, database architecture, and hardware design are the intellectual property 
+                        of the research team. However, the actual academic content (the notes, diagrams, and lectures) captured during a 
+                        session remains the intellectual property of the respective instructors or the academic institution. PolyCast simply 
+                        acts as the medium for capturing and storing this instructional content.
+                    </div>
+                </div>
+            </div>
+            <div class="terms-block">
+                <span class="terms-title">
+                    Limitation of Liability
+                </span>
+                <div class="terms-details info-sharing">
+                    <div>
+                        To the maximum extent permitted by applicable law, the PolyCast research team and the Polytechnic University of the 
+                        Philippines – Manila shall not be held liable for any direct, indirect, incidental, or consequential damages resulting 
+                        from the use or inability to use the system. This includes, but is not limited to, the loss of digital notes, academic 
+                        data, or study materials due to hardware malfunction or server errors.
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 {% endblock %}

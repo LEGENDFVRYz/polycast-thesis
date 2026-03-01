@@ -1,11 +1,387 @@
-section.landing-content {
+section.landing-content div.content-block.--about {
+    font-family: "Archivo", sans-serif;
+    display: flex;
+    flex-direction: column;
+    gap: 6em;
+    padding: 1em 3em;
+    color: #000000;
 
-    div.content-block.--about {
-        /* 
-            Start your stylings here...
-        */
+    .about-header {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2.5em;
+        font-size: 22px;
+        font-weight: 700;
+        font-style: italic;
+        line-height: 1.0;
         
-        /* display: none; */
+        .title-quote {
+            display: flex;
+            flex-direction: column;
+            gap: 1em;
+
+            img {
+                width: 100%;
+                height: 200px;
+                filter: drop-shadow(0px 4px 2px rgba(0, 0, 0, 0.4));
+            }
+
+            p {
+                text-align: center;
+                margin-top: -1.5em;
+            }
+        }
+
+        div:last-child {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+            overflow: hidden;
+            
+            &::before {
+                content: "";
+                position: absolute;
+                top: 0;
+                left: -10%; 
+                right: -10%;
+                bottom: 0;
+                z-index: -1;
+
+                background-image: 
+                    radial-gradient(circle at 72% 25%, rgba(0, 194, 224, 1) 20%, transparent 20%), 
+                    radial-gradient(circle at 25% 60%, rgba(46, 124, 246, 1) 13%, transparent 13%), 
+                    radial-gradient(circle at 65% 75%, rgba(240, 180, 41, 1) 9%, transparent 9%);
+                
+                background-repeat: no-repeat;
+            }
+        }
+
+        img {
+            width: 100%;
+            min-width: 320px;
+            max-width: 600px;
+            height: auto;
+            align-self: center;
+        }
+
+        span {
+            color: #0084FF;
+        }
+    }
+
+    .about-details {
+        display: flex;
+        flex-direction: column;
+        gap: 2.5em;
+
+        span.about-title {
+            font-family: "Poppins", sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: #000425;
+            border: 1px solid #000425;
+            border-radius: 4em;
+            width: fit-content;
+            padding: 0.5em 2em;
+        }
+
+        .about-info {
+            font-size: 24px;
+            font-weight: 100;
+            line-height: 1.3;
+            
+            span {
+                font-weight: 600;
+            }
+        }
+    }
+
+    .about-technology {
+        display: flex;
+        flex-direction: column;
+        gap: 3em;
+
+        .tech-image {
+            width: 100%;
+            height: 100%;
+            border-radius: 1em;
+            overflow: hidden;
+
+            img {
+                width: 100%;
+                height: 100%;
+                object-fit: cover;
+                object-position: center;
+                display: block;
+            }
+        }
+
+        .tech-details {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5em;
+
+            span.tech-title {
+                font-family: "Poppins", sans-serif;
+                font-size: 12px;
+                font-weight: 600;
+                color: #000425;
+                border: 1px solid #000425;
+                border-radius: 4em;
+                width: fit-content;
+                padding: 0.5em 2em;
+            }
+
+            .tech-info {
+                display: flex;
+                flex-direction: column;
+                text-align: center;
+                gap: 1.5em;
+
+                .main-info {
+                    font-size: 24px;
+                    font-weight: 400;
+                    line-height: 1.3;
+
+                    span {
+                        font-weight: 700;
+                    }
+                }
+
+                .sub-info {
+                    font-size: 16px;
+                    font-weight: 300;
+                    color: #3D3D3D;
+                }
+            }
+        }
+    }
+
+    .about-objectives {
+        display: flex;
+        flex-direction: column;
+        gap: 2.5em;
+        border: 1px solid #8F8F8F;
+        border-radius: 1em;
+        padding: 2em;
+        
+        .obj-header {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5em;
+
+            span.obj-title {
+                font-family: "Poppins", sans-serif;
+                font-size: 12px;
+                font-weight: 600;
+                color: #000425;
+                border: 1px solid #000425;
+                border-radius: 4em;
+                width: fit-content;
+                padding: 0.5em 2em;
+            }
+
+            .sub-info {
+                font-size: 16px;
+                font-weight: 300;
+                font-style: italic;
+                color: #000000;
+            }
+        }
+        
+        .obj-info {
+            font-size: 22px;
+            font-weight: 300;
+            line-height: 1.3;
+
+            span {
+                font-weight: 700;
+            }
+        }
+    }
+
+    .about-system {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        font-size: 16px;
+        gap: 3em;
+
+        .sys-title {
+            font-size: 36px;
+            font-weight: 700;
+            line-height: 1.0;
+
+            span {
+                color: #0084FF;
+            }
+        }
+
+        .sys-content {
+            display: flex;
+            flex-direction: column;
+            gap: 2em;
+
+                .sys-intro {
+                font-size: 20px;
+                font-weight: 500;
+                font-style: italic;
+                line-height: 1.3;
+
+                span {
+                    font-weight: 700;
+                    color: #2E7CF6;
+                }
+            }
+
+            .admin-block, .student-block {
+                display: flex;
+                flex-direction: column;
+                gap: 1.5em; 
+
+                .admin-main, .student-main {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2em;
+                    padding: 2em;
+                    color: #F6F9FF;
+                    background-color: #2E7CF6;
+                    border-radius: 1em;
+
+                    .admin-header, .student-header {
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        font-size: 22px;
+                        font-weight: 800;
+                        text-align: start;
+                        line-height: 1.1;
+
+                        img {
+                            width: 60px;
+                            height: 60px;
+                        }
+
+                        span {
+                            font-style: italic;
+                            font-weight: 700;
+                        }
+                    }
+
+                    .admin-role, .student-role {
+                        font-size: 18px;
+                        font-weight: 400;
+                        text-align: start;
+                    }
+                }
+
+
+                .admin-sub, .student-sub {
+                    display: flex;
+                    flex-direction: column;
+                    font-size: 16px;
+                    font-weight: 300;
+                    padding: 2em;
+                    background-color: #E6EEFF;
+                    border-radius: 1em;
+
+                    span {
+                        font-weight: 600;
+                    }
+                }
+
+                .admin-sub {
+                    margin-left: calc(-50vw + 50%); 
+                    padding-left: calc(50vw - 50% + 2em); 
+                    border-top-left-radius: 0;
+                    border-bottom-left-radius: 0;
+                }
+
+                .student-sub {
+                    margin-right: calc(-50vw + 50%);
+                    padding-right: calc(50vw - 50% + 2em); 
+                    border-top-right-radius: 0;
+                    border-bottom-right-radius: 0;
+                }
+            }
+        }
+    }
+
+    .about-researchers {
+        display: flex;
+        flex-direction: column;
+        gap: 3em;
+        font-size: 16px;
+        font-weight: 400;
+
+        .team-title {
+            font-size: 36px;
+            font-weight: 700;
+            line-height: 1.0;
+
+            span {
+                font-weight: 700;
+                color: #0084FF;
+            }
+        }
+
+        .team-members {
+            display: flex;
+            flex-direction: column;
+            gap: 1.5em;
+            width: 100%;
+
+            .two-members {
+                display: flex;
+                gap: 1.5em;
+                flex: 1;
+                min-height: 0;
+                
+                .member {
+                    position: relative;
+                    flex: 1;
+                    aspect-ratio: 3/5;
+                    border-radius: 1em;
+                    overflow: hidden;
+                    box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+
+                    img {
+                        width: 100%;
+                        height: 100%;
+                        object-fit: cover;
+                        object-position: center;
+                        display: block;
+                    }
+
+                    .member-info {
+                        position: absolute;
+                        bottom: 0;
+                        left: 0;
+                        width: 100%;
+                        padding: 20px;
+                        background: linear-gradient(to top, rgba(0,0,0,0.8), transparent);
+                        color: white;
+                        box-sizing: border-box;
+                        text-align: start;
+                        line-height: 1.3;
+                        
+                        h3 {
+                            margin: 0;
+                            font-size: 1.2em;
+                            font-weight: bold;
+                        }
+    
+                        p {
+                            font-size: 1em;
+                            opacity: 0.9;
+                            font-style: italic;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -13,11 +389,16 @@ section.landing-content {
 @media (min-width: 640px) {
     section.landing-content {
         div.content-block.--about {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
+            .about-header {
+                .title-quote {
+                    gap: 2.5em;
+                }
+            }
+            .about-details {
+                .about-info {
+                    padding: 0em 3em;
+                }
+            }
         }
     }
 }
@@ -26,11 +407,65 @@ section.landing-content {
 @media (min-width: 769px) { 
     section.landing-content {
         div.content-block.--about {
-            /* 
-                Start your stylings here...
-            */
+            .about-header {
+                flex-direction: row;
+                gap: 2em;
+                
+                .title-quote {
+                    gap: 1em;
+                    margin-bottom: 1em;
+                
+                    p {
+                        text-align: left;
+                        padding-left: 2em;
+                    }
+                }
+            }
+
+            .about-details {
+                .about-info {
+                    padding: 0em 5em;
+                }
+            }
+
+            .about-technology {
+               /* flex-direction: row;
+               align-items: center; 
+                
+                .tech-image {
+                    flex: 1;
+                }
+
+                .tech-details {
+                    flex: 1;
+                    justify-content: center;
+                    text-align: left;
+
+                    .tech-info {
+                        text-align: left;
+                    }
+                } */
+            }
             
-            /* background-color: red; */
+            .about-objectives {
+                flex-direction: row;
+                align-items: center;
+                gap: 6em;
+
+                .obj-header {
+                    text-align: left;
+                }
+
+                .obj-info {
+                    text-align: right;
+                }
+            }
+
+            .about-researchers {
+                .team-members {
+                    flex-direction: row;
+                }
+            }
         }
     }
 }
@@ -39,11 +474,75 @@ section.landing-content {
 @media (min-width: 1024px) {
     section.landing-content {
         div.content-block.--about {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
+            .about-header {
+                .title-quote {
+                    gap: 2em;
+                }
+            }
+
+            .about-technology {
+               flex-direction: row;
+               align-items: center; 
+                
+                .tech-image {
+                    flex: 1;
+                }
+
+                .tech-details {
+                    flex: 1;
+                    justify-content: center;
+                    text-align: left;
+
+                    .tech-info {
+                        text-align: left;
+                    }
+                }
+            }
+
+            .about-details {
+                .about-info {
+                    padding: 0em 8em;
+                }
+            }
+
+            .about-system {
+                
+                .sys-content {
+                    flex-direction: row;
+                    align-items: stretch;
+
+                    div:nth-child(3) {
+                        margin-left: -1em; 
+                    }
+
+                    .sys-intro {
+                        text-align: left;
+                        padding-top: 2.5em;
+                    }
+
+                    .admin-block, .student-block {
+                        gap: 1em;
+                    }
+
+                    .student-block {
+                        flex-direction: column-reverse;
+                        text-align: left;
+                        
+                        .student-main {
+                            flex: 1;
+                            justify-content: center;
+                        }
+                    }
+
+                    .admin-block {
+                        text-align: left;
+
+                        .admin-sub {
+                            padding-left: calc(50vw - 95% + 2em);
+                        }
+                    }
+                }
+            }
         }
     }
 }

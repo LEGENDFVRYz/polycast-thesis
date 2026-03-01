@@ -85,6 +85,7 @@
         width: 100vw;
         /* min-height: 90vh; */
         z-index: 100;
+        overflow-x: hidden;
 
 
         .content-block {

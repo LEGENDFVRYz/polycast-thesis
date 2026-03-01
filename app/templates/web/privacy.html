@@ -26,24 +26,80 @@
         - check the example below
     #}
     <div class="content-block --privacy">
-        <div class="placeholder">
-            Place Holder
+        <div class="policy-intro">
+            This <span>Privacy Policy</span> outlines how the PolyCast research team ("we," "our," or "the system") collects, uses, and protects information 
+            when you use our website and its associated hardware. As an academic thesis project developed at the Polytechnic University of the 
+            Philippines – Manila, we are committed to ensuring your privacy and operating with complete transparency.
         </div>
-    </div>
-
-    <div class="content-block --privacy">
-        {# 
-            You can design your frontend freely inside the content block:
-            - Note: the placeholder div below is just an example
-            - Note: You can remove the placeholder and create your own div
-        #}
-
-        <div class="placeholder">
-            Place Holder
-        </div>
-
-        <div class="placeholder">
-            Place Holder
+        <div class="policy-list">
+            <div class="policy-block">
+                <span class="policy-title">
+                    Information We Collect
+                </span>
+                <div class="policy-details collected-info">
+                    <div>
+                        The PolyCast system collects only the minimum amount of data necessary to facilitate the digital archiving of classroom notes. 
+                        The data collected depends entirely on how you interact with the platform:
+                    </div>
+                    <div>
+                        <span> Class Administrators (Registered Users): </span> 
+                        To configure subject directories and initiate live streams, designated class 
+                        representatives or instructors must create an account. We collect basic login credentials, such as a username and password.
+                    </div>
+                    <div>
+                        <span> Students (Guest Users): </span>
+                        The platform is designed for frictionless student access. We do not collect any personally identifiable 
+                        information (PII) from students. Guest users are not required to create an account, provide an email, or submit any personal 
+                        data to view the live streams, navigate the gallery, or download note sequences.
+                    </div>
+                    <div>
+                        <span> Hardware & System Data: </span>
+                        The physical PolyCast marker transmits motion and spatial positioning data (via its IMU and UWB sensors) 
+                        directly to the web platform to generate the digital notes. This is purely operational data used to reconstruct whiteboard 
+                        writing and contains no personal information.
+                    </div>
+                </div>
+            </div>
+            <div class="policy-block">
+                <span class="policy-title">
+                    How We Use the Information
+                </span>
+                <div class="policy-details info-use">
+                    <div>
+                        The information processed by the PolyCast platform is used strictly for operational and academic purposes:
+                    </div>
+                    <ul>
+                        <li>To authenticate Class Administrators and grant them access to their designated subject and session folders in the database.</li>
+                        <li>To allow Admins to manage, delete, and recover digital note archives.</li>
+                        <li>To facilitate synchronization between the hardware marker device and the web application.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="policy-block">
+                <span class="policy-title">
+                    Data Storage and Security
+                </span>
+                <div class="policy-details data-security">
+                    <div>
+                        All administrative credentials and generated digital notes are stored securely within our project database. Class Administrators 
+                        maintain full control over the content generated during their sessions and have the active ability to delete or recover subject 
+                        folders. Because this is an ongoing academic research project, data is retained only for the duration necessary to complete the 
+                        testing, evaluation, and defense phases of the study.
+                    </div>
+                </div>
+            </div>
+            <div class="policy-block">
+                <span class="policy-title">
+                    Information Sharing and Disclosure
+                </span>
+                <div class="policy-details info-sharing">
+                    <div>
+                        PolyCast is an independent academic initiative. We do not sell, trade, or otherwise transfer any user data or generated classroom 
+                        notes to outside commercial parties. Access to the stored digital notes is restricted to the specific class environment managed 
+                        by the logged-in Administrator and the guest students provided with the platform link.
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 {% endblock %}

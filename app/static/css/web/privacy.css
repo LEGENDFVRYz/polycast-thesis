@@ -1,49 +1,80 @@
-section.landing-content {
-    div.content-block.--privacy {
-        /* 
-            Start your stylings here...
-        */
-        
-        /* display: none !important; */
+@import "../_variables.css";
+
+section.landing-content div.content-block.--privacy {
+    display: flex;
+    text-align:start;
+    gap: 6em;
+    font-family: "Archivo", sans-serif;
+    color: #444444;
+    padding: 1em 3em;
+    
+    .policy-intro {
+        font-size: 20px;
+        text-align:left;
+
+        span {
+            font-weight: 700;
+        }
     }
 
+    .policy-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4em;
+    }
+    
+    .policy-block {
+        display: flex;
+        flex-direction: column;
+        width: 100%;
+        gap: 1em;
+
+        span.policy-title {
+            color: #0D1720;
+            font-size: 24px;
+            font-weight: 600;
+        }
+
+        .policy-details {
+            display: flex;
+            flex-direction: column;
+            gap: 1em;
+
+            span {
+                font-weight: 700;
+            }
+
+            ul {
+                padding-left: 1.5rem;
+            }
+        }
+    }
 }
 
 /* Small size */
 @media (min-width: 640px) {
-    section.landing-content {
-        div.content-block.--privacy {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
-        }
+    section.landing-content div.content-block.--privacy {
     }
 }
 
 /* Medium size */
 @media (min-width: 769px) { 
-    section.landing-content {
-        div.content-block.--privacy {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
-        }
+    section.landing-content div.content-block.--privacy {
+        /* 
+            Start your stylings here...
+        */
+        
+        /* background-color: red; */
     }
 }
 
 /* Large size */
 @media (min-width: 1024px) {
-    section.landing-content {
-        div.content-block.--privacy {
-            /* 
-                Start your stylings here...
-            */
-            
-            /* background-color: red; */
-        }
+    section.landing-content div.content-block.--privacy {
+        /* 
+            Start your stylings here...
+        */
+        
+        /* background-color: red; */
     }
 }

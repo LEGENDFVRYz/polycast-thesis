@@ -54,6 +54,7 @@ void IMUTask(void *parameter) {
     for(;;) {
         if (processIMU(&ready_packet)) {
             esp_now_send(receiverMAC, (uint8_t *) &ready_packet, sizeof(PacketIMU));
+            // Serial.println("[IMU] Sent Payload");
         }
         
         // CRITICAL: A 1-millisecond yield. 
@@ -65,7 +66,12 @@ void IMUTask(void *parameter) {
 // ---- MAIN SETUP ----
 void setup() {
     Serial.begin(115200);
-    while (!Serial) { delay(10); }
+    
+    uint32_t serial_timeout = millis();
+    while (!Serial && (millis() - serial_timeout < 2000)) { 
+        delay(10); 
+    }
+    
     Serial.println("--- Booting Dual-Core Transmitter ---");
     
     initUWBConfig();
@@ -102,7 +108,7 @@ void loop() {
         uwb_packet.ts = micros();
 
         esp_now_send(receiverMAC, (uint8_t *)&uwb_packet, sizeof(PacketUWB));
-        
+        Serial.println("[UWB] Sent Payload");
     } else {
         Serial.println("[UWB] Network lost. Hunting...");
     }

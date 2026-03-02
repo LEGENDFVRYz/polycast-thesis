@@ -200,7 +200,10 @@ bool runUWBCycle(int* out_distances) {
 
     if (rxResponseMask > 0) {
         is_synced = true;
-        uint64_t target_final_ts = pollTx_ts + 306708480ULL; 
+        
+        // >>> THE TURNAROUND FIX <<<
+        // Changed from 6500us to 5200us for faster anchor TX scheduling
+        uint64_t target_final_ts = pollTx_ts + 332069120ULL;
         uint32_t delayed_tx_time = (uint32_t)(target_final_ts >> 8);
         
         my_final_msg.mac.seqNum = tx_poll_msg[2] + 1; 
@@ -217,11 +220,14 @@ bool runUWBCycle(int* out_distances) {
         if(tx_status == DWT_SUCCESS) {
             uint32_t final_tx_start = micros();
             while (!(dwt_read32bitreg(SYS_STATUS_ID) & (1UL<<7))) { 
-                if (micros() - final_tx_start > 5000) break; 
+                // >>> FAILSAFE BUMP <<<
+                // Increased to 10000us so the ESP32 doesn't timeout while waiting for the 6500us TX slot
+                if (micros() - final_tx_start > 10000) break; 
             }; 
             dwt_write32bitreg(SYS_STATUS_ID, 0xFFFFFFFF); 
         }
 
+        // TDMA Sleep Calculation
         uint32_t elapsed_ms = millis() - superframe_start_ms;
         int32_t sleep_time_ms = 100 - elapsed_ms;
         if (latest_slot_corr != 0) sleep_time_ms += latest_slot_corr;

@@ -7,7 +7,7 @@ from data_stream import DataStream
 # --- CONFIGURATION ---
 SERIAL_PORT = 'COM5'
 BAUD_RATE = 115200
-DATASET_FILENAME = 'datasets/abcde_letters.csv' # Leave empty "" for live mode, or provide path to CSV dataset
+DATASET_FILENAME = 'datasets/big_rectangle.csv' # Leave empty "" for live mode, or provide path to CSV dataset
 
 # Expected hardware timing
 EXPECTED_IMU_HZ = 100
@@ -24,8 +24,10 @@ class ValidatorDashboard:
         
         # --- GLOBAL STATISTICS (Tracks the entire session) ---
         self.total_packets = 0
+        self.dropped_packets = 0
         self.first_ts = None
         self.last_ts = None
+        self.last_packet_start_ts = None
         
         self.all_dt_ms = []
         self.max_spike_ms = 0.0
@@ -35,7 +37,6 @@ class ValidatorDashboard:
         self.max_stale_count = 0
         self.last_uwb_raw = None
 
-        self.last_imu_ts = None
         self.playback_finished = False
         
         # --- ROLLING BUFFERS (For the live plots) ---
@@ -84,31 +85,44 @@ class ValidatorDashboard:
     def process_packet(self, packet):
         self.total_packets += 1
         
-        # 1. IMU Timing Extraction
-        for i in range(5):
-            current_ts = packet['imu'][i]['ts']
+        # --- 1. Inter-Packet Sync (ESP-NOW Packet Loss) ---
+        current_packet_start_ts = packet['imu'][0]['ts']
+        
+        if self.first_ts is None:
+            self.first_ts = current_packet_start_ts
+        self.last_ts = packet['imu'][4]['ts'] # Track the very last sample of the packet
+        
+        if self.last_packet_start_ts is not None:
+            packet_dt_us = current_packet_start_ts - self.last_packet_start_ts
+            packet_dt_ms = packet_dt_us / 1000.0
             
-            if self.first_ts is None:
-                self.first_ts = current_ts
-            self.last_ts = current_ts
-            
-            if self.last_imu_ts is not None:
-                dt_us = current_ts - self.last_imu_ts
-                dt_ms = dt_us / 1000.0
-                
-                # Update Stats
-                self.all_dt_ms.append(dt_ms)
-                if dt_ms > self.max_spike_ms:
-                    self.max_spike_ms = dt_ms
-                    
-                # Update Buffer
-                self.plot_dt_ms.append(dt_ms)
-                if len(self.plot_dt_ms) > MAX_SAMPLES:
-                    self.plot_dt_ms.pop(0)
-                    
-            self.last_imu_ts = current_ts
+            # Expected is ~50ms. If significantly larger, we dropped a packet in the air
+            if packet_dt_ms > 75.0: 
+                dropped_this_cycle = int(round(packet_dt_ms / 50.0)) - 1
+                if dropped_this_cycle > 0:
+                    self.dropped_packets += dropped_this_cycle
 
-        # 2. UWB Staleness Extraction
+        self.last_packet_start_ts = current_packet_start_ts
+
+        # --- 2. Intra-Packet Sync (IMU Timing & Jitter) ---
+        for i in range(1, 5): # Compare sample n to n-1 strictly within the batch
+            current_ts = packet['imu'][i]['ts']
+            prev_ts = packet['imu'][i-1]['ts']
+            
+            dt_us = current_ts - prev_ts
+            dt_ms = dt_us / 1000.0
+            
+            # Update Stats
+            self.all_dt_ms.append(dt_ms)
+            if dt_ms > self.max_spike_ms:
+                self.max_spike_ms = dt_ms
+                
+            # Update Buffer
+            self.plot_dt_ms.append(dt_ms)
+            if len(self.plot_dt_ms) > MAX_SAMPLES:
+                self.plot_dt_ms.pop(0)
+
+        # --- 3. UWB Staleness Extraction ---
         current_uwb_raw = packet['uwb_raw']
         is_updated = 1
         
@@ -130,7 +144,7 @@ class ValidatorDashboard:
             self.plot_uwb_timeline.pop(0)
 
     def update_plot(self, frame):
-        # --- NEW: Freeze the plot if the file is completely read ---
+        # Freeze the plot if the file is completely read
         if self.playback_finished:
             return self.line_dt, self.line_uwb
 
@@ -164,16 +178,19 @@ class ValidatorDashboard:
             mean_dt = np.mean(self.all_dt_ms)
             jitter = np.std(self.all_dt_ms)
             
-            total_time_us = self.last_ts - self.first_ts
-            expected_packets = total_time_us / PACKET_DURATION_US if total_time_us > 0 else 1
-            pdr = min((self.total_packets / expected_packets) * 100, 100.0)
+            # Exact PDR calculation based on detected drops
+            total_attempted_packets = self.total_packets + self.dropped_packets
+            pdr = (self.total_packets / total_attempted_packets) * 100 if total_attempted_packets > 0 else 100.0
             
             uwb_rate = (self.total_uwb_updates / self.total_packets) * 100
             max_blind_ms = self.max_stale_count * (PACKET_DURATION_US / 1000.0)
             
-            stats_str = (f"Pkts: {self.total_packets} | PDR: {pdr:.1f}% | "
+            # Dynamic warning flag
+            uwb_status = "⚠️ LOS LOST" if self.max_stale_count >= 4 else "OK"
+            
+            stats_str = (f"Pkts: {self.total_packets} | Drops: {self.dropped_packets} | PDR: {pdr:.1f}% | "
                          f"Mean Δt: {mean_dt:.2f}ms | Jitter: ±{jitter:.2f}ms | Max Spike: {self.max_spike_ms:.1f}ms\n"
-                         f"UWB Refresh Rate: {uwb_rate:.1f}% | Max Blind Spot: {max_blind_ms:.1f}ms ({self.max_stale_count} pkts)")
+                         f"UWB Refresh Rate: {uwb_rate:.1f}% | Max Blind Spot: {max_blind_ms:.1f}ms ({self.max_stale_count} pkts) [{uwb_status}]")
             self.stats_text.set_text(stats_str)
 
         # --- UPDATE PLOTS ---
@@ -203,6 +220,43 @@ class ValidatorDashboard:
         self.ax3.fill_between(x_data, self.plot_uwb_timeline, color='yellow', step='pre', alpha=0.3)
 
         return self.line_dt, self.line_uwb
+    
+    def print_final_summary(self):
+            """Prints a cleanly formatted summary of the session to the console."""
+            print("\n" + "="*50)
+            print(" FINAL HARDWARE DIAGNOSTICS SUMMARY")
+            print("="*50)
+            
+            if self.total_packets == 0:
+                print("No data was processed.")
+                print("="*50 + "\n")
+                return
+
+            # Calculate final stats
+            mean_dt = np.mean(self.all_dt_ms) if self.all_dt_ms else 0.0
+            jitter = np.std(self.all_dt_ms) if self.all_dt_ms else 0.0
+            
+            total_attempted = self.total_packets + self.dropped_packets
+            pdr = (self.total_packets / total_attempted) * 100 if total_attempted > 0 else 100.0
+            
+            uwb_rate = (self.total_uwb_updates / self.total_packets) * 100
+            max_blind_ms = self.max_stale_count * (PACKET_DURATION_US / 1000.0)
+            uwb_status = "⚠️ LOS LOST" if self.max_stale_count >= 4 else "✅ OK"
+
+            # Print formatted output
+            print(f"Total Packets Received : {self.total_packets}")
+            print(f"Total Packets Dropped  : {self.dropped_packets}")
+            print(f"Packet Delivery Ratio  : {pdr:.2f}%")
+            print("-" * 50)
+            print(f"IMU Mean Δt            : {mean_dt:.2f} ms (Target: 10.00 ms)")
+            print(f"IMU Jitter (Std Dev)   : ±{jitter:.2f} ms")
+            print(f"IMU Max Spike          : {self.max_spike_ms:.2f} ms")
+            print("-" * 50)
+            print(f"UWB Refresh Rate       : {uwb_rate:.2f}%")
+            print(f"UWB Max Stale Count    : {self.max_stale_count} consecutive packets")
+            print(f"UWB Max Blind Spot     : {max_blind_ms:.2f} ms")
+            print(f"UWB Line-of-Sight      : {uwb_status}")
+            print("="*50 + "\n")
 
 def main():
     stream = DataStream(SERIAL_PORT, BAUD_RATE, DATASET_FILENAME)
@@ -220,6 +274,8 @@ def main():
 
     # Cleanup after closing
     stream.close()
+    
+    dashboard.print_final_summary()
 
 if __name__ == "__main__":
     main()

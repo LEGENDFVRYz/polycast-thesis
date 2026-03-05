@@ -1,4 +1,34 @@
 
+/* --- Animation Keyframes --- */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes pulse {
+    0%, 100% {
+        opacity: 1;
+    }
+    50% {
+        opacity: 0.6;
+    }
+}
+
+@keyframes liveIndicator {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.4);
+    }
+    50% {
+        box-shadow: 0 0 0 8px rgba(255, 0, 0, 0);
+    }
+}
+
 .stream-ctn .stream-wrapper{
     display: flex;
     flex-direction: column;
@@ -10,19 +40,22 @@
         justify-content: space-between;
         align-items: center;
         padding: 1.5em 1em;
+        animation: fadeInUp 0.4s ease-out forwards;
 
         .header-title {
             font-family: 'Poppins-M';
             font-size: 1.25rem;
             font-weight: 700;
-            color: #1a1a1a;
+            color: #1E293B;
             display: flex;
             align-items: center;
             gap: 15px;
             margin: 0;
 
             .header-icon {
-                color: #ff0000;
+                color: #F43F5E;
+                animation: liveIndicator 2s ease-in-out infinite;
+                border-radius: 50%;
             }
         }
 
@@ -30,16 +63,22 @@
         .status-pill {
             display: inline-block;
             padding: 8px 24px;
-            border: 1px solid #e0e0e0;
+            border: 1px solid #E2E8F0;
             border-radius: 50px;
             font-size: 16px;
             font-weight: 600;
-            color: #333;
-            background-color: #fff;
+            color: #1E293B;
+            background: linear-gradient(135deg, #FFFFFF 0%, #F8FAFC 100%);
+            transition: all 0.3s ease;
         
             #status-state {
-                color: #666;
+                color: #6366F1;
                 font-family: 'Poppins-SB';
+            }
+            
+            &:hover {
+                box-shadow: 0 4px 12px rgba(99, 102, 241, 0.15);
+                border-color: #C7D2FE;
             }
         }
     }
@@ -48,13 +87,21 @@
     .video-wrapper {
         width: 100%;
         aspect-ratio: 16 / 9;
-        background-color: #000;
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
         border-radius: 16px;
         overflow: hidden;
-        box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.3);
         display: flex;
         justify-content: center;
         align-items: center;
+        animation: fadeInUp 0.5s ease-out 0.1s forwards;
+        opacity: 0;
+        transition: box-shadow 0.3s ease, transform 0.3s ease;
+        border: 1px solid rgba(255, 255, 255, 0.05);
+        
+        &:hover {
+            box-shadow: 0 8px 30px rgba(15, 23, 42, 0.4);
+        }
 
         #stream {
             width: 100%;
@@ -67,7 +114,75 @@
     #debug {
         margin-top: 10px;
         font-family: monospace;
-        color: #888;
+        color: #64748B;
         font-size: 12px;
+    }
+}
+
+
+/* ==========================================
+   RESPONSIVE STYLES FOR STREAM
+   ========================================== */
+
+/* Tablet (768px and below) */
+@media (max-width: 768px) {
+    .stream-ctn .stream-wrapper {
+        .stream-header {
+            padding: 1rem 0.75rem;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            
+            .header-title {
+                font-size: 1.1rem;
+                gap: 10px;
+            }
+            
+            .status-pill {
+                padding: 6px 18px;
+                font-size: 14px;
+            }
+        }
+        
+        .video-wrapper {
+            border-radius: 12px;
+        }
+    }
+}
+
+/* Mobile (480px and below) */
+@media (max-width: 480px) {
+    .stream-ctn .stream-wrapper {
+        .stream-header {
+            padding: 0.75rem 0.5rem;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 0.5rem;
+            
+            .header-title {
+                font-size: 1rem;
+                gap: 8px;
+                
+                .header-icon {
+                    width: 20px;
+                    height: 20px;
+                }
+            }
+            
+            .status-pill {
+                padding: 5px 14px;
+                font-size: 12px;
+                align-self: flex-start;
+            }
+        }
+        
+        .video-wrapper {
+            border-radius: 10px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.12);
+        }
+        
+        #debug {
+            font-size: 10px;
+            margin-top: 8px;
+        }
     }
 }

@@ -1,8 +1,152 @@
+/* --- Animation Keyframes --- */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes fadeInDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
 
 /* --- PHASE 0 of 3: GALLERY SCOPE STYLINGS --- */
 .gallery-scope {
 
-    /* --- Quick Actions (Icon Buttons) --- */
+  /* --- NEW: Quick Actions Dock (Floating Pill) --- */
+  .dock-wrapper {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 1.5rem;
+      margin-top: 0.5rem;
+      width: 100%; /* Ensure wrapper takes full width */
+      animation: fadeInDown 0.4s ease-out forwards;
+  }
+
+  .dock-container {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      
+      /* Gradient Dark Pill Container */
+      background: linear-gradient(135deg, #1E3A5F 0%, #102E4A 50%, #0A1929 100%);
+      padding: 8px;
+      border-radius: 9999px; /* Max roundness */
+      box-shadow: 0 8px 20px rgba(16, 46, 74, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+      transition: box-shadow 0.3s ease, transform 0.3s ease;
+      
+      /* Responsiveness: Max width constraint */
+      max-width: 95%; 
+      box-sizing: border-box;
+      
+      &:hover {
+          box-shadow: 0 12px 30px rgba(16, 46, 74, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.08) inset;
+      }
+  }
+
+  .dock-item {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      
+      /* DESKTOP Sizing (The Long Look) */
+      padding: 12px 70px; 
+      min-width: 160px;   
+      border-radius: 9999px;
+      
+      /* Typography */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 1rem;
+      font-weight: 500;
+      text-decoration: none;
+      white-space: nowrap; /* Prevents text wrapping */
+      
+      /* Default State (Inactive) */
+      background-color: transparent;
+      color: #AAB8C5; 
+      transition: all 0.3s ease;
+      cursor: pointer;
+  }
+
+  .dock-item img {
+      width: 20px;
+      height: 20px;
+      filter: invert(76%) sepia(13%) saturate(346%) hue-rotate(174deg) brightness(91%) contrast(88%);
+      transition: filter 0.3s ease;
+  }
+
+  /* Hover State */
+  .dock-item:not(.active):hover {
+      color: #FFFFFF;
+      background-color: rgba(255, 255, 255, 0.1);
+  }
+  .dock-item:not(.active):hover img {
+      filter: brightness(0) invert(1);
+  }
+
+  /* --- ACTIVE STATE --- */
+  .dock-item.active {
+      background-color: #FFFFFF;
+      color: #102E4A; 
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transform: scale(1.02);
+  }
+
+  .dock-item.active img {
+      filter: invert(13%) sepia(33%) saturate(2284%) hue-rotate(178deg) brightness(93%) contrast(93%);
+  }
+
+  /* --- RESPONSIVE MEDIA QUERIES --- */
+
+  /* Tablet: Reduce the massive padding */
+  @media (max-width: 992px) {
+      .dock-item {
+          padding: 12px 30px; /* Reduce side padding */
+          min-width: auto;    /* Remove minimum width constraint */
+      }
+  }
+
+  /* Mobile: Stack horizontally and fill space */
+  @media (max-width: 600px) {
+      .dock-container {
+          width: auto;       /* Shrink to fit content */
+          padding: 6px;      /* Slightly thinner container padding */
+          justify-content: center;
+          gap: 4px;          /* Tighten gap between items */
+      }
+
+      .dock-item {
+          padding: 12px 16px; /* Compact padding for icon-only */
+          width: auto;
+          gap: 0;
+          
+          /* Hide the text label */
+          span {
+              display: none;
+          }
+      }
+
+      .dock-item img {
+          width: 20px;
+          height: 20px;
+      }
+  }
+
+
+      /* --- Quick Actions (Icon Buttons) --- */
     .quick-actions {
         display: grid;
         grid-template-columns: repeat(3, 1fr);
@@ -53,534 +197,1008 @@
         }
     }
 
-    /* --- Folders List --- */
-    .folders {
-        /* margin-bottom: 2rem; */
-        .folder-header{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            font-size: 22px;
 
-            .section-title {
-                color: #102E4A;
-            }
-        }
+  /* --- Folders List --- */
+  .folders {
+    .folder-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      font-size: 22px;
 
-        .folder-list {
-            display: flex;           
-            flex-direction: column;  
-            gap: 0.75rem;           
-            
-            a {
-                all: unset;      /* Resets all inherited and non-inherited properties */
-                display: inline; /* Reset display if needed */
-                text-decoration: none;
-                color: inherit;
-                font: inherit;
-                cursor: pointer; /* Optional: for link behavior */
-            }
-
-            .folder-item {
-                display: flex;
-                align-items: center;
-                gap: 1rem;
-                padding: 1rem;
-                background-color: #FFFFFF;
-                border-radius: 0.75rem;
-                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-                border: 1px solid #E5E7EB;
-
-                .item-icon {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    flex-shrink: 0;
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 0.5rem;
-
-                    img {
-                        width: 35px;
-                        height: 35px;
-                        filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
-                    }
-                }
-
-                .item-info {
-                    flex-grow: 1;
-                    overflow: hidden;
-
-                    .item-title {
-                        font-family: "Poppins-SB";
-                        font-size: 1rem;
-                        color: #102E4A;
-                        white-space: nowrap; 
-                        overflow: hidden; 
-                        text-overflow: ellipsis; 
-                        min-width: 0;
-                        max-width: 48vw;
-                    }
-
-                    .item-subtitle {
-                        font-family: "Poppins-M";
-                        font-size: 0.875rem;
-                        color: #102E4A;
-                    }
-                }
-
-                .icon-button {
-                    background: none;      /* Removes the gray background */
-                    border: none;          /* Removes the border */
-                    padding: 0;            /* Removes the default spacing */
-                    margin: 0;             /* Removes default margins */
-                    cursor: pointer;       /* Keeps the hand cursor */
-                    outline: none;         /* Optional: Removes the blue ring on click (focus) */
-
-                    .edit {
-                        filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
-                    }
-
-                    .delete {
-                        filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
-                    }
-                }
-
-                .item-menu {
-                    flex-shrink: 0;
-                    background: none;
-                    border: none;
-                    cursor: pointer;
-                    color: #6B7280;
-                    display: flex;
-                    align-items: center ;
-
-                    img {
-                        display: none;
-                        width: 20px;
-                        height: 20px;
-                        filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
-                    }
-                }
-            }
-        }
+      .section-title {
+        color: #102E4A;
+      }
     }
+
+    .folder-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+      
+      /* Staggered animation delays for folder items */
+      > a:nth-child(1) .folder-item { animation-delay: 0.05s; }
+      > a:nth-child(2) .folder-item { animation-delay: 0.1s; }
+      > a:nth-child(3) .folder-item { animation-delay: 0.15s; }
+      > a:nth-child(4) .folder-item { animation-delay: 0.2s; }
+      > a:nth-child(5) .folder-item { animation-delay: 0.25s; }
+      > a:nth-child(6) .folder-item { animation-delay: 0.3s; }
+      > a:nth-child(7) .folder-item { animation-delay: 0.35s; }
+      > a:nth-child(8) .folder-item { animation-delay: 0.4s; }
+      > a:nth-child(9) .folder-item { animation-delay: 0.45s; }
+      > a:nth-child(10) .folder-item { animation-delay: 0.5s; }
+
+      a {
+        all: unset;
+        display: inline;
+        text-decoration: none;
+        color: inherit;
+        font: inherit;
+        cursor: pointer;
+      }
+
+      .folder-item {
+        display: flex;
+        align-items: center;
+        gap: 0.875rem;
+        padding: 0.875rem 1rem;
+        background-color: #FFFFFF;
+        border-radius: 0.75rem;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+        border: 1px solid #E5E7EB;
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        animation: fadeInUp 0.4s ease-out forwards;
+        opacity: 0;
+
+        &:hover {
+          background: linear-gradient(135deg, #FFFFFF 0%, #F0F9FF 100%);
+          cursor: pointer;
+          transform: translateX(4px);
+          box-shadow: 0 4px 15px rgba(59, 130, 246, 0.12);
+          border-color: #BFDBFE;
+        }
+        
+        &:active {
+          transform: scale(0.99);
+        }
+
+        .item-icon {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          flex-shrink: 0;
+          width: 38px;
+          height: 38px;
+          border-radius: 0.5rem;
+          background: linear-gradient(135deg, #DBEAFE 0%, #E0E7FF 100%);
+          transition: transform 0.3s ease, background-color 0.3s ease;
+
+          img {
+            width: 35px;
+            height: 35px;
+            filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+            transition: transform 0.3s ease;
+          }
+        }
+        
+        /* Alternate icon colors for visual variety */
+        &:nth-child(3n+1) .item-icon {
+          background: linear-gradient(135deg, #DBEAFE 0%, #BFDBFE 100%);
+        }
+        &:nth-child(3n+2) .item-icon {
+          background: linear-gradient(135deg, #E0E7FF 0%, #C7D2FE 100%);
+        }
+        &:nth-child(3n+3) .item-icon {
+          background: linear-gradient(135deg, #CCFBF1 0%, #99F6E4 100%);
+          img {
+            filter: invert(56%) sepia(52%) saturate(543%) hue-rotate(127deg) brightness(93%) contrast(93%);
+          }
+        }
+        
+        &:hover .item-icon {
+          transform: scale(1.1);
+        }
+
+        .item-info {
+          flex-grow: 1;
+          overflow: hidden;
+
+          .item-title {
+            font-family: "Poppins-SB";
+            font-size: 1rem;
+            color: #102E4A;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            min-width: 0;
+            max-width: 48vw;
+          }
+
+          .item-subtitle {
+            font-family: "Poppins-M";
+            font-size: 0.875rem;
+            color: #102E4A;
+          }
+        }
+
+        .icon-button {
+          background: none;
+          border: none;
+          padding: 0;
+          margin: 0;
+          cursor: pointer;
+          outline: none;
+
+          .edit {
+            filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+          }
+
+          .delete {
+            filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
+          }
+        }
+
+        .item-menu {
+          flex-shrink: 0;
+          background: none;
+          border: none;
+          cursor: pointer;
+          color: #6B7280;
+          display: flex;
+          align-items: center;
+
+          img {
+            display: none;
+            width: 20px;
+            height: 20px;
+            filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
+          }
+        }
+      }
+    }
+  }
 }
 
 
-
 /* --- PHASE 1 of 3: GALLERY --- */
-div.gallery-wrap{
+div.gallery-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+
+  /* --- Recents --- */
+  .recently-added {
+    margin-bottom: 1.25rem;
+
+    .section-title {
+      color: #102E4A;
+      margin-bottom: 0.75rem;
+    }
+  }
+
+  .recently-added__scroll-container {
     display: flex;
-    flex-direction: column;
-    flex: 1;
+    overflow-x: auto;
+    gap: 1rem;
+    padding-bottom: 1rem;
 
+    /* Hide scrollbar */
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
 
-    /* --- Recents --- */
-    .recently-added {
-        margin-bottom: 2rem;
+  .recently-added__scroll-container::-webkit-scrollbar {
+    display: none;
+  }
 
-        .section-title {
-            color: #102E4A;
-        }
-    }
-
-    .recently-added__scroll-container {
-        display: flex;
-        overflow-x: auto;
-        gap: 1rem;
-        padding-bottom: 1rem; /* For scrollbar spacing */
-        /* Hide scrollbar */
-        -ms-overflow-style: none;  /* IE and Edge */
-        scrollbar-width: none;  /* Firefox */
+  .file-card {
+    flex: 0 0 160px;
+    background-color: #FFFFFF;
+    border-radius: 0.875rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+    border: 1px solid #E5E7EB;
+    overflow: hidden;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    cursor: pointer;
+    
+    &:hover {
+      transform: translateY(-4px);
+      box-shadow: 0 8px 20px rgba(59, 130, 246, 0.15);
+      border-color: #BFDBFE;
     }
     
-    .recently-added__scroll-container::-webkit-scrollbar {
-        display: none; /* Chrome, Safari, Opera */
+    &:active {
+      transform: scale(0.98);
     }
 
-    .file-card {
-        flex: 0 0 200px; /* Do not grow, do not shrink, base width 180px */
-        background-color: #FFFFFF; /* white */
-        border-radius: 1rem; /* 16px */
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        border: 1px solid #E5E7EB; /* light gray */
+    .fc-preview {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 110px;
+      background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+      transition: background 0.3s ease;
+
+      img {
+        width: 28px;
+        height: 28px;
+        filter: invert(45%) sepia(98%) saturate(1847%) hue-rotate(196deg) brightness(97%) contrast(93%);
+        transition: transform 0.3s ease;
+      }
+    }
+    
+    /* Alternate preview colors */
+    &:nth-child(4n+1) .fc-preview {
+      background: linear-gradient(135deg, #EFF6FF 0%, #DBEAFE 100%);
+    }
+    &:nth-child(4n+2) .fc-preview {
+      background: linear-gradient(135deg, #EEF2FF 0%, #E0E7FF 100%);
+      img { filter: invert(45%) sepia(47%) saturate(2139%) hue-rotate(222deg) brightness(99%) contrast(93%); }
+    }
+    &:nth-child(4n+3) .fc-preview {
+      background: linear-gradient(135deg, #F0FDFA 0%, #CCFBF1 100%);
+      img { filter: invert(62%) sepia(35%) saturate(632%) hue-rotate(127deg) brightness(91%) contrast(89%); }
+    }
+    &:nth-child(4n+4) .fc-preview {
+      background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+      img { filter: invert(68%) sepia(55%) saturate(679%) hue-rotate(358deg) brightness(99%) contrast(96%); }
+    }
+    
+    &:hover .fc-preview {
+      img {
+        transform: scale(1.1);
+      }
+    }
+
+    .fc-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.625rem 0.625rem 0.625rem 0.875rem;
+
+      .fc-name {
+        font-size: 0.8rem;
+        color: #1E293B;
+        white-space: nowrap;
         overflow: hidden;
+        text-overflow: ellipsis;
+      }
 
-        .fc-preview {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 150px;
-            background-color: #F3F4F6; /* gray-100 */
+      .fc-menu-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        color: #6B7280;
+        display: flex;
+        align-items: center;
 
-            img {
-                width: 32px;
-                height: 32px;
-                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-            }
+        img {
+          width: 16px;
+          height: 16px;
+          filter: invert(45%) sepia(10%) saturate(600%) hue-rotate(182deg) brightness(94%) contrast(88%);
         }
-
-        .fc-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.75rem 0.75rem 0.75rem 1rem;
-
-            .fc-name {
-                font-size: 0.875rem;
-                color: #102E4A; /* dark gray */
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-    
-            .fc-menu-btn {
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: #6B7280; /* gray-500 */
-                display: flex;
-                align-items: center;
-    
-                img {
-                    width: 16px;
-                    height: 16px;
-                    filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-                }
-            }
-        }
+      }
     }
-
-    /* // div.folder-ctn{
-    //     display: flex;
-    //     flex-direction: column;
-    //     flex: 1;
-
-    //     border: 1px solid black;
-    //     border-radius: 1em;
-
-    //     div.folder-wrapper{
-    //         display: flex;
-    //         flex-direction: column;
-    //         flex: 1;
-    //         gap: 1em;
-
-    //         padding: 2em 1.5em;
-
-    //         .folder-card {
-    //             display: flex;
-    //             align-items: flex-start; // Aligns icon and text block to the top
-    //             gap: 12px;               // Space between icon and text
-                
-    //             background-color: $card-bg;
-    //             border-radius: $border-radius;
-    //             padding: $padding;
-                
-    //             max-width: 280px; // Set a max-width so it looks like the image
-    //             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    //             cursor: pointer;
-                
-    //             .folder-icon {
-                    
-    //                 // This styles the placeholder. 
-    //                 // You can replace this with your own <img> styles.
-    //                 .icon-placeholder {
-    //                     display: block;
-    //                     width: 40px;
-    //                     height: 40px;
-    //                     border: 2px solid $icon-color;
-    //                     border-radius: 6px;
-    //                     position: relative;
-                        
-    //                 }
-    //             }
-                
-    //             .folder-detail {
-    //                 display: flex;
-    //                 flex-direction: column;
-    //                 gap: 4px; // Vertical space between text elements
-
-    //                 .folder-name {
-    //                     font-size: 1rem; // 16px
-    //                     font-weight: 600;
-    //                     color: $primary-text;
-    //                     margin-top: 2px; // Small alignment fix
-    //                 }
-
-    //                 .folder-tag {
-    //                     font-size: 0.875rem; // 14px
-    //                     color: $secondary-text;
-    //                 }
-    //             }
-    //         }
-
-    //     }
-    // } */
+  }
 }
 
 
 /* --- PHASE 2 of 3: SESSION --- */
-div.session-wrap{
+div.session-wrap {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 2em;
+
+  a {
     display: flex;
+    flex-wrap: wrap;
+  }
+
+  .icon-button {
+    display: flex;
+    justify-self: center;
+    align-self: center;
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+    outline: none;
+  }
+
+  /* FOLDER IDENTIFIER */
+  .folder-container {
+    display: flex;
+    align-items: center;
     flex-direction: column;
-    flex: 1;
-    gap: 2em;
+    gap: 0.75rem;
+    color: #102E4A;
 
-    a {
+    .folder-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
+      font-size: 22px;
+
+      .folder-name {
         display: flex;
-        flex-wrap: wrap; /* lets children flow to new lines if needed */
-    }
-
-    .icon-button {
-        display: flex;
-        justify-self: center;
-        align-self: center;
-        cursor: pointer;
-
-        background: none;      /* Removes the gray background */
-        border: none;          /* Removes the border */
-        padding: 0;            /* Removes the default spacing */
-        margin: 0;             /* Removes default margins */
-        cursor: pointer;       /* Keeps the hand cursor */
-        outline: none;         /* Optional: Removes the blue ring on click (focus) */
-    }
-
-    /* FOLDER IDENTIFIER */
-    .folder-container {
-        display: flex;
+        justify-content: center;
         align-items: center;
+        gap: 1rem;
+
+        .back-icon {
+          width: 22px;
+          height: 22px;
+          filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+          transform: scaleX(-1);
+        }
+
+        .folder-icon {
+          width: 30px;
+          height: 30px;
+          filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+        }
+
+        .title {
+          color: #102E4A;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          min-width: 0;
+          max-width: 52vw;
+        }
+      }
+
+      .info-icon {
+        width: 30px;
+        height: 30px;
+      }
+    }
+
+    .card-content {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      background: linear-gradient(135deg, #FFFFFF 0%, #F0F9FF 50%, #EEF2FF 100%);
+      border: 1px solid #DBEAFE;
+      border-left: 4px solid #6366F1;
+      border-radius: 12px;
+      padding: 1.25rem 1.5rem;
+      animation: fadeInUp 0.4s ease-out forwards;
+      box-shadow: 0 4px 15px rgba(99, 102, 241, 0.08);
+
+      .folder-details {
+        display: flex;
         flex-direction: column;
-        gap: 0.75rem;
-        color: #102E4A;
+        width: 100%;
+        gap: 1rem;
 
-        .folder-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .detail-row {
+          display: flex;
+          flex-direction: column;
+          gap: 0.25rem;
+          
+          .detail-label {
+            font-family: "Poppins-SB";
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: #6366F1;
+          }
+
+          .detail-value {
+            font-family: "Poppins-M";
+            font-size: 1rem;
+            color: #1E293B;
+            font-weight: 600;
+            
+            .favorite-badge {
+              color: #B45309;
+              font-weight: 600;
+              background: linear-gradient(135deg, #FEF3C7 0%, #FDE68A 100%);
+              padding: 0.2rem 0.6rem;
+              border-radius: 9999px;
+              font-size: 0.85rem;
+            }
+          }
+        }
+        
+        .description-row {
+          margin-top: 0.5rem;
+          padding-top: 1rem;
+          border-top: 1px solid #E2E8F0;
+          
+          .description-container {
             width: 100%;
-            font-size: 22px;
-
-            .folder-name {
-                display: flex;
-                justify-content: center;
-                align-items: center;
-                gap: 1rem;
-
-                .back-icon {
-                    width: 22px;
-                    height: 22px;
-                    filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-                    transform: scaleX(-1); 
-                }
-                
-                .folder-icon {
-                    width: 30px;
-                    height: 30px;
-                    filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
-                }
-
-                .title {
-                    color: #102E4A;
-                    white-space: nowrap; 
-                    overflow: hidden; 
-                    text-overflow: ellipsis; 
-                    min-width: 0;
-                    max-width: 52vw;
-                }
+          }
+          
+          .description-display {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            
+            .description-text {
+              font-family: "Poppins-M";
+              font-size: 0.95rem;
+              color: #1E293B;
+              flex: 1;
             }
             
-            .info-icon {
-                width: 30px;
-                height: 30px;
-                /* filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%); */
+            .description-edit-btn {
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 0.35rem;
+              background: transparent;
+              border: 1px solid #CBD5E1;
+              border-radius: 6px;
+              cursor: pointer;
+              opacity: 0.6;
+              transition: all 0.2s ease;
+              
+              &:hover {
+                opacity: 1;
+                background: #F1F5F9;
+                border-color: #2E7CF6;
+              }
+              
+              img {
+                filter: brightness(0) saturate(100%) invert(29%) sepia(83%) saturate(1057%) hue-rotate(196deg) brightness(97%) contrast(95%);
+              }
             }
-        }
-
-        .card-content {
-            display: flex;
-            align-items: center;
-            width: 100%;
-            border: 1px solid #ABBAD3;
-            border-radius: 6px;
-            padding: 1rem 1.75rem;
-
-            .folder-details {
-                display: flex;
-                flex-direction: column;
-                width: 100%;
-                gap: 0.5rem;
-
-                .specifics {
-
-                    .detail-value {
-                        font-family: "Poppins-M";
-                        width: 100%;
-                    }
-
-                    input {
-                        padding: 0.5rem 1rem;
-                        border: 1px solid #ABBAD3;
-                        border-radius: 6px;
-                        color: #102E4A;
-                        margin-top: 0.5rem;
-                    }
-
-                    input::placeholder {
-                        color: #ABBAD3;
-                    }
-
-                    &:last-child {
-                        padding-top: 1.5rem;
-                    }
-                }
-            }
-        }
-
-        .card-content.hidden {
+          }
+          
+          .description-display.hidden {
             display: none;
+          }
+          
+          .description-text {
+            display: block;
+            font-family: "Poppins-M";
+            font-size: 0.95rem;
+            color: #1E293B;
+            padding: 0.5rem 0;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            border-bottom: 1px dashed transparent;
+            
+            &:hover {
+              color: #2E7CF6;
+              border-bottom-color: #2E7CF6;
+            }
+          }
+          
+          .description-text.hidden {
+            display: none;
+          }
+          
+          .description-input {
+            width: 100%;
+            padding: 0.75rem 1rem;
+            border: 1px solid #CBD5E1;
+            border-radius: 8px;
+            font-family: "Poppins-M";
+            font-size: 0.9rem;
+            color: #1E293B;
+            background-color: #FFFFFF;
+            transition: all 0.3s ease;
+            
+            &::placeholder {
+              color: #94A3B8;
+              font-style: italic;
+            }
+            
+            &:focus {
+              outline: none;
+              border-color: #2E7CF6;
+              box-shadow: 0 0 0 3px rgba(46, 124, 246, 0.15);
+            }
+            
+            &:hover:not(:focus) {
+              border-color: #94A3B8;
+            }
+          }
+          
+          .description-input.hidden {
+            display: none;
+          }
         }
+      }
     }
 
-    /* FOLDER LIST Customized */
-    .folders {
-        /* margin-bottom: 2rem; */
-        .folder-header{
-            img.recycle-toggle{
-                cursor: pointer;
-            }
-        }
+    .card-content.hidden {
+      display: none;
     }
+  }
+
+  /* FOLDER LIST Customized */
+  .folders {
+    .folder-header {
+      img.recycle-toggle {
+        cursor: pointer;
+      }
+    }
+  }
 }
 
 
 /* --- PHASE 3 of 3: FOLDERVIEW --- */
 div.view-wrap {
 
-    /* View Header */
-    .header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 0.875rem; /* 14px */
-        background-color: #ffffff;
-        border-radius: 0.75rem; /* 12px */
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-        margin-bottom: 1.5rem; /* 24px */
+  /* View Header */
+  .header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.875rem;
+    background-color: #ffffff;
+    border-radius: 0.75rem;
+    border: 1px solid #e5e7eb;
+    box-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+    margin-bottom: 1.5rem;
 
-        .header-left {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem; /* 12px */
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
 
-            img {
-                width: 22px;
-                height: 22px;
-                filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-                transform: scaleX(-1);  
-            }
-    
-            h1 {
-                font-size: 1.125rem; /* 18px */
-                line-height: 1.75rem; /* 28px */
-                color: #102E4A;
-                margin: 0;
-                white-space: nowrap; 
-                overflow: hidden; 
-                text-overflow: ellipsis; 
-                min-width: 0;
-                max-width: 48vw;
-            }
-        }
-        
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem; /* 8px */
-        }
+      img {
+        width: 22px;
+        height: 22px;
+        filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+        transform: scaleX(-1);
+      }
 
-        /* Icon Button Styles */
-        .icon-button {
-            background-color: transparent;
-            border: none;
-            cursor: pointer;
-            border-radius: 9999px; /* 'rounded-full' */
-            transition: background-color 0.15s ease;
-            display: flex; /* To center icon */
-            align-items: center;
-            justify-content: center;
-
-    
-            &.back-button {
-                padding: 0.25rem; /* 4px */
-                border-radius: 0.375rem; /* 6px */
-            }
-            
-            &.action-button {
-                padding: 0.5rem; /* 8px */
-            }
-        
-            &:hover {
-                background-color: #f3f4f6; /* gray-100 */
-            }
-        
-            &:active {
-                background-color: #e5e7eb; /* gray-200 */
-            }
-
-            svg {
-                width: 1.5rem; /* 24px */
-                height: 1.5rem; /* 24px */
-            }
-    
-            img {
-                width: 1.5rem; /* 24px */
-                height: 1.5rem; /* 24px */
-                filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
-            }
-        }
+      h1 {
+        font-size: 1.125rem;
+        line-height: 1.75rem;
+        color: #102E4A;
+        margin: 0;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+        max-width: 48vw;
+      }
     }
 
-    /* Simple styling to show images in a grid */
+    .header-right {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* Icon Button Styles */
+    .icon-button {
+      background-color: transparent;
+      border: none;
+      cursor: pointer;
+      border-radius: 9999px;
+      transition: background-color 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+
+      &.back-button {
+        padding: 0.25rem;
+        border-radius: 0.375rem;
+      }
+
+      &.action-button {
+        padding: 0.5rem;
+      }
+
+      &:hover {
+        background-color: #f3f4f6;
+      }
+
+      &:active {
+        background-color: #e5e7eb;
+      }
+
+      svg {
+        width: 1.5rem;
+        height: 1.5rem;
+      }
+
+      img {
+        width: 1.5rem;
+        height: 1.5rem;
+        filter: invert(36%) sepia(94%) saturate(1755%) hue-rotate(203deg) brightness(98%) contrast(96%);
+      }
+    }
+  }
+
+  /* Simple styling to show images in a grid */
+  .image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 15px;
+    padding: 18px;
+
+    /* Each Image */
+    .image-card {
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+
+      background-color: #ffffff;
+      border-radius: 1rem;
+      padding: 0.5rem;
+
+      img {
+        width: 100%;
+        height: auto;
+        display: block;
+      }
+    }
+
+    /* Lazy Image Stylings */
+    .lazy-image {
+      filter: blur(10px);
+      transition: filter 0.3s ease-out;
+      width: 100%;
+      height: 14rem;
+      border-radius: 0.5rem;
+    }
+
+    .lazy-image.loaded {
+      filter: blur(0);
+    }
+  }
+
+  @keyframes modalPopIn {
+    0% {
+      opacity: 0;
+      transform: scale(0.95) translateY(10px);
+    }
+
+    100% {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .modal-content,
+  #editGalleryModal .modal-content,
+  #deleteGalleryModal .modal-content,
+  #recoverGalleryModal .modal-content,
+  #forceDeleteGalleryModal .modal-content,
+  #favoriteGalleryModal .modal-content {
+    animation: modalPopIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+  }
+
+  .modal-overlay {
+    animation: fadeIn 0.3s ease-out forwards;
+  }
+
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+    }
+
+    to {
+      opacity: 1;
+    }
+  }
+
+
+  .file-card {
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background-color 0.2s;
+  }
+
+  .file-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    background-color: #F9FAFB;
+    cursor: pointer;
+  }
+}
+
+
+/* ==========================================
+   RESPONSIVE STYLES FOR GALLERY
+   ========================================== */
+
+/* Tablet (768px and below) */
+@media (max-width: 768px) {
+  .gallery-scope {
+    .dock-wrapper {
+      margin-bottom: 1rem;
+      margin-top: 0.25rem;
+    }
+    
+    .dock-container {
+      padding: 6px;
+    }
+    
+    .dock-item {
+      padding: 10px 25px;
+      font-size: 0.9rem;
+      min-width: auto;
+    }
+    
+    .folders {
+      .folder-header {
+        font-size: 18px;
+        
+        .section-title {
+          font-size: 1rem;
+        }
+      }
+      
+      .folder-list {
+        .folder-item {
+          padding: 0.75rem;
+          gap: 0.75rem;
+          
+          .item-icon {
+            width: 34px;
+            height: 34px;
+            
+            img {
+              width: 28px;
+              height: 28px;
+            }
+          }
+          
+          .item-info {
+            .item-title {
+              font-size: 0.9rem;
+              max-width: 40vw;
+            }
+            
+            .item-subtitle {
+              font-size: 0.8rem;
+            }
+          }
+        }
+      }
+    }
+    
+    .recently-added {
+      .section-title {
+        font-size: 1rem;
+      }
+    }
+    
+    .file-card {
+      flex: 0 0 140px;
+      
+      .fc-preview {
+        height: 90px;
+      }
+      
+      .fc-info {
+        padding: 0.5rem;
+        
+        .fc-name {
+          font-size: 0.75rem;
+        }
+      }
+    }
+  }
+  
+  /* Session page */
+  div.session-wrap {
+    gap: 1.5em;
+    
+    .folder-container {
+      .folder-header {
+        font-size: 18px;
+        
+        .folder-name {
+          gap: 0.75rem;
+          
+          .title {
+            font-size: 1.1rem;
+          }
+        }
+      }
+      
+      .card-content {
+        padding: 1rem;
+      }
+    }
+  }
+  
+  /* Folder view page */
+  div.view-wrap {
     .image-grid {
-        display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-        gap: 15px;
-        padding: 18px;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 10px;
+      padding: 12px;
+    }
+  }
+}
 
-        /* Each Image */
-        .image-card {
-            border: 1px solid #ddd;
-            border-radius: 8px;
-            overflow: hidden;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-
-            background-color: #ffffff;
-            border-radius: 1rem; /* 16px */
-            padding: 0.5rem; /* 12px */
+/* Mobile (480px and below) */
+@media (max-width: 480px) {
+  .gallery-scope {
+    .dock-wrapper {
+      margin-bottom: 0.75rem;
+    }
+    
+    .dock-container {
+      width: 100%;
+      padding: 5px;
+      gap: 3px;
+    }
+    
+    .dock-item {
+      flex: 1;
+      padding: 8px 0;
+      font-size: 0.8rem;
+      gap: 5px;
+      justify-content: center;
+      
+      img {
+        width: 16px;
+        height: 16px;
+      }
+    }
+    
+    .folders {
+      .folder-header {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        
+        .section-title {
+          font-size: 0.9rem;
+        }
+      }
+      
+      .folder-list {
+        .folder-item {
+          padding: 0.65rem 0.75rem;
+          gap: 0.6rem;
+          
+          .item-icon {
+            width: 30px;
+            height: 30px;
             
             img {
-                width: 100%;
-                height: auto;
-                display: block;
-                /* padding: 1em;
-                border: 2px solid #ddd; */
+              width: 24px;
+              height: 24px;
             }
+          }
+          
+          .item-info {
+            .item-title {
+              font-size: 0.85rem;
+              max-width: 35vw;
+            }
+            
+            .item-subtitle {
+              font-size: 0.75rem;
+            }
+          }
+          
+          .icon-button {
+            img {
+              width: 18px;
+              height: 18px;
+            }
+          }
         }
-
-        /* Lazy Image Stylings */
-        .lazy-image {
-            filter: blur(10px);
-            transition: filter 0.3s ease-out;
-            width: 100%;
-            height: 14rem; 
-            border-radius: 0.5rem;
-        }
-    
-        .lazy-image.loaded {
-            filter: blur(0);
-        }
+      }
     }
+    
+    .file-card {
+      flex: 0 0 120px;
+      
+      .fc-preview {
+        height: 75px;
+        
+        img {
+          width: 22px;
+          height: 22px;
+        }
+      }
+      
+      .fc-info {
+        padding: 0.4rem 0.5rem;
+        
+        .fc-name {
+          font-size: 0.7rem;
+        }
+      }
+    }
+  }
+  
+  /* Session page */
+  div.session-wrap {
+    gap: 1rem;
+    
+    .folder-container {
+      .folder-header {
+        .folder-name {
+          gap: 0.5rem;
+          
+          .back-icon {
+            width: 18px;
+          }
+          
+          .folder-icon {
+            width: 24px;
+          }
+          
+          .title {
+            font-size: 1rem;
+          }
+        }
+      }
+      
+      .card-content {
+        padding: 0.875rem;
+        
+        .folder-details {
+          gap: 0.75rem;
+          
+          .detail-row {
+            .detail-label {
+              font-size: 0.7rem;
+            }
+            
+            .detail-value {
+              font-size: 0.9rem;
+            }
+          }
+          
+          .description-row {
+            .description-input {
+              padding: 0.6rem 0.75rem;
+              font-size: 0.85rem;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  /* Folder view page */
+  div.view-wrap {
+    .view-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.75rem;
+      
+      .view-title {
+        font-size: 1.1rem;
+      }
+    }
+    
+    .action-bar {
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      
+      .action-button {
+        padding: 0.4rem;
+        
+        img, svg {
+          width: 1.25rem;
+          height: 1.25rem;
+        }
+      }
+    }
+    
+    .image-grid {
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      padding: 10px;
+      
+      .image-card {
+        padding: 0.35rem;
+        
+        .lazy-image {
+          height: 10rem;
+        }
+      }
+    }
+  }
 }

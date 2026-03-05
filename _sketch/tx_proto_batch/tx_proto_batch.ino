@@ -15,7 +15,7 @@ struct __attribute__((packed)) Packet {
     float dist0;
     float dist1;
     float dist2;
-    ImuSample samples[BATCH_SIZE];
+    ImuPacket samples[BATCH_SIZE];
 };
 
 // --- GLOBALS ---
@@ -55,7 +55,7 @@ void setupESPNow() {
 TaskHandle_t IMUTaskHandle;
 
 void IMUTask(void *parameter) {
-    Packet ready_packet;
+    Packet tx_packet;
     tx_packet.seq = 0;
     int current_batch_idx = 0;
 
@@ -63,7 +63,7 @@ void IMUTask(void *parameter) {
     for(;;) {
         PacketIMU single_sample;
 
-        if (readIMUSample(&single_sample)) {
+        if (processIMU(&single_sample)) {
             tx_packet.samples[current_batch_idx] = single_sample;
             current_batch_idx++;
             

@@ -30,8 +30,8 @@ void initIMU() {
     }
     
     if (imuFound) {
-        bno08x.enableReport(SH2_ROTATION_VECTOR, 5000); 
-        bno08x.enableReport(SH2_LINEAR_ACCELERATION, 5000);
+        bno08x.enableReport(SH2_ROTATION_VECTOR, 10000); 
+        bno08x.enableReport(SH2_LINEAR_ACCELERATION, 10000);
     } else {
         Serial.println("[IMU] BNO08x Initialization Failed! Check I2C wiring and RST pin.");
     }

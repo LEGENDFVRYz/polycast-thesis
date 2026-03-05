@@ -15,6 +15,7 @@ struct __attribute__((packed)) Packet {
     float dist0;
     float dist1;
     float dist2;
+    float dist3;
     ImuPacket samples[BATCH_SIZE];
 };
 
@@ -22,6 +23,7 @@ struct __attribute__((packed)) Packet {
 volatile float shared_dist0 = -1.0f;
 volatile float shared_dist1 = -1.0f;
 volatile float shared_dist2 = -1.0f;
+volatile float shared_dist3 = -1.0f;
 volatile uint32_t shared_uwb_ts = 0;
 uint32_t uwbPacketCount = 0;
 
@@ -31,6 +33,7 @@ int live_distances[MAX_ANCHOR_LIST_SIZE];
 const int MAP_DIST0 = 0; 
 const int MAP_DIST1 = 2; 
 const int MAP_DIST2 = 4; 
+const int MAP_DIST3 = 6; 
 
 // --- ESPNOW DEFINES ---
 #define WIFI_CHANNEL 1
@@ -74,6 +77,7 @@ void IMUTask(void *parameter) {
                 tx_packet.dist0 = shared_dist0;
                 tx_packet.dist1 = shared_dist1;
                 tx_packet.dist2 = shared_dist2;
+                tx_packet.dist2 = shared_dist3;
                 tx_packet.uwb_ts = shared_uwb_ts;
                 
                 tx_packet.batch_ts = micros();
@@ -126,6 +130,7 @@ void loop() {
         shared_dist0 = (float)live_distances[MAP_DIST0];
         shared_dist1 = (float)live_distances[MAP_DIST1];
         shared_dist2 = (float)live_distances[MAP_DIST2];
+        shared_dist3 = (float)live_distances[MAP_DIST3];
         shared_uwb_ts = micros();
 
         Serial.println("[UWB] Sent Payload");

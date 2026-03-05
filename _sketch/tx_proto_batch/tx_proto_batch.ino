@@ -77,7 +77,7 @@ void IMUTask(void *parameter) {
                 tx_packet.dist0 = shared_dist0;
                 tx_packet.dist1 = shared_dist1;
                 tx_packet.dist2 = shared_dist2;
-                tx_packet.dist2 = shared_dist3;
+                tx_packet.dist3 = shared_dist3;
                 tx_packet.uwb_ts = shared_uwb_ts;
                 
                 tx_packet.batch_ts = micros();
@@ -127,10 +127,10 @@ void loop() {
     bool is_locked = runUWBCycle((int*)live_distances);
 
     if (is_locked) {
-        shared_dist0 = (float)live_distances[MAP_DIST0];
-        shared_dist1 = (float)live_distances[MAP_DIST1];
-        shared_dist2 = (float)live_distances[MAP_DIST2];
-        shared_dist3 = (float)live_distances[MAP_DIST3];
+        shared_dist0 = (float)live_distances[MAP_DIST0]/100;
+        shared_dist1 = (float)live_distances[MAP_DIST1]/100;
+        shared_dist2 = (float)live_distances[MAP_DIST2]/100;
+        shared_dist3 = (float)live_distances[MAP_DIST3]/100;
         shared_uwb_ts = micros();
 
         Serial.println("[UWB] Sent Payload");

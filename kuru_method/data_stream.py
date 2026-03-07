@@ -89,21 +89,27 @@ class DataStream:
         try:
             parts = line.split(',')
             
-            # Validation: 3 UWB + (9 IMU * 5 samples) = 48 columns
-            if len(parts) != 48:
-                return None 
+            # Validation: 3 Headers + 4 UWB + (9 IMU * 5 samples) = 52 columns
+            if len(parts) != 52:
+                return None
+            
+            # --- PARSE HEADERS ---
+            seq = int(parts[0])
+            batch_ts = int(parts[1])
+            uwb_ts = int(parts[2])
 
             # --- PARSE & CLEAN UWB ---
-            raw_d0 = float(parts[0])
-            raw_d1 = float(parts[1])
-            raw_d2 = float(parts[2]) 
+            raw_d0 = float(parts[3])
+            raw_d1 = float(parts[4])
+            raw_d2 = float(parts[5])
+            raw_d3 = float(parts[6])
             
             # The cleaner returns the median-filtered distances
-            d0, d1, d2 = self.uwb_cleaner.process(raw_d0, raw_d1, raw_d2)
+            d0, d1, d2, d3 = self.uwb_cleaner.process(raw_d0, raw_d1, raw_d2, raw_d3)
 
             # --- PARSE & CLEAN IMU BATCH ---
             imu_batch = []
-            start_idx = 3
+            start_idx = 7
             for i in range(5):
                 off = start_idx + (i * 9)
                 
@@ -122,8 +128,11 @@ class DataStream:
                 })
 
             return {
-                'uwb': (d0, d1, d2),
-                'uwb_raw': (raw_d0, raw_d1, raw_d2),
+                'seq': seq,
+                'batch_ts': batch_ts,
+                'uwb_ts': uwb_ts,
+                'uwb': (d0, d1, d2, d3),
+                'uwb_raw': (raw_d0, raw_d1, raw_d2, raw_d3),
                 'imu': imu_batch
             }
 

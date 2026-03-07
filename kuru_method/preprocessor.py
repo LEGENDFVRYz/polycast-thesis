@@ -5,18 +5,15 @@ class UWBPreprocessor:
     def __init__(self, window_size=5, max_range=5.0):
         self.max_range = max_range
         # Median Filter Buffers (Rejects Spikes)
-        self.med_buffers = {0: deque(maxlen=window_size), 
-                            1: deque(maxlen=window_size), 
-                            2: deque(maxlen=window_size)}
+        self.med_buffers = {0: deque(maxlen=window_size), 1: deque(maxlen=window_size), 
+                            2: deque(maxlen=window_size), 3: deque(maxlen=window_size)}
         
-        # Moving Average Buffers (Smooths Jitter)
-        self.avg_buffers = {0: deque(maxlen=5), 
-                            1: deque(maxlen=5), 
-                            2: deque(maxlen=5)}
+        self.avg_buffers = {0: deque(maxlen=5), 1: deque(maxlen=5), 
+                            2: deque(maxlen=5), 3: deque(maxlen=5)}
 
-    def process(self, d0, d1, d2):
+    def process(self, d0, d1, d2, d3):
         filtered_results = []
-        for i, raw_dist in enumerate([d0, d1, d2]):
+        for i, raw_dist in enumerate([d0, d1, d2, d3]):
             # --- STEP 1: VALIDITY GATE ---
             # If invalid, reuse last known good value (or 0 if startup)
             if raw_dist <= 0 or raw_dist > self.max_range:

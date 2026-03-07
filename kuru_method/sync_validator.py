@@ -7,7 +7,7 @@ from data_stream import DataStream
 # --- CONFIGURATION ---
 SERIAL_PORT = 'COM5'
 BAUD_RATE = 115200
-DATASET_FILENAME = 'datasets/big_rectangle.csv' # Leave empty "" for live mode, or provide path to CSV dataset
+DATASET_FILENAME = '' # Leave empty "" for live mode, or provide path to CSV dataset
 
 # Expected hardware timing
 EXPECTED_IMU_HZ = 100
@@ -27,7 +27,6 @@ class ValidatorDashboard:
         self.dropped_packets = 0
         self.first_ts = None
         self.last_ts = None
-        self.last_packet_start_ts = None
         
         self.all_dt_ms = []
         self.max_spike_ms = 0.0
@@ -35,7 +34,10 @@ class ValidatorDashboard:
         self.total_uwb_updates = 0
         self.current_stale_count = 0
         self.max_stale_count = 0
-        self.last_uwb_raw = None
+        
+        # --- FIX: Initialize the new tracking variables here ---
+        self.last_seq = None
+        self.last_uwb_ts = None
 
         self.playback_finished = False
         
@@ -85,24 +87,18 @@ class ValidatorDashboard:
     def process_packet(self, packet):
         self.total_packets += 1
         
-        # --- 1. Inter-Packet Sync (ESP-NOW Packet Loss) ---
-        current_packet_start_ts = packet['imu'][0]['ts']
+        # --- 1. Inter-Packet Sync (Absolute Packet Loss via Sequence) ---
+        current_seq = packet['seq']
+        if self.last_seq is not None:
+            # If sequence jumps by more than 1, we definitively dropped packets
+            if current_seq > self.last_seq + 1:
+                self.dropped_packets += (current_seq - self.last_seq - 1)
+        self.last_seq = current_seq
         
+        current_packet_start_ts = packet['imu'][0]['ts']
         if self.first_ts is None:
             self.first_ts = current_packet_start_ts
-        self.last_ts = packet['imu'][4]['ts'] # Track the very last sample of the packet
-        
-        if self.last_packet_start_ts is not None:
-            packet_dt_us = current_packet_start_ts - self.last_packet_start_ts
-            packet_dt_ms = packet_dt_us / 1000.0
-            
-            # Expected is ~50ms. If significantly larger, we dropped a packet in the air
-            if packet_dt_ms > 75.0: 
-                dropped_this_cycle = int(round(packet_dt_ms / 50.0)) - 1
-                if dropped_this_cycle > 0:
-                    self.dropped_packets += dropped_this_cycle
-
-        self.last_packet_start_ts = current_packet_start_ts
+        self.last_ts = packet['imu'][4]['ts']
 
         # --- 2. Intra-Packet Sync (IMU Timing & Jitter) ---
         for i in range(1, 5): # Compare sample n to n-1 strictly within the batch
@@ -122,12 +118,13 @@ class ValidatorDashboard:
             if len(self.plot_dt_ms) > MAX_SAMPLES:
                 self.plot_dt_ms.pop(0)
 
-        # --- 3. UWB Staleness Extraction ---
-        current_uwb_raw = packet['uwb_raw']
+        # --- 3. UWB Staleness (Hardware Timestamping) ---
+        current_uwb_ts = packet['uwb_ts']
         is_updated = 1
         
-        if self.last_uwb_raw is not None:
-            if current_uwb_raw == self.last_uwb_raw:
+        if self.last_uwb_ts is not None:
+            # If the exact microsecond timestamp matches, the UWB data is stale
+            if current_uwb_ts == self.last_uwb_ts:
                 is_updated = 0
                 self.current_stale_count += 1
                 if self.current_stale_count > self.max_stale_count:
@@ -136,7 +133,7 @@ class ValidatorDashboard:
                 self.current_stale_count = 0
                 
         self.total_uwb_updates += is_updated
-        self.last_uwb_raw = current_uwb_raw
+        self.last_uwb_ts = current_uwb_ts
         
         # Update Buffer
         self.plot_uwb_timeline.append(is_updated)

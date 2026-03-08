@@ -7,6 +7,7 @@
 {% block content %}
 <div class="view-wrap gallery-scope">
 
+    <!-- Added by Timothy @ 11/27/2025-->
     <!-- Header component -->
     <header class="header">
         <!-- Back Button and Session Title -->
@@ -19,14 +20,70 @@
 
         <!-- Action Menu -->
         <div class="header-right">
-            <button data-action="Share" class="icon-button action-button">
-                <image src="../../static/images/icons/share.svg">
+            <button data-action="Share" id="shareBtn" class="icon-button action-button">
+                <img src="{{ url_for('static', filename='images/icons/share.svg') }}" alt="Share">
             </button>
             <button data-action="Download" id="downloadAllBtn" class="icon-button action-button">
-                <image src="../../static/images/icons/download.svg">
+                <img src="{{ url_for('static', filename='images/icons/download.svg') }}" alt="Download" id="downloadIcon">
             </button>
         </div>
     </header>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const shareBtn = document.getElementById('shareBtn');
+            
+            shareBtn.addEventListener('click', function() {
+                const pageUrl = window.location.href;
+
+                // Fallback method for older browsers
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(pageUrl).then(() => {
+                        alert('Page URL copied to clipboard!');
+                    }).catch(err => {
+                        console.error('Failed to copy via Clipboard API: ', err);
+                    });
+                } else {
+                    // Fallback using a temporary input element
+                    const tempInput = document.createElement('input');
+                    tempInput.value = pageUrl;
+                    document.body.appendChild(tempInput);
+                    tempInput.select();
+                    try {
+                        document.execCommand('copy');
+                        alert('Page URL copied to clipboard!');
+                    } catch (err) {
+                        console.error('Fallback copy failed: ', err);
+                    }
+                    document.body.removeChild(tempInput);
+                }
+            });
+        });
+
+        document.getElementById('downloadAllBtn').addEventListener('click', function() {
+            const btn = this;
+            const icon = document.getElementById('downloadIcon');
+
+            // Replace icon with "Preparing..." text
+            btn.innerHTML = 'Preparing...';
+            btn.disabled = true; // optional: disable to prevent multiple clicks
+
+            // Simulate download process (replace this with actual download logic)
+            // If you're fetching a file via JS, this is where you handle it
+            setTimeout(() => {
+                // Download finished
+                // Restore original icon
+                btn.innerHTML = '';
+                const img = document.createElement('img');
+                img.src = "{{ url_for('static', filename='images/icons/download.svg') }}";
+                img.alt = "Download";
+                img.id = "downloadIcon"; // restore id
+                btn.appendChild(img);
+                btn.disabled = false;
+            }, 2000); // simulate 2 seconds of download
+        });
+    </script>
+    <!-- End of Addition by Timothy @ 11/27/2025-->
 
 
     <!-- Image Viewer -->

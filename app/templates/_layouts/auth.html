@@ -8,13 +8,13 @@
         <!-- Auth Template Styling -->
         <link rel="stylesheet" href="{{ url_for('static', filename='css/auth.css') }}">
     </head>
-
+    
     <body>
         <div class="auth-ctn">
             <div class="auth-wrapper">
                 <!-- Logo Header (Mobile Only) -->
                 <header class="logo-header">
-                    <image src="../static/images/icons/polycast-white.svg">
+                    <image src="{{ url_for('static', filename='images/icons/polycast-white.svg') }}">
                 </header>
                 
                 <!-- Main Sign-In Card -->

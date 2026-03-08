@@ -1,0 +1,20 @@
+{% extends "gallery/index.html" %}
+{% from "gallery/_folder_card.html" import render_folder_card %}
+
+{% block gallery_content %}
+    <section class="folders">
+        <h2 class="section-title">All Galleries</h2>
+        
+        <div class="folder-list">
+            {% if folders %}  
+                {% for folder in folders %}
+                    {{ render_folder_card(folder) }}
+                {% endfor %}
+            {% else %}
+                <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">
+                    <p class="fs-5 mb-1">No galleries found!</p>
+                </div>
+            {% endif %}
+        </div>
+    </section>
+{% endblock %}

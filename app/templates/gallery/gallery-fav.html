@@ -1,0 +1,20 @@
+{% extends "gallery/index.html" %}
+{% from "gallery/_folder_card.html" import render_folder_card %}
+
+{% block gallery_content %}
+    <section class="folders">
+        <h2 class="section-title">Favorites</h2>
+        
+        <div class="folder-list">
+            {% if folders %}  
+                {% for folder in folders %}
+                    {{ render_folder_card(folder) }}
+                {% endfor %}
+            {% else %}
+                <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">
+                    <p class="fs-5 mb-1">You haven't favorited any galleries yet.</p>
+                </div>
+            {% endif %}
+        </div>
+    </section>
+{% endblock %}

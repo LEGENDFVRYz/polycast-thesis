@@ -1,153 +1,21 @@
-{% from '_components/_modal.html' import modal_shell %}
+{% extends "gallery/index.html" %}
 {% from "gallery/_folder_card.html" import render_folder_card %}
 
-{% extends "_layouts/gallery.html" %}
-
-{% block inclusion %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/gallery.css') }}">
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/_quick-menu.css') }}">
-    
-{% endblock %}
-
-{% block content %}
-    <div class="content gallery-wrap gallery-scope">
-        <!-- CONTENT -->
-        
-
-
-    </div>
-
-    <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
-
-    <script>
-        document.addEventListener('DOMContentLoaded', function() {
-
-            // 1. Edit Buttons
-            const editForm = document.getElementById('editGalleryForm');
-            const editNameInput = document.getElementById('new_gallery_name');
-            document.querySelectorAll('.edit-session-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    const galleryId = this.dataset.galleryId;
-                    const galleryName = this.dataset.galleryName;
-                    if (editForm && editNameInput) {
-                        editForm.action = '/gallery/' + galleryId + '/update';
-                        editNameInput.value = galleryName;
-                    }
-                });
-            });
-
-            // 2. Delete Buttons
-            const deleteForm = document.getElementById('deleteGalleryForm');
-            document.querySelectorAll('.delete-session-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation();
-                    const deleteUrl = this.dataset.deleteUrl;
-                    if (deleteForm) deleteForm.action = deleteUrl;
-                });
-            });
-
-            // 3. Recover Buttons
-            const recoverForm = document.getElementById('recoverGalleryForm');
-            document.querySelectorAll('.recover-gallery-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation(); 
-                    const recoverUrl = this.dataset.recoverUrl;
-                    if (recoverForm) recoverForm.action = recoverUrl;
-                });
-            });
-
-            // 4. Force Delete Buttons
-            const forceDeleteForm = document.getElementById('forceDeleteGalleryForm');
-            document.querySelectorAll('.force-delete-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation(); 
-                    const forceUrl = this.dataset.forceUrl;
-                    if (forceDeleteForm) forceDeleteForm.action = forceUrl;
-                });
-            });
-            
-            // 5. Favorite Buttons
-            const favoriteForm = document.getElementById('favoriteGalleryForm');
-            document.querySelectorAll('.favorite-gallery-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation(); 
-                    const favoriteUrl = this.dataset.favoriteUrl;
-                    if (favoriteForm) favoriteForm.action = favoriteUrl;
-                });
-            });
-        });
-    </script>
-
-{% endblock %}
-
-{# ==========================================
-   MODALS BLOCK - Outside main-content for full-page overlay
-   ==========================================
-#}
-{% block modals %}
-    {# 1. UPDATE MODAL #}
-    {% call modal_shell(modal_id='editGalleryModal', modal_title='Edit Gallery Name') %}
-        <form id="editGalleryForm" method="POST" action=""> 
-            <div class="form-group">
-                <label for="new_gallery_name">Gallery Name:</label>
-                <input type="text" id="new_gallery_name" name="gallery_name" required>
+{% block gallery_content %}
+    <section class="recently-added">
+        <h2 class="section-title">Recently Added</h2>
+        <div class="recently-added__scroll-container">
             </div>
-            <button type="submit" class="btn btn-primary">Update Name</button>
-        </form>
-    {% endcall %}
+    </section>
 
-    {# 2. DELETE MODAL #}
-    {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
-        <p>Are you sure you want to move this gallery to the recycle bin?</p>
-        <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
-        <form id="deleteGalleryForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
-            </div>
-        </form>
-    {% endcall %}
-
-    {# 3. RECOVER MODAL #}
-    {% call modal_shell(modal_id='recoverGalleryModal', modal_title='CONFIRM RECOVERY') %}
-        <p>Are you sure you want to restore this gallery?</p>
-        <p>It will be moved back to your active dashboard and sessions will be accessible again.</p>
-        <form id="recoverGalleryForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-success">Yes, Restore Gallery</button>
-            </div>
-        </form> 
-    {% endcall %}
-
-    {# 4. FORCE DELETE MODAL #}
-    {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
-        <div class="alert alert-danger">
-            <strong>Warning:</strong> This action cannot be undone.
+    <section class="folders mt-4">
+        <h2 class="section-title">Quick Access</h2>
+        <div class="folder-list">
+            {% for folder in folders[:5] %} {# Only show the first 5 folders on the dashboard #}
+                {{ render_folder_card(folder) }}
+            {% else %}
+                <p class="text-muted">No folders available.</p>
+            {% endfor %}
         </div>
-        <p>Are you sure you want to <strong>permanently delete</strong> this gallery?</p>
-        <p>All associated photos and data will be wiped from the database forever.</p>
-        <form id="forceDeleteGalleryForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
-            </div>
-        </form>
-    {% endcall %}
-
-    {# 5. FAVORITE MODAL #}
-    {% call modal_shell(modal_id='favoriteGalleryModal', modal_title='Manage Favorites') %}
-        <div class="text-center">
-            <p>Do you want to change the <strong>favorite status</strong> of this gallery?</p>
-            <p class="text-muted small">This will move the gallery to/from your favorites list.</p>
-            <form id="favoriteGalleryForm" method="POST" action="">
-                <div class="modal-footer justify-content-center">
-                    <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                    <button type="submit" class="btn btn-warning text-white">
-                        Yes, Update Status
-                    </button>
-                </div>
-            </form>
-        </div>
-    {% endcall %}
+    </section>
 {% endblock %}

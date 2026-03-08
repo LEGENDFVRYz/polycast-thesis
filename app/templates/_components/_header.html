@@ -58,7 +58,7 @@
                     Stream
                 </a>
                 
-                <a class="app-tab {% if request.endpoint in ['gallery.index', 'gallery.session_page', 'gallery.view_page'] %}active{% endif %}"
+                <a class="app-tab {% if request.endpoint in ['gallery.index', 'gallery.session_page', 'gallery.view_page', 'gallery.all_galleries', 'gallery.favorites', 'gallery.trash'] %}active{% endif %}"
                 href="{{ url_for('gallery.index') }}">
                     Gallery
                 </a>

@@ -1,0 +1,159 @@
+{% from '_components/_modal.html' import modal_shell %}
+{% extends "_layouts/base.html" %}
+
+{% block inclusion %}
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/gallery.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/_quick-menu.css') }}">
+    
+{% endblock %}
+
+{# 
+    NOTE:
+    This page is a base template variant, 
+    it just have  a quick menu for all the gallery pages...
+#}
+
+{# --- GALLERY NAVIGATION MENU --- #}
+{% block content_header %}
+    <section class="quick-actions">
+        <a  href="{{ url_for('gallery.index') }}" 
+            class="qa-button {% if request.endpoint == 'gallery.index' %}active{% endif %}" 
+            data-icon-btn="home"
+        >
+            <svg class="qa-icon" width="20" height="20">
+                <use href="#gllry-qa-home"></use>
+            </svg>
+            <span>Home</span>
+        </a>
+        
+        <a  href="{{ url_for('gallery.all_galleries') }}" 
+            class="qa-button {% if request.endpoint == 'gallery.all_galleries' %}active{% endif %}" 
+            data-icon-btn="folder"
+        >
+            <svg class="qa-icon" width="20" height="20">
+                <use href="#gllry-qa-folder"></use>
+            </svg>
+            <span>All Galleries</span>
+        </a>
+
+        <a href="{{ url_for('gallery.favorites') }}" 
+            class="qa-button {% if request.endpoint == 'gallery.favorites' %}active{% endif %}" 
+            data-icon-btn="favorites"
+        >
+            <svg class="qa-icon" width="20" height="20">
+                <use href="#gllry-qa-favorite"></use>
+            </svg>
+            <span>Favorites</span>
+        </a>
+
+        <a href="{{ url_for('gallery.trash') }}" 
+            class="qa-button {% if request.endpoint == 'gallery.trash' %}active{% endif %}" 
+            data-icon-btn="trash"
+        >
+            <svg class="qa-icon" width="20" height="20">
+                <use href="#gllry-qa-trash"></use>
+            </svg>
+            <span>Trash</span>
+        </a>
+    </section>
+{% endblock %}
+
+
+{# --- GALLERY MAIN WRAPPER --- #}
+{% block content %}
+    <div class="content gallery-wrap gallery-scope">
+        
+        {# CHILD TEMPLATES WILL INJECT THEIR CONTENT HERE #}
+        {% block gallery_content %}{% endblock %}
+
+    </div>
+
+    <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Helper function to attach modal logic cleanly
+            function setupModal(btnClass, formId, actionAttr, isEdit = false) {
+                const form = document.getElementById(formId);
+                document.querySelectorAll(btnClass).forEach(button => {
+                    button.addEventListener('click', function(e) {
+                        e.stopPropagation();
+                        if (form) form.action = this.dataset[actionAttr];
+                        
+                        if (isEdit) {
+                            const editNameInput = document.getElementById('new_gallery_name');
+                            if (editNameInput) editNameInput.value = this.dataset.galleryName;
+                            if (form) form.action = '/gallery/' + this.dataset.galleryId + '/update';
+                        }
+                    });
+                });
+            }
+
+            // Initialize all modal triggers
+            setupModal('.edit-session-btn', 'editGalleryForm', '', true);
+            setupModal('.delete-session-btn', 'deleteGalleryForm', 'deleteUrl');
+            setupModal('.recover-gallery-btn', 'recoverGalleryForm', 'recoverUrl');
+            setupModal('.force-delete-btn', 'forceDeleteGalleryForm', 'forceUrl');
+            setupModal('.favorite-gallery-btn', 'favoriteGalleryForm', 'favoriteUrl');
+        });
+    </script>
+{% endblock %}
+
+
+{# --- SHARED MODALS --- #}
+{% block modals %}
+    {# UPDATE MODAL #}
+    {% call modal_shell(modal_id='editGalleryModal', modal_title='Edit Gallery Name') %}
+        <form id="editGalleryForm" method="POST" action=""> 
+            <div class="form-group">
+                <label for="new_gallery_name">Gallery Name:</label>
+                <input type="text" id="new_gallery_name" name="gallery_name" required>
+            </div>
+            <button type="submit" class="btn btn-primary">Update Name</button>
+        </form>
+    {% endcall %}
+
+    {# DELETE MODAL #}
+    {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
+        <p>Are you sure you want to move this gallery to the recycle bin?</p>
+        <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
+        <form id="deleteGalleryForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
+            </div>
+        </form>
+    {% endcall %}
+
+    {# RECOVER MODAL #}
+    {% call modal_shell(modal_id='recoverGalleryModal', modal_title='CONFIRM RECOVERY') %}
+        <p>Are you sure you want to restore this gallery?</p>
+        <form id="recoverGalleryForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-success">Yes, Restore</button>
+            </div>
+        </form> 
+    {% endcall %}
+
+    {# FORCE DELETE MODAL #}
+    {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
+        <div class="alert alert-danger"><strong>Warning:</strong> This action cannot be undone.</div>
+        <form id="forceDeleteGalleryForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+            </div>
+        </form>
+    {% endcall %}
+
+    {# FAVORITE MODAL #}
+    {% call modal_shell(modal_id='favoriteGalleryModal', modal_title='Manage Favorites') %}
+        <form id="favoriteGalleryForm" method="POST" action="">
+            <div class="modal-footer justify-content-center">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-warning text-white">Update Status</button>
+            </div>
+        </form>
+    {% endcall %}
+{% endblock %}

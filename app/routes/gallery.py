@@ -5,13 +5,13 @@ from app import db
 from app.models.admin import Admin
 from app.models.gallery import Gallery
 from app.models.session import Session as DBSession
+from app.routes._helpers import get_current_admin, get_eligible_galleries
 from config import BROWSER_WS_PORT
 
 # Import globals
 import app.globals as g
 
 gallery_bp = Blueprint('gallery', __name__)
-
 
 
 # ---------------------------------------------------------------------
@@ -21,65 +21,68 @@ gallery_bp = Blueprint('gallery', __name__)
 @gallery_bp.route("/gallery")
 def index():
     """
-    List all galleries belonging to the logged-in admin.
-    Filters based on the 'view' query parameter (all, favorites, trash)
-    and only shows galleries that exist on disk.
+    Dashboard/Home View.
+    Shows shortcuts (recents, trash) alongside the galleries.
     """
-    current_view = request.args.get('view', 'all')
-
-    # Fetch the admin (Only the admin galleries will render - temporarily)
-    admin_name = str(g.admin_status.get_field('admin_name'))
-    current_admin = Admin.query.filter_by(username=admin_name).first()
- 
-    eligible_folders = []
-
-    # If not current admin, just render empty gallery instead of redirect
-    if not current_admin:
-        return render_template(
-            "gallery/gallery.html",
-            is_setup=False,
-            ws_port=BROWSER_WS_PORT,
-            folders=[],
-            active_view=current_view
-        )
-
+    admin = get_current_admin()
+    folders = get_eligible_galleries(admin, view_type='all')
+    is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
-    # Base query: Get all the galleries under the logged in admin
-    base_query = Gallery.query.filter_by(admin_id=current_admin.id)
-
-    # Apply appropriate filters in the base query (teporarily)
-    if current_view == 'favorites':
-        base_query = base_query.filter_by(is_favorite=True).filter(Gallery.deleted_at.is_(None))
-    elif current_view == 'trash':
-        base_query = base_query.filter(Gallery.deleted_at.is_not(None))
-    else:
-        current_view = 'all'
-        base_query = base_query.filter(Gallery.deleted_at.is_(None))
-
-    # Fetch galleries (favorites first, then alphabetically by name)
-    admin_galleries = base_query.order_by(Gallery.is_favorite.desc(), Gallery.name).all()
-
-    
-    # VALIDATION: Check if gallery folder exists on disk
-    user_filepath = os.path.join(g.GALLERY_PATH, str(current_admin.id))
-    
-    for gllry in admin_galleries:
-        folder_path = os.path.join(user_filepath, str(gllry.id))
-        
-        # If the folder exist correctly, we join it to the eligible galleries
-        if os.path.isdir(folder_path):
-            eligible_folders.append({'id': gllry.id, 'name': gllry.name, 'is_favorite': gllry.is_favorite})
-
-    is_setup = g.admin_status.get_field("hosting_active")
-
-    # Render normally
     return render_template(
-        "gallery/gallery.html",
-        is_setup=is_setup,
-        ws_port=BROWSER_WS_PORT,
-        folders=eligible_folders,
-        active_view=current_view
+        "gallery/gallery.html", 
+        is_setup=is_setup, 
+        ws_port=BROWSER_WS_PORT, 
+        folders=folders
     )
+
+
+@gallery_bp.route("/gallery/all")
+def all_galleries():
+    """
+    Dedicated All Galleries View.
+    Strictly focuses on displaying the full list of gallery folders.
+    """
+    admin = get_current_admin()
+    folders = get_eligible_galleries(admin, view_type='all')
+    is_setup = g.admin_status.get_field("hosting_active") if admin else False
+    
+    return render_template(
+        "gallery/gallery-all.html", 
+        is_setup=is_setup, 
+        ws_port=BROWSER_WS_PORT, 
+        folders=folders
+    )
+
+
+@gallery_bp.route("/gallery/favorites")
+def favorites():
+    """List only favorite galleries."""
+    admin = get_current_admin()
+    folders = get_eligible_galleries(admin, view_type='favorites')
+    is_setup = g.admin_status.get_field("hosting_active") if admin else False
+    
+    return render_template(
+        "gallery/gallery-fav.html", 
+        is_setup=is_setup, 
+        ws_port=BROWSER_WS_PORT, 
+        folders=folders
+    )
+
+
+@gallery_bp.route("/gallery/trash")
+def trash():
+    """List deleted/trashed galleries."""
+    admin = get_current_admin()
+    folders = get_eligible_galleries(admin, view_type='trash')
+    is_setup = g.admin_status.get_field("hosting_active") if admin else False
+    
+    return render_template(
+        "gallery/gallery-bin.html", 
+        is_setup=is_setup, 
+        ws_port=BROWSER_WS_PORT, 
+        folders=folders
+    )
+
 
 
 @gallery_bp.route("/gallery/<string:galleryname>")
@@ -533,3 +536,4 @@ def force_delete_session(session_id):
         flash(f'Error: {e}', 'danger')
     
     return redirect(request.referrer or url_for('gallery.index'))
+

@@ -8,7 +8,7 @@
 
 {% block content_header %}
     <section class="quick-actions">
-        <a href="{{ url_for('gallery_page', view='all') }}" 
+        <a href="{{ url_for('gallery.index', view='all') }}" 
            class="qa-button {% if active_view == 'all' %}active{% endif %}" 
            data-icon-btn="home">
             <svg class="qa-icon" width="20" height="20">
@@ -17,7 +17,7 @@
             <span>Home</span>
         </a>
         
-        <a href="{{ url_for('gallery_page', view='folders') }}" 
+        <a href="{{ url_for('gallery.index', view='folders') }}" 
            class="qa-button {% if active_view == 'folders' %}active{% endif %}" 
            data-icon-btn="folder">
             <svg class="qa-icon" width="20" height="20">
@@ -26,7 +26,7 @@
             <span>Folders</span>
         </a>
 
-        <a href="{{ url_for('gallery_page', view='favorites') }}" 
+        <a href="{{ url_for('gallery.index', view='favorites') }}" 
            class="qa-button {% if active_view == 'favorites' %}active{% endif %}" 
            data-icon-btn="favorites">
             <svg class="qa-icon" width="20" height="20">
@@ -35,7 +35,7 @@
             <span>Favorites</span>
         </a>
 
-        <a href="{{ url_for('gallery_page', view='trash') }}" 
+        <a href="{{ url_for('gallery.index', view='trash') }}" 
            class="qa-button {% if active_view == 'trash' %}active{% endif %}" 
            data-icon-btn="trash">
             <svg class="qa-icon" width="20" height="20">

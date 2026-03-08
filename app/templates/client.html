@@ -79,7 +79,7 @@
                 <h3 id="status-message">connecting to server</h3>
             </div>
             
-            <a href="{{ url_for('stream_page') }}">
+            <a href="{{ url_for('stream.index') }}">
                 <button class="button-temp">Go to Stream</button>
             </a>
             
@@ -91,7 +91,7 @@
         const statusComment = document.getElementById('status-comment');
         const statusMessage = document.getElementById('status-message');
 
-        const eventSource = new EventSource("{{ url_for('status_updates') }}");
+        const eventSource = new EventSource("{{ url_for('stream.status_updates') }}");
 
         eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);

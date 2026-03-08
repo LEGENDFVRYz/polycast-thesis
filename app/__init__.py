@@ -1,9 +1,11 @@
 # app/__init__.py
 from flask import Flask
+from flask import Flask, session as flask_session
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlite3 import Connection as SQLite3Connection
+import app.globals as g
 
 
 @event.listens_for(Engine, "connect")
@@ -33,6 +35,25 @@ def create_app():
     
     # --- Import models so SQLAlchemy knows them ---
     from app.models import admin, gallery, session, note
+    
+    
+    @app.context_processor
+    def inject_is_admin():
+        admin_name = g.admin_status.get_field('admin_name') if g.admin_status else None
+        current_user = flask_session.get("user")
+        is_admin = admin_name is not None and current_user == admin_name
+        return dict(is_admin=is_admin, admin_operator=admin_name)
 
+    
+    # Register all Blueprints
+    from app.routes.public  import public_bp
+    from app.routes.admin   import admin_bp
+    from app.routes.gallery import gallery_bp
+    from app.routes.stream  import stream_bp
+
+    app.register_blueprint(public_bp)
+    app.register_blueprint(admin_bp)
+    app.register_blueprint(gallery_bp)
+    app.register_blueprint(stream_bp)
 
     return app

@@ -4,7 +4,7 @@
         <img src="{{ url_for('static', filename='images/icons/folder1.svg') }}">
     </div>
     <div class="item-info">
-        <a href="{{ url_for('session_page', galleryname=folder.name) }}" class="folder-link-wrapper">
+        <a href="{{ url_for('gallery.session_page', galleryname=folder.name) }}" class="folder-link-wrapper">
             <h3 class="item-title">{{ folder.name }}</h3>
         </a>
         <p class="item-subtitle">BSCPE 4-3</p>
@@ -15,14 +15,14 @@
             <button type="button" class="icon-button recover-gallery-btn" 
                     data-gallery-id="{{ folder.id }}" 
                     data-modal-target="#recoverGalleryModal"
-                    data-recover-url="{{ url_for('recover_gallery', gallery_id=folder.id) }}">
+                    data-recover-url="{{ url_for('gallery.recover_gallery', gallery_id=folder.id) }}">
                 <img src="{{ url_for('static', filename='images/icons/recover.svg') }}" class="edit" width="21" height="21">
             </button>
             
             <button type="button" class="icon-button force-delete-btn"
                     data-gallery-id="{{ folder.id }}"
                     data-modal-target="#forceDeleteGalleryModal"
-                    data-force-url="{{ url_for('force_delete_gallery', gallery_id=folder.id) }}">
+                    data-force-url="{{ url_for('gallery.force_delete_gallery', gallery_id=folder.id) }}">
                 <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" class="delete" width="21" height="21">
             </button>
 
@@ -30,7 +30,7 @@
             <button type="button" 
                     class="icon-button favorite-gallery-btn" 
                     data-gallery-id="{{ folder.id }}"
-                    data-favorite-url="{{ url_for('toggle_gallery_favorite', gallery_id=folder.id) }}"
+                    data-favorite-url="{{ url_for('gallery.toggle_gallery_favorite', gallery_id=folder.id) }}"
                     data-modal-target="#favoriteGalleryModal"
                     title="{{ 'Remove from Favorites' if folder.is_favorite else 'Add to Favorites' }}">
                 
@@ -51,7 +51,7 @@
             
             <button type="button" class="icon-button delete-session-btn"
                     data-modal-target="#deleteGalleryModal"
-                    data-delete-url="{{ url_for('delete_gallery', gallery_id=folder.id) }}">
+                    data-delete-url="{{ url_for('gallery.delete_gallery', gallery_id=folder.id) }}">
                 <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" width="21" height="21">
             </button>
         {% endif %}

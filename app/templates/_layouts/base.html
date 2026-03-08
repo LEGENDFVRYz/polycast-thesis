@@ -1,4 +1,6 @@
 {% from '_components/_modal.html' import modal_shell %}
+{% from '_components/_footer.html' import layout_footer %}
+{% from '_components/_header.html' import layout_header %}
 
 <!DOCTYPE html>
 <html lang="en">
@@ -33,7 +35,7 @@
         {% endwith %}
 
         <!-- Header -->
-        {% include '_components/_header.html' %}
+        {{ layout_header('base') }}
         
         <!-- Main content -->
         <main class="main-content">
@@ -48,7 +50,7 @@
         {% include '_includes/_icons-gallery.html' %}
 
         <!-- Footer -->
-        {% include '_components/_footer.html' %}
+        {{ layout_footer(false) }}
         
 
         <!-- Profile Menu Modal -->
@@ -76,7 +78,7 @@
                         Settings
                     </button>
 
-                    <form action="{{ url_for('logout_page') }}" method="GET" style="width: 100%; margin-top: 10px;">
+                    <form action="{{ url_for('admin.logout') }}" method="GET" style="width: 100%; margin-top: 10px;">
                         <button type="submit" class="btn-danger modal-btn" style="width: 100%;">
                             Logout
                         </button>

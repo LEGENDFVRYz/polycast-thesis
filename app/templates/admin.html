@@ -40,7 +40,7 @@
                     <h2>Prototype Configuration</h2>
                     
                     {% if current_status == 'IDLE' %}
-                        <form id="form1" action="{{ url_for('admin_configure') }}" method="POST">
+                        <form id="form1" action="{{ url_for('admin.configure') }}" method="POST">
                             <div class="input-group">
                                 <label for="ip-address">PolyCast IP Address</label>
                                 <div class="input-with-button">
@@ -72,7 +72,7 @@
                     <h2>Note Configuration</h2>
     
                     {% if current_status == 'CONFIGURED' %}
-                        <form id="form2" action="{{ url_for('admin_start_host') }}" method="POST">
+                        <form id="form2" action="{{ url_for('admin.start_host') }}" method="POST">
                             
                             <div class="input-group">
                                 <label for="folder-name">Folder Name</label>
@@ -118,7 +118,7 @@
                 <section class="manage-block">
                     <h2 class="section-title">Manage:</h2>
 
-                    <a href="{{ url_for('endsession') }}">
+                    <a href="{{ url_for('admin.endsession') }}">
                         <button>End Session</button>
                     </a>
 
@@ -145,7 +145,7 @@
             ipInput.value = ''; // Clear old value
 
             // API Call
-            fetch("{{ url_for('scan_for_ip_route') }}")
+            fetch("{{ url_for('admin.scan_ports') }}")
                 .then(response => {
                     if (!response.ok) {
                         return response.json().then(err => { 

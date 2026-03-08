@@ -1,14 +1,14 @@
 
 <!-- Quick Actions -->
 <section class="quick-actions">
-    <a href="{{ url_for('admin_page') }}" 
+    <a href="{{ url_for('admin.index') }}" 
        class="qa-button {% if request.endpoint == 'admin_page' %}active{% endif %}" 
        data-icon-btn="home">
         <img src="{{ url_for('static', filename='images/icons/settings1.svg') }}" alt="Config">
         <span>Config</span>
     </a>
 
-    <a href="{{ url_for('stream_page') }}" 
+    <a href="{{ url_for('stream.index') }}" 
        class="qa-button {% if request.endpoint == 'stream_page' %}active{% endif %}" 
        data-icon-btn="folder">
         <img src="{{ url_for('static', filename='images/icons/stream3.svg') }}" alt="Live">

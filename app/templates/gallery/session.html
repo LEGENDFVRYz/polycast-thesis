@@ -14,7 +14,7 @@
         <div class="folder-container">
             <div class="folder-header">
                 <div class="folder-name">
-                    <a href="{{ url_for('gallery_page') }}" class="icon-button back-button">
+                    <a href="{{ url_for('gallery.index') }}" class="icon-button back-button">
                         <image class="back-icon" src="../../static/images/icons/arrow-right.svg">
                     </a>
                     <image class="folder-icon" src="../../static/images/icons/folder1.svg"/>
@@ -76,11 +76,11 @@
                 </h2>
 
                 {% if active_view == 'all' %}
-                    <a href="{{ url_for('session_page', galleryname=selected_gallery, view='trash') }}" title="Go to Recycle Bin">
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='trash') }}" title="Go to Recycle Bin">
                         <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" alt="Recycle Icon" width="21" height="21">
                     </a>
                 {% else %}
-                    <a href="{{ url_for('session_page', galleryname=selected_gallery, view='all') }}" title="Back to Active Sessions">
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='all') }}" title="Back to Active Sessions">
                         <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" style="filter: invert(16%) sepia(96%) saturate(6821%) hue-rotate(357deg) brightness(96%) contrast(114%);" alt="Recycle Icon" width="21" height="21">
                     </a>
                 {% endif %}
@@ -97,7 +97,7 @@
                                 <image src="../static/images/icons/folder1.svg">
                             </div>
                             <div class="item-info">
-                                    <a href="{{ url_for('folderview_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
+                                    <a href="{{ url_for('gallery.view_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
                                         <h3 class="item-title">{{ session.name }}</h3>
                                     </a>
                                     <p class="item-subtitle">BSCPE 4-3</p>
@@ -108,7 +108,7 @@
                                     <button type="button" class="icon-button recover-session-btn" 
                                             data-session-id="{{ session.id }}" 
                                             data-modal-target="#recoverSessionModal"
-                                            data-recover-url="{{ url_for('recover_session', session_id=session.id) }}"
+                                            data-recover-url="{{ url_for('gallery.recover_session', session_id=session.id) }}"
                                             title="Restore Session">
                                         <img src="{{ url_for('static', filename='images/icons/recover.svg') }}" class="edit" width="21" height="21">
                                     </button>
@@ -116,7 +116,7 @@
                                     <button type="button" class="icon-button force-delete-btn"
                                             data-session-id="{{ session.id }}"
                                             data-modal-target="#forceDeleteSessionModal"
-                                            data-force-url="{{ url_for('force_delete_session', session_id=session.id) }}"
+                                            data-force-url="{{ url_for('gallery.force_delete_session', session_id=session.id) }}"
                                             title="Permanently Delete">
                                         <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" class="delete" width="21" height="21">
                                     </button>
@@ -130,7 +130,7 @@
 
                                     <button type="button" class="icon-button delete-session-btn"
                                             data-modal-target="#deleteSessionModal"
-                                            data-delete-url="{{ url_for('delete_session', session_id=session.id) }}">
+                                            data-delete-url="{{ url_for('gallery.delete_session', session_id=session.id) }}">
                                         <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
                                     </button>
                                 {% endif %}

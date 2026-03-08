@@ -11,7 +11,7 @@
     <header class="header">
         <!-- Back Button and Session Title -->
         <div class="header-left">
-            <a href="{{ url_for('session_page', galleryname=galleryname) }}" class="icon-button back-button">
+            <a href="{{ url_for('gallery.session_page', galleryname=galleryname) }}" class="icon-button back-button">
                 <image src="../../static/images/icons/arrow-right.svg">
             </a>
             <h1>{{ sessionname }}</h1>
@@ -35,7 +35,7 @@
             {% for image in images %}
                 <div class="image-card">
                     <img 
-                        data-src="{{ url_for('serve_gallery_image', filename=base_url ~ '/' ~ image) }}"
+                        data-src="{{ url_for('gallery.serve_image', filename=base_url ~ '/' ~ image) }}"
                         alt="{{ image }}"
                         data-filename="{{ image }}"
                         class="lazy-image"

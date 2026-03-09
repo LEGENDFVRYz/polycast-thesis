@@ -19,7 +19,7 @@
         <div class="folders-list">
             {% if folders %}  
                 {% for folder in folders %}
-                    {{ folder_card(folder) }}
+                    {{ folder_card(folder, 'trash') }}
                 {% endfor %}
             {% else %}
                 <div class="empty-state">

@@ -22,8 +22,15 @@
                     {{ folder_card(folder) }}
                 {% endfor %}
             {% else %}
-                <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">
-                    <p class="fs-5 mb-1">The recycle bin is empty.</p>
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7h16m-10 4v6m4-6v6M5 7l1 12 2 2h8l2-2 1-12M9 7V4l1-1h4l1 1v3"/>
+                        </svg>
+                    </div>
+                    
+                    <h3>All Clean!</h3>
+                    <p>There are currently no galleries or sessions in the trash.</p>
                 </div>
             {% endif %}
         </div>

@@ -1,5 +1,8 @@
 
 .folders {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
     margin: 2em 1em;
 
     .folders-title{
@@ -18,6 +21,7 @@
     .folders-list {
         display: flex;           
         flex-direction: column;  
+        flex: 1;
         gap: 0.75rem;           
         
         a {
@@ -111,6 +115,48 @@
                     height: 20px;
                     filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
                 }
+            }
+        }
+
+        /* Stylings for EMPTY STATES */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            
+            padding: 3rem 1rem;
+            text-align: center;
+
+            border: 3px dashed var(--color-border);
+            border-radius: 1.5rem;
+
+            .empty-icon {
+                margin-bottom: 0.5rem;
+                color: var(--color-muted-foreground);
+                opacity: 0.5; /* Makes it look faded*/
+                
+                svg {
+                    width: 4rem;
+                    height: 4rem;
+                }
+            }
+
+            h3 {
+                margin: 0 0 0.5rem 0;
+                color: var(--color-primary);
+                font-size: 1.25rem;
+                font-weight: 600;
+                letter-spacing: -0.01em;
+            }
+
+            p {
+                margin: 0;
+                color: var(--color-muted-foreground);
+                font-size: 0.95rem;
+                max-width: 20rem; 
+                line-height: 1.5;
             }
         }
     }

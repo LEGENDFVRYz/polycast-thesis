@@ -37,8 +37,15 @@
                     {{ folder_card(folder) }}
                 {% endfor %}
             {% else %}
-                <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">
-                    <p class="fs-5 mb-1">No galleries found!</p>
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m22 19-2 2H4l-2-2V6l2-2h6l2 3h8l2 2z"/>
+                        </svg>
+                    </div>
+                    
+                    <h3>No galleries yet!</h3>
+                    <p>Start streaming to capture and organize your notes.</p>
                 </div>
             {% endif %}
         </div>

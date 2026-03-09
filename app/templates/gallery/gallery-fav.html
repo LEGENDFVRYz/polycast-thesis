@@ -22,8 +22,15 @@
                     {{ folder_card(folder) }}
                 {% endfor %}
             {% else %}
-                <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">
-                    <p class="fs-5 mb-1">You haven't favorited any galleries yet.</p>
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>
+                        </svg>
+                    </div>
+                    
+                    <h3>No favorites yet!</h3>
+                    <p>Galleries you star will appear here for quick access.</p>
                 </div>
             {% endif %}
         </div>

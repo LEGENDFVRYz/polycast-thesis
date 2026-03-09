@@ -262,11 +262,11 @@ def delete_gallery(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if gallery_item.admin_id != session['id'] : abort(403)
     
     
     try:
@@ -288,11 +288,11 @@ def update_gallery_name(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if gallery_item.admin_id != session['id'] : abort(403)
     
     # FETCH: Get the new name from the form
     new_name = request.form.get('gallery_name', '').strip()
@@ -319,11 +319,11 @@ def recover_gallery(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if gallery_item.admin_id != session['id'] : abort(403)
     
     
     try:
@@ -349,11 +349,11 @@ def force_delete_gallery(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if gallery_item.admin_id != session['id'] : abort(403)
     
     
     try:
@@ -375,11 +375,12 @@ def toggle_gallery_favorite(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
+    # CHECK: Find the specific gallery or return a 404 error
+    gallery_item = Gallery.query.get_or_404(gallery_id)
+    
     # VALIDATION: Ensure the gallery belongs to the logged in admin
     if gallery_item.admin_id != session['id'] : abort(403)
     
-    # CHECK: Find the specific gallery or return a 404 error
-    gallery_item = Gallery.query.get_or_404(gallery_id)
     
     
     try:
@@ -403,11 +404,11 @@ def update_gallery_description(gallery_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if gallery_item.admin_id != session['id'] : abort(403)
     
     try:
         data = request.get_json()
@@ -433,11 +434,11 @@ def delete_session(session_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific session or return a 404 error
     session_obj = DBSession.query.get_or_404(session_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if session_obj.admin_id != session['id'] : abort(403)
 
     
     try:
@@ -457,11 +458,11 @@ def update_session_name(session_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific session or return a 404 error
     session_obj = DBSession.query.get_or_404(session_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if session_obj.admin_id != session['id'] : abort(403)
     
     
     # FETCH: Get the new name from the form
@@ -487,11 +488,11 @@ def recover_session(session_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific session or return a 404 error
     session_obj = DBSession.query.get_or_404(session_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if session_obj.admin_id != session['id'] : abort(403)
     
     # EDGE CASES: Check if the gallery is already in the bin
     if getattr(session_obj.gallery, 'is_deleted', False):
@@ -520,11 +521,11 @@ def force_delete_session(session_id):
         flash("You must be admin in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
     
-    # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
-    
     # CHECK: Find the specific session or return a 404 error
     session_obj = DBSession.query.get_or_404(session_id)
+    
+    # VALIDATION: Ensure the gallery belongs to the logged in admin
+    if session_obj.admin_id != session['id'] : abort(403)
 
     
     try:
@@ -536,4 +537,3 @@ def force_delete_session(session_id):
         flash(f'Error: {e}', 'danger')
     
     return redirect(request.referrer or url_for('gallery.index'))
-

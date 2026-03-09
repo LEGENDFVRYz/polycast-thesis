@@ -159,7 +159,7 @@
                 addOption("Scanning ports...", "", true, true);
 
                 // 2. API Call to the new Python Route
-                fetch("{{ url_for('scan_ports_route') }}")
+                fetch("{{ url_for('admin.scan_ports') }}")
                     .then(response => {
                         if (!response.ok) {
                             return response.json().then(err => { 

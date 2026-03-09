@@ -4,6 +4,7 @@
 {% block inclusion %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/gallery.css') }}">
     <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/_quick-menu.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/components/folder-card.css') }}">
     
 {% endblock %}
 
@@ -61,7 +62,7 @@
 
 {# --- GALLERY MAIN WRAPPER --- #}
 {% block content %}
-    <div class="content gallery-wrap gallery-scope">
+    <div class="content gallery-wrap">
         
         {# CHILD TEMPLATES WILL INJECT THEIR CONTENT HERE #}
         {% block gallery_content %}{% endblock %}

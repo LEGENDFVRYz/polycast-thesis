@@ -1,14 +1,25 @@
 {% extends "gallery/index.html" %}
-{% from "gallery/_folder_card.html" import render_folder_card %}
+{% from "_components/_folder_card.html" import folder_card %}
 
 {% block gallery_content %}
+    <div class="gallery-page-header">
+        <div class="banner-illustration">
+            <img src="{{ url_for('static', filename='images/gllry-fav.webp') }}" alt="Star Heart">
+        </div>
+
+        <div class="banner-content">
+            <h2>Featured Collections.</h2>
+            <p>Access special galleries and admin highlights at your fingertips.</p>
+        </div>
+    </div>
+
     <section class="folders">
-        <h2 class="section-title">Favorites</h2>
+        <h2 class="folders-title">Favorites</h2>
         
-        <div class="folder-list">
+        <div class="folders-list">
             {% if folders %}  
                 {% for folder in folders %}
-                    {{ render_folder_card(folder) }}
+                    {{ folder_card(folder) }}
                 {% endfor %}
             {% else %}
                 <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">

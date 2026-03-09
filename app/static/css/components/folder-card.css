@@ -1,0 +1,117 @@
+
+.folders {
+    margin: 2em 1em;
+
+    .folders-title{
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        
+        margin-bottom: 0.75em;
+
+        .section-title {
+            color: #102E4A;
+        }
+    }
+
+    .folders-list {
+        display: flex;           
+        flex-direction: column;  
+        gap: 0.75rem;           
+        
+        a {
+            all: unset;      /* Resets all inherited and non-inherited properties */
+            display: inline; /* Reset display if needed */
+            text-decoration: none;
+            color: inherit;
+            font: inherit;
+            cursor: pointer; /* Optional: for link behavior */
+        }
+
+        .folder-item {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+            padding: 1rem;
+            background-color: #FFFFFF;
+            border-radius: 0.75rem;
+            box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
+            border: 1px solid #E5E7EB;
+
+            .item-icon {
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                flex-shrink: 0;
+                width: 40px;
+                height: 40px;
+                border-radius: 0.5rem;
+
+                img {
+                    width: 35px;
+                    height: 35px;
+                    filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
+                }
+            }
+
+            .item-info {
+                flex-grow: 1;
+                overflow: hidden;
+
+                .item-title {
+                    font-family: "Poppins";
+                    font-weight: 600;
+                    font-size: 1rem;
+                    color: #102E4A;
+                    white-space: nowrap; 
+                    overflow: hidden; 
+                    text-overflow: ellipsis; 
+                    min-width: 0;
+                    max-width: 48vw;
+                }
+
+                .item-subtitle {
+                    font-family: "Poppins";
+                    font-weight: 500;
+                    font-size: 0.875rem;
+                    color: #102E4A;
+                }
+            }
+
+            .icon-button {
+                background: none;      /* Removes the gray background */
+                border: none;          /* Removes the border */
+                padding: 0;            /* Removes the default spacing */
+                margin: 0;             /* Removes default margins */
+                cursor: pointer;       /* Keeps the hand cursor */
+                outline: none;         /* Optional: Removes the blue ring on click (focus) */
+
+                .edit {
+                    filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
+                }
+
+                .delete {
+                    filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
+                }
+            }
+
+            .item-menu {
+                flex-shrink: 0;
+                background: none;
+                border: none;
+                cursor: pointer;
+                color: #6B7280;
+                display: flex;
+                align-items: center ;
+
+                img {
+                    display: none;
+                    width: 20px;
+                    height: 20px;
+                    filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
+                }
+            }
+        }
+    }
+}

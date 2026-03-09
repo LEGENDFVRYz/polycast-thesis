@@ -1,6 +1,7 @@
 :root {
     /* --- Brand Color --- */
     --blue-500:  #112C75;
+    --blue-400:  #3b66bc;
     --blue-200:  #2586F5;
     --cyan-300:  #00C0DA;
 
@@ -27,6 +28,7 @@
     /* Whites Color */
     --white-900: #C0FDFB;   /* --- good white based on primary 2 --- */
     --white-800: #E5F8FF;   /* --- good white based on primary 1 --- */
+    --white-700: #f8fbff;
     --white-200: #FDFDFD;   /* --- off white --- */
     --white-100: #FFFFFF;
 
@@ -53,8 +55,8 @@
     --color-accent:                 var(--white-800);
     --color-accent-foreground:      var(--cyan-300);
 
-    --color-muted:                  var(--white-800);
-    --color-muted-foreground:       var(--slate-600);
+    --color-muted:                  var(--white-700);
+    --color-muted-foreground:       var(--blue-400);
 
 
     /* --- Surfaces --- */

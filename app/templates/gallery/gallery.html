@@ -1,18 +1,30 @@
 {% extends "gallery/index.html" %}
-{% from "gallery/_folder_card.html" import render_folder_card %}
+{% from "_components/_folder_card.html" import folder_card %}
 
 {% block gallery_content %}
+    <div class="gallery-page-header">
+        <div class="banner-illustration">
+            <img src="{{ url_for('static', filename='images/gllry-def.webp') }}" alt="Paper Home">
+        </div>
+
+        <div class="banner-content">
+            <h2>Explore the Vast Galleries.</h2>
+            <p>Most recent and shortcut access to all system notes.</p>
+        </div>
+
+    </div>
+
     <section class="recently-added">
         <h2 class="section-title">Recently Added</h2>
         <div class="recently-added__scroll-container">
             </div>
     </section>
 
-    <section class="folders mt-4">
-        <h2 class="section-title">Quick Access</h2>
-        <div class="folder-list">
+    <section class="folders">
+        <h2 class="folders-header">Quick Access</h2>
+        <div class="folders-list">
             {% for folder in folders[:5] %} {# Only show the first 5 folders on the dashboard #}
-                {{ render_folder_card(folder) }}
+                {{ folder_card(folder) }}
             {% else %}
                 <p class="text-muted">No folders available.</p>
             {% endfor %}

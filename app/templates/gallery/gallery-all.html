@@ -1,14 +1,40 @@
 {% extends "gallery/index.html" %}
-{% from "gallery/_folder_card.html" import render_folder_card %}
+{% from "_components/_folder_card.html" import folder_card %}
+
+{# 
+    Page Note:
+    This page is dedicated for all the galleries owned by the admin
+    Meant for easier management and navigation compare to gallery/home
+#}
 
 {% block gallery_content %}
+    <div class="gallery-page-header">
+        <div class="banner-illustration">
+            <img src="{{ url_for('static', filename='images/gllry-all.webp') }}" alt="Gallery Drawer">
+        </div>
+
+        <div class="banner-content">
+            <h2>Admin Captured Galleries.</h2>
+            <p>Most easiest way to manage each of your notes.</p>
+        </div>
+
+        <!-- <div class="banner-action">
+            <button class="btn-chat">
+                Let's Chat
+                <svg class="btn-arrow" width="20" height="20">
+                    <use href="#arrow-forward"></use>
+                </svg>
+            </button>
+        </div> -->
+    </div>
+
     <section class="folders">
-        <h2 class="section-title">All Galleries</h2>
+        <h2 class="folders-title">My Galleries</h2>
         
-        <div class="folder-list">
+        <div class="folders-list">
             {% if folders %}  
                 {% for folder in folders %}
-                    {{ render_folder_card(folder) }}
+                    {{ folder_card(folder) }}
                 {% endfor %}
             {% else %}
                 <div class="empty-state text-center p-5 text-muted bg-light rounded mt-3">

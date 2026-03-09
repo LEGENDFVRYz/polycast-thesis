@@ -1,141 +1,89 @@
-
-/* --- PHASE 0 of 3: GALLERY SCOPE STYLINGS --- */
-.gallery-scope {
+/* --- PHASE 1 of 3: GALLERY --- */
+div.gallery-wrap{
     display: flex;
     flex-direction: column;
     flex: 1;
     gap: 1rem;
 
-    /* background: var(--color-primary-foreground-2);    temp[orary */
     padding: 0.5rem 1em;
     background: var(--color-background);
-    /* box-shadow: 0 6px 12.1px 0px #6eb2ff8c; */
     border-radius: 2em;
 
-    /* --- Folders List --- */
-    .folders {
-        /* margin-bottom: 2rem; */
-        .folder-header{
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            width: 100%;
-            font-size: 22px;
 
-            .section-title {
-                color: #102E4A;
+    .gallery-page-header {
+        width: 100%;
+        padding: 0.25rem 5rem;
+
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background-color: var(--color-muted);
+
+        border: 1px solid var(--color-border);
+        border-radius: 1.5rem;
+        gap: 1.5rem;
+
+        .banner-illustration {
+            display: flex;
+            align-items: center;
+
+            img {
+                width: 100%;
+                height: auto;
             }
         }
 
-        .folder-list {
-            display: flex;           
-            flex-direction: column;  
-            gap: 0.75rem;           
-            
-            a {
-                all: unset;      /* Resets all inherited and non-inherited properties */
-                display: inline; /* Reset display if needed */
-                text-decoration: none;
-                color: inherit;
-                font: inherit;
-                cursor: pointer; /* Optional: for link behavior */
+        .banner-content {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+
+            h2 {
+                color: var(--color-primary);
+                font-size: 1.75rem;
+                font-weight: 600;
+                letter-spacing: -0.02em;
             }
 
-            .folder-item {
+            p {
+                color: var(--color-muted-foreground);
+                font-size: 1rem;
+                font-weight: 500;
+            }
+        }
+
+        .banner-action {
+
+            .btn-chat {
                 display: flex;
                 align-items: center;
-                gap: 1rem;
-                padding: 1rem;
-                background-color: #FFFFFF;
-                border-radius: 0.75rem;
-                box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-                border: 1px solid #E5E7EB;
+                gap: 0.5rem;
+                background-color: var(--color-secondary);
+                color: var(--color-primary-foreground);
+                
+                border: none;
+                border-radius: 50px;
+                padding: 0.75rem 1.5rem;
+                font-size: 15px;
+                font-weight: 600;
+                
+                cursor: pointer;
+                box-shadow: 0 8px 24px rgba(46, 129, 255, 0.3);
+                transition: transform 0.2s ease, background-color 0.2s ease;
 
-                .item-icon {
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    flex-shrink: 0;
-                    width: 40px;
-                    height: 40px;
-                    border-radius: 0.5rem;
-
-                    img {
-                        width: 35px;
-                        height: 35px;
-                        filter: invert(41%) sepia(44%) saturate(2952%) hue-rotate(202deg) brightness(95%) contrast(102%);
-                    }
+                &:hover {
+                    transform: translateY(-1px);
                 }
 
-                .item-info {
-                    flex-grow: 1;
-                    overflow: hidden;
-
-                    .item-title {
-                        font-family: "Poppins";
-                        font-weight: 600;
-                        font-size: 1rem;
-                        color: #102E4A;
-                        white-space: nowrap; 
-                        overflow: hidden; 
-                        text-overflow: ellipsis; 
-                        min-width: 0;
-                        max-width: 48vw;
-                    }
-
-                    .item-subtitle {
-                        font-family: "Poppins";
-                        font-weight: 500;
-                        font-size: 0.875rem;
-                        color: #102E4A;
-                    }
-                }
-
-                .icon-button {
-                    background: none;      /* Removes the gray background */
-                    border: none;          /* Removes the border */
-                    padding: 0;            /* Removes the default spacing */
-                    margin: 0;             /* Removes default margins */
-                    cursor: pointer;       /* Keeps the hand cursor */
-                    outline: none;         /* Optional: Removes the blue ring on click (focus) */
-
-                    .edit {
-                        filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
-                    }
-
-                    .delete {
-                        filter: invert(24%) sepia(68%) saturate(1918%) hue-rotate(336deg) brightness(109%) contrast(96%);
-                    }
-                }
-
-                .item-menu {
-                    flex-shrink: 0;
-                    background: none;
-                    border: none;
-                    cursor: pointer;
-                    color: #6B7280;
-                    display: flex;
-                    align-items: center ;
-
-                    img {
-                        display: none;
-                        width: 20px;
-                        height: 20px;
-                        filter: invert(7%) sepia(31%) saturate(852%) hue-rotate(167deg) brightness(98%) contrast(97%);
-                    }
+                svg {
+                    fill: var(--color-primary-foreground);
                 }
             }
         }
     }
-}
 
 
-
-/* --- PHASE 1 of 3: GALLERY --- */
-div.gallery-wrap{
-    /* display: flex; */
-    /* flex-direction: column; */
-    /* flex: 1; */
 
 
     /* --- Recents --- */

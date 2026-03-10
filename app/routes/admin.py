@@ -209,7 +209,14 @@ def configure():
             print("[PROTO] Serial thread started successfully")
         else:
             print("[PROTO] Thread was already running")
-    
+
+        # Update the status flags
+        g.admin_status._update_state(
+            status="CONFIGURED",
+        )
+        print(f"[ADMIN] {admin_name} finished configuration.")
+        flash(f"Connected to device on {selected_port}!", "success")
+        
     except Exception as e:
         # Feedback for failed attempt
         print(f"[ADMIN] Configuration failed: {e}")
@@ -250,7 +257,7 @@ def start_host():
     
     if not gallery_name or not session_name:
         # Ensure Valid Entries, else halt the operation
-        flash("Gallery and Session names are required.", "error")
+        flash("Gallery/Session names are required.", "error")
         return redirect(url_for("admin.index"))
     
     print(f"[ADMIN] {admin_name} is starting host...")

@@ -13,130 +13,118 @@
     <div class="session-wrap">
 
         <!-- Gallery Banner -->
-        <div class="folder-container">
-            <div class="folder-header">
-                <div class="folder-name">
-                    <a href="{{ url_for('gallery.index') }}" class="icon-button back-button">
-                        <image class="back-icon" src="../../static/images/icons/arrow-right.svg">
+        <div class="gallery-banner">
+
+            <div class="banner-header">
+                <div class="header-left">
+
+                    <a href="{{ url_for('gallery.index') }}" class="back-btn" title="Back">
+                        <svg  width="16" height="16">
+                            <use href="#gllry-banner-back"></use>
+                        </svg>
                     </a>
-                    <image class="folder-icon" src="{{ url_for('static', filename='images/icons/folder1.svg') }}"/>
-                    <p class="title">{{ selected_gallery }}</p>
+
+                    <div class="folder-avatar">
+                        <svg width="20" height="20">
+                            <use href="#gllry-banner-folder"></use>
+                        </svg>
+                    </div>
+
+                    <div class="header-titles">
+                        <span class="gallery-title">{{ selected_gallery }}</span>
+                        <span class="gallery-subtitle">Gallery Overview</span>
+                    </div>
+
                 </div>
-                <a href="#" class="details-link" id="detailsToggle">
-                    <image class="info-icon" src="{{ url_for('static', filename='images/icons/information.svg') }}"/>
-                </a>
+
+                <button class="info-btn" id="detailsToggle" title="Toggle Details">
+                    <svg width="18" height="18">
+                        <use href="#gllry-banner-info"></use>
+                    </svg>
+                </button>
             </div>
-            
-            <div class="card-content">
-                <div class="folder-details" data-gallery-id="{{ gallery.id }}">
-                    <div class="detail-row">
-                        <span class="detail-label">Gallery Name</span>
-                        <span class="detail-value">{{ gallery.name }}</span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Total Sessions</span>
-                        <span class="detail-value">{{ sessions|length }} session{% if sessions|length != 1 %}s{% endif %}</span>
-                    </div>
-                    <div class="detail-row">
-                        <span class="detail-label">Status</span>
-                        <span class="detail-value">{% if gallery.is_favorite %}<span class="favorite-badge">★ Favorite</span>{% else %}Active{% endif %}</span>
-                    </div>
-                    <div class="detail-row description-row">
-                        <span class="detail-label">Description</span>
-                        <div class="description-container">
-                            {% if gallery.description %}
-                                <div class="description-display">
-                                    <span class="description-text">{{ gallery.description }}</span>
-                                    <button type="button" class="description-edit-btn" title="Edit description">
-                                        <img src="{{ url_for('static', filename='images/icons/pen-line.svg') }}" alt="Edit" width="16" height="16">
-                                    </button>
-                                </div>
-                            {% endif %}
-                            <input type="text" 
-                                   class="description-input {% if gallery.description %}hidden{% endif %}" 
-                                   value="{{ gallery.description or '' }}"
-                                   placeholder="Add a description..."
-                                   data-gallery-id="{{ gallery.id }}"/>
+
+            <div class="banner-body" id="detailsPanel">
+
+                <div class="meta-columns">
+
+                    <div class="meta-cell">
+                        <div class="detail-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7a9ab8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <rect x="3" y="3" width="18" height="18" rx="3"/>
+                                <path d="M3 9h18"/>
+                            </svg>
+                        </div>
+                        <div class="detail-content">
+                            <span class="detail-label">Gallery Name</span>
+                            <span class="detail-value">{{ selected_gallery }}</span>
                         </div>
                     </div>
 
-                    <!-- Display output -->
-                    <!--<div class="specifics">
-                        <p id="descriptionDisplay" class="detail-value" 
-                            style="display: inline-block; margin-right: 10px;"></p>
-                        <button id="editBtn" style="margin-right: 6px; margin-top: 10px;">Edit</button>
-                        <button id="deleteBtn">Delete</button>
-                    </div>-->
+                    <div class="meta-cell">
+                        <div class="detail-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7a9ab8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                                <circle cx="9" cy="7" r="4"/>
+                                <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+                                <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                            </svg>
+                        </div>
+                        <div class="detail-content">
+                            <span class="detail-label">Total Sessions</span>
+                            <span class="detail-value">
+                                <span class="sessions-pill">{{ sessions|length }} sessions</span>
+                            </span>
+                        </div>
+                    </div>
+
+                    <div class="meta-cell">
+                        <div class="detail-icon">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7a9ab8" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <polyline points="12 6 12 12 16 14"/>
+                            </svg>
+                        </div>
+                        <div class="detail-content">
+                            <span class="detail-label">Status</span>
+                            <span class="detail-value">Active</span>
+                            </div>
+                    </div>
 
                 </div>
+
+                <div class="detail-row" data-gallery-id="1">
+                    <div class="detail-icon">
+                        <svg width="14" height="14">
+                            <use href="#gllry-banner-detail"></use>
+                        </svg>
+                    </div>
+                    <div class="detail-content">
+                        <span class="detail-label">Description</span>
+
+                        <div class="description-display {% if not gallery.description %}hidden{% endif %}" id="descDisplay">
+                            <span class="description-text" id="descText">{{ gallery.description | default('', true) }}</span>
+                            <button class="description-edit-btn" id="descEditBtn" title="Edit">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                                </svg>
+                            </button>
+                        </div>
+
+                        <input
+                            type="text"
+                            class="description-input {% if gallery.description %}hidden{% endif %}"
+                            id="descInput"
+                            placeholder="Add a description…"
+                            value="{{ gallery.description | default('', true) }}"
+                        />
+
+                    </div>
+                </div>
             </div>
-
-            <script>
-                const input = document.getElementById("descriptionInput");
-                const display = document.getElementById("descriptionDisplay");
-                const editBtn = document.getElementById("editBtn");
-                const deleteBtn = document.getElementById("deleteBtn");
-
-                // Load saved description from localStorage on page load
-                window.addEventListener("DOMContentLoaded", () => {
-                    const savedDesc = localStorage.getItem("description");
-                    if (savedDesc) {
-                        display.textContent = savedDesc;
-                        editBtn.style.display = "inline-block";
-                        deleteBtn.style.display = "inline-block";
-                    }
-                });
-
-                // Handle Enter key to submit description
-                input.addEventListener("keydown", function(event) {
-                    if (event.key === "Enter") {
-                        const text = input.value.trim();
-                        if (text !== "") {
-                            display.textContent = text;
-
-                            // Save to localStorage
-                            localStorage.setItem("description", text);
-
-                            // Show buttons
-                            editBtn.style.display = "inline-block";
-                            deleteBtn.style.display = "inline-block";
-                        }
-
-                        input.value = "";
-                        input.blur();
-                    }
-                });
-
-                // Edit description
-                editBtn.addEventListener("click", function() {
-                    input.value = display.textContent;
-                    input.focus();
-                });
-
-                // Delete description
-                deleteBtn.addEventListener("click", function() {
-                    display.textContent = "";
-
-                    // Remove from localStorage
-                    localStorage.removeItem("description");
-
-                    editBtn.style.display = "none";
-                    deleteBtn.style.display = "none";
-                });
-            </script>
-
-
-            <!-- End of Addition by Timothy @ 11/27/2025-->
-
-
-
-
-            <!-- <div class="hidden-details" id="folderDetails">
-                <p><strong>Course:</strong> Database Management Systems</p>
-                <p><strong>Section:</strong> BSCpE 4-3</p>
-                <p><strong>Professor:</strong> Dr. A. Smith</p>
-            </div> -->
         </div>
+            
 
 
         <!-- Session Listing Sections -->
@@ -241,8 +229,8 @@
                 {% else %}
                     <div class="empty-state">
                         <div class="empty-icon">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7h16m-10 4v6m4-6v6M5 7l1 12 2 2h8l2-2 1-12M9 7V4l1-1h4l1 1v3"/>
+                            <svg class="folder-icon" width="24" height="24">
+                                <use href="#gllry-calendar"></use>
                             </svg>
                         </div>
                         
@@ -259,106 +247,170 @@
 
     <!-- DETAILS TOGGLE SCRIPT -->
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const toggleButton = document.getElementById('detailsToggle');
-            const cardContent = document.querySelector('.card-content'); 
-            toggleButton.addEventListener('click', function(event) {
-                event.preventDefault(); 
-                cardContent.classList.toggle('hidden');
+        // ── Info toggle ──
+        const toggle = document.getElementById('detailsToggle');
+        const panel  = document.getElementById('detailsPanel');
+
+        if (toggle && panel) {
+            toggle.addEventListener('click', () => {
+                panel.classList.toggle('collapsed');
             });
-        });
+        }
+
+        // ── Description logic ──
+        const descInput   = document.getElementById('descInput');
+        const descDisplay = document.getElementById('descDisplay');
+        const descText    = document.getElementById('descText');
+        const descEditBtn = document.getElementById('descEditBtn');
+
+        // Pre-fill from server — replace '' with "{{ gallery.description|default('') }}" in Jinja
+        const saved = '';
+        
+        if (saved && descText && descInput && descDisplay) {
+            descText.textContent = saved;
+            descInput.value = saved;
+            descDisplay.classList.remove('hidden');
+            descInput.classList.add('hidden');
+        }
+
+        if (descInput && descDisplay && descText) {
+            descInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    const val = descInput.value.trim();
+                    if (val) {
+                        descText.textContent = val;
+                        descDisplay.classList.remove('hidden');
+                        descInput.classList.add('hidden');
+                        // → fire PATCH /api/gallery/:id/description here utilizing fetch() in Flask
+                    }
+                    descInput.blur();
+                }
+                if (e.key === 'Escape') {
+                    descInput.classList.add('hidden');
+                    if (descText.textContent) {
+                        descDisplay.classList.remove('hidden');
+                    }
+                    descInput.blur();
+                }
+            });
+        }
+
+        if (descEditBtn && descDisplay && descInput && descText) {
+            descEditBtn.addEventListener('click', () => {
+                descDisplay.classList.add('hidden');
+                descInput.classList.remove('hidden');
+                descInput.value = descText.textContent;
+                descInput.focus();
+            });
+        }
     </script>
 
     <!-- DESCRIPTION INLINE EDIT SCRIPT -->
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const descriptionContainer = document.querySelector('.description-container');
-            if (!descriptionContainer) return;
+            const detailRow = document.querySelector('.detail-row');
+            if (!detailRow) return;
             
-            const descriptionDisplay = descriptionContainer.querySelector('.description-display');
-            const descriptionInput = descriptionContainer.querySelector('.description-input');
-            const editBtn = descriptionContainer.querySelector('.description-edit-btn');
-            const galleryId = descriptionInput.dataset.galleryId;
+            // Grab the ID right from your HTML data attribute
+            const galleryId = detailRow.getAttribute('data-gallery-id') || "{{ gallery.id }}";
             
-            // Click edit button to edit
-            if (editBtn) {
-                editBtn.addEventListener('click', function() {
-                    descriptionDisplay.classList.add('hidden');
-                    descriptionInput.classList.remove('hidden');
-                    descriptionInput.focus();
-                    descriptionInput.select();
+            const descDisplay = document.getElementById('descDisplay');
+            const descText = document.getElementById('descText');
+            const descEditBtn = document.getElementById('descEditBtn');
+            const descInput = document.getElementById('descInput');
+            
+            if (!descInput || !descDisplay || !descText) return;
+
+            // Track the last saved value to avoid redundant API calls
+            let originalValue = descInput.value.trim();
+
+            // 1. Click edit button to edit
+            if (descEditBtn) {
+                descEditBtn.addEventListener('click', function() {
+                    descDisplay.classList.add('hidden');
+                    descInput.classList.remove('hidden');
+                    descInput.focus();
+                    
+                    // Only select text if there's actually text to select
+                    if (descInput.value) {
+                        descInput.select();
+                    }
                 });
             }
-            
-            // Save on blur or Enter key
+
+            // 2. Manage the UI state based on whether text exists
+            function restoreUI() {
+                if (originalValue) {
+                    // We have a description: show text, hide input
+                    descDisplay.classList.remove('hidden');
+                    descInput.classList.add('hidden');
+                } else {
+                    // No description: keep input visible, hide text display
+                    descDisplay.classList.add('hidden');
+                    descInput.classList.remove('hidden');
+                }
+            }
+
+            // 3. Save Logic
             function saveDescription() {
-                const newDescription = descriptionInput.value.trim();
+                const newDescription = descInput.value.trim();
+                
+                // If the user didn't change anything, just reset UI and exit
+                if (newDescription === originalValue) {
+                    restoreUI();
+                    return;
+                }
                 
                 fetch(`/gallery/${galleryId}/description`, {
-                    method: 'POST',
+                    method: 'POST', // Check if your route expects POST or PATCH
                     headers: {
                         'Content-Type': 'application/json',
+                        // 'X-CSRFToken': csrf_token // <-- You might need this if using Flask-WTF
                     },
                     body: JSON.stringify({ description: newDescription })
                 })
-                .then(response => response.json())
-                .then(data => {
-                    if (data.success) {
-                        if (newDescription) {
-                            // Create or update display element
-                            let displayEl = descriptionContainer.querySelector('.description-display');
-                            if (!displayEl) {
-                                displayEl = document.createElement('div');
-                                displayEl.className = 'description-display';
-                                
-                                const textEl = document.createElement('span');
-                                textEl.className = 'description-text';
-                                
-                                const btnEl = document.createElement('button');
-                                btnEl.type = 'button';
-                                btnEl.className = 'description-edit-btn';
-                                btnEl.title = 'Edit description';
-                                btnEl.innerHTML = '<img src="/static/images/icons/pen-line.svg" alt="Edit" width="16" height="16">';
-                                btnEl.addEventListener('click', function() {
-                                    displayEl.classList.add('hidden');
-                                    descriptionInput.classList.remove('hidden');
-                                    descriptionInput.focus();
-                                    descriptionInput.select();
-                                });
-                                
-                                displayEl.appendChild(textEl);
-                                displayEl.appendChild(btnEl);
-                                descriptionContainer.insertBefore(displayEl, descriptionInput);
-                            }
-                            
-                            displayEl.querySelector('.description-text').textContent = newDescription;
-                            displayEl.classList.remove('hidden');
-                            descriptionInput.classList.add('hidden');
-                        } else {
-                            // No description - keep input visible, remove display
-                            const displayEl = descriptionContainer.querySelector('.description-display');
-                            if (displayEl) displayEl.remove();
-                            descriptionInput.classList.remove('hidden');
-                        }
+                .then(async response => {
+                    // Check what kind of data the server actually sent back
+                    const contentType = response.headers.get("content-type");
+                    if (contentType && contentType.indexOf("application/json") !== -1) {
+                        return response.json(); // It's JSON, safe to parse
+                    } else {
+                        // It's HTML or something else! Grab the text for debugging
+                        const text = await response.text();
+                        console.error("Server returned HTML instead of JSON:", text.substring(0, 100) + "...");
+                        throw new Error(`Server returned a non-JSON response (Status: ${response.status}). Check Flask terminal.`);
                     }
                 })
-                .catch(err => console.error('Error saving description:', err));
+                .then(data => {
+                    if (data.success) {
+                        originalValue = newDescription;
+                        descText.textContent = newDescription;
+                        restoreUI();
+                    } else {
+                        console.error('Failed to save description:', data.message);
+                        descInput.value = originalValue;
+                        restoreUI();
+                    }
+                })
+                .catch(err => {
+                    console.error('Error saving description:', err.message);
+                    descInput.value = originalValue;
+                    restoreUI();
+                });
             }
             
-            descriptionInput.addEventListener('blur', saveDescription);
-            descriptionInput.addEventListener('keydown', function(e) {
+            // 4. Input Event Listeners
+            descInput.addEventListener('blur', saveDescription);
+            
+            descInput.addEventListener('keydown', function(e) {
                 if (e.key === 'Enter') {
                     e.preventDefault();
-                    descriptionInput.blur();
+                    descInput.blur(); // Blurring triggers the saveDescription function
                 }
                 if (e.key === 'Escape') {
-                    // Cancel editing - restore original value
-                    const displayEl = descriptionContainer.querySelector('.description-display');
-                    if (displayEl) {
-                        descriptionInput.value = displayEl.querySelector('.description-text').textContent;
-                        displayEl.classList.remove('hidden');
-                        descriptionInput.classList.add('hidden');
-                    }
+                    // Cancel editing: restore original text and UI
+                    descInput.value = originalValue;
+                    restoreUI();
                 }
             });
         });

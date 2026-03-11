@@ -1,16 +1,18 @@
 {% from '_components/_modal.html' import modal_shell %}
 
-{% extends "_layouts/base.html" %}
+{% extends "gallery/index.html" %}
 
 {% block inclusion %}
-    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/gallery.css') }}">
-    
+    {{ super() }}
+
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/session.css') }}">
+
 {% endblock %}
 
 {% block content %}
-    <div class="session-wrap gallery-scope">
+    <div class="session-wrap">
 
-        <!-- Session Identifier -->
+        <!-- Gallery Banner -->
         <div class="folder-container">
             <div class="folder-header">
                 <div class="folder-name">
@@ -137,81 +139,116 @@
         </div>
 
 
-        <!-- Session Folders -->
-        <section class="folders">
-            <div class="folder-header">
-                <h2 class="section-title">
-                    {% if active_view == 'trash' %}Deleted {% endif %}Sessions ({{ sessions|length }}):
-                </h2>
+        <!-- Session Listing Sections -->
+        <section class="sessions-section">
 
-                {% if active_view == 'all' %}
-                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='trash') }}" title="Go to Recycle Bin">
-                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" alt="Recycle Icon" width="21" height="21">
+            <div class="sessions-tabs">
+                <div class="tabs-list">
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='all') }}" 
+                    class="tab-item {% if active_view == 'all' %}active{% endif %}">
+                        All Sessions
                     </a>
-                {% else %}
-                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='all') }}" title="Back to Active Sessions">
-                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="recycle-toggle" style="filter: invert(16%) sepia(96%) saturate(6821%) hue-rotate(357deg) brightness(96%) contrast(114%);" alt="Recycle Icon" width="21" height="21">
+                    
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='trash') }}" 
+                    class="tab-item {% if active_view == 'trash' %}active{% endif %}">
+                        Deleted
                     </a>
-                {% endif %}
+                </div>
             </div>
-            <div class="folder-list">
-                
-                <!-- Loop through all available folders -->
+
+            <div class="session-list">
                 {% if sessions %}  
                     {% for session in sessions %}
+                        <div class="session-card">
+                            <a href="{{ url_for('gallery.view_page', galleryname=selected_gallery, sessionname=session.name) }}" class="card-link-overlay"></a>
 
-                        <div class="folder-item">
-                            <div class="item-icon">
-                                <!-- Use a custom filled-in folder icon -->
-                                <image src="{{ url_for('static', filename='images/icons/folder1.svg') }}">
-                            </div>
-                            <div class="item-info">
-                                    <a href="{{ url_for('gallery.view_page', galleryname=selected_gallery, sessionname=session.name) }}" class="folder-link-wrapper">
-                                        <h3 class="item-title">{{ session.name }}</h3>
-                                    </a>
-                                    <p class="item-subtitle">BSCPE 4-3</p>
+                            <div class="card-main">
+                                <div class="card-header">
+                                    <h3 class="card-title">{{ session.name }}</h3>
+                                    <span class="badge badge-green">6 Days Ago</span>
                                 </div>
 
-                            {% if is_current_user %}
-                                {% if active_view == 'trash' %}
-                                    <button type="button" class="icon-button recover-session-btn" 
-                                            data-session-id="{{ session.id }}" 
-                                            data-modal-target="#recoverSessionModal"
-                                            data-recover-url="{{ url_for('gallery.recover_session', session_id=session.id) }}"
-                                            title="Restore Session">
-                                        <img src="{{ url_for('static', filename='images/icons/recover.svg') }}" class="edit" width="21" height="21">
-                                    </button>
-                                    
-                                    <button type="button" class="icon-button force-delete-btn"
-                                            data-session-id="{{ session.id }}"
-                                            data-modal-target="#forceDeleteSessionModal"
-                                            data-force-url="{{ url_for('gallery.force_delete_session', session_id=session.id) }}"
-                                            title="Permanently Delete">
-                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" width="21" height="21">
-                                    </button>
-                                {% else %}
-                                    <button type="button" class="icon-button edit-session-btn"
-                                            data-modal-target="#editSessionModal"
-                                            data-session-id="{{ session.id }}"
-                                            data-session-name="{{ session.name }}">
-                                        <img src="{{ url_for('static', filename='images/icons/edit2.svg') }}" class="edit" alt="Edit Icon" width="23" height="23">
-                                    </button>
+                                <p class="card-description">BSCPE 4-3 • Showcasing captured session data and elements.</p>
 
-                                    <button type="button" class="icon-button delete-session-btn"
-                                            data-modal-target="#deleteSessionModal"
-                                            data-delete-url="{{ url_for('gallery.delete_session', session_id=session.id) }}">
-                                        <img src="{{ url_for('static', filename='images/icons/trash.svg') }}" class="delete" alt="Trash Icon" width="21" height="21">
-                                    </button>
-                                {% endif %}
-                            {% endif %}
+                                <div class="card-details">
+                                    <div class="detail-group">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="calendar-icon">
+                                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
+                                            <line x1="16" y1="2" x2="16" y2="6"></line>
+                                            <line x1="8" y1="2" x2="8" y2="6"></line>
+                                            <line x1="3" y1="10" x2="21" y2="10"></line>
+                                        </svg>
+                                        <span class="creator-tag">Dec 12 2025</span>
+                                    </div>
+                                    <div class="detail-group">
+                                        <div class="avatar"></div>
+                                        <span class="creator-tag">By Current Admin</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="card-actions">
+                                <div class="action-buttons">
+                                    
+                                    {% if is_current_user %}
+                                        {% if active_view == 'trash' %}
+                                            <button type="button" class="icon-btn recover-btn" 
+                                                    data-session-id="{{ session.id }}" 
+                                                    data-modal-target="#recoverSessionModal"
+                                                    data-recover-url="{{ url_for('gallery.recover_session', session_id=session.id) }}"
+                                                    title="Restore Session">
+                                                <img src="{{ url_for('static', filename='images/icons/recover.svg') }}" width="18" height="18">
+                                            </button>
+                                            
+                                            <button type="button" class="icon-btn danger-btn force-delete-btn"
+                                                    data-session-id="{{ session.id }}"
+                                                    data-modal-target="#forceDeleteSessionModal"
+                                                    data-force-url="{{ url_for('gallery.force_delete_session', session_id=session.id) }}"
+                                                    title="Permanently Delete">
+                                                <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" width="18" height="18">
+                                            </button>
+                                        {% else %}
+                                            <button type="button" class="icon-btn edit-btn"
+                                                    data-modal-target="#editSessionModal"
+                                                    data-session-id="{{ session.id }}"
+                                                    data-session-name="{{ session.name }}"
+                                                    title="Edit Session">
+                                                <svg class="folder-icon" width="24" height="24">
+                                                    <use href="#gllry-folder-edit"></use>
+                                                </svg>
+                                            </button>
+
+                                            <button type="button" class="icon-btn danger-btn delete-btn"
+                                                    data-modal-target="#deleteSessionModal"
+                                                    data-delete-url="{{ url_for('gallery.delete_session', session_id=session.id) }}">
+                                                <svg class="folder-icon" width="24" height="24">
+                                                    <use href="#gllry-folder-bins"></use>
+                                                </svg>
+                                            </button>
+                                        {% endif %}
+                                    {% endif %}
+                                </div>
+
+                                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                                </svg>
+                            </div>
                         </div>
                     {% endfor %}
                 {% else %}
-                    <p>No Session found!</p>
+                    <div class="empty-state">
+                        <div class="empty-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7h16m-10 4v6m4-6v6M5 7l1 12 2 2h8l2-2 1-12M9 7V4l1-1h4l1 1v3"/>
+                            </svg>
+                        </div>
+                        
+                        <h3>Everything is fine</h3>
+                        <p>There are currently no deleted sessions inside this gallery.</p>
+                    </div>
                 {% endif %}
-
             </div>
         </section>
+
     </div>
 
 

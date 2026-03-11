@@ -438,7 +438,7 @@ def delete_session(session_id):
     session_obj = DBSession.query.get_or_404(session_id)
     
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
+    if session_obj.gallery.admin_id != session['id'] : abort(403)
 
     
     try:
@@ -462,7 +462,7 @@ def update_session_name(session_id):
     session_obj = DBSession.query.get_or_404(session_id)
     
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
+    if session_obj.gallery.admin_id != session['id'] : abort(403)
     
     
     # FETCH: Get the new name from the form
@@ -492,7 +492,7 @@ def recover_session(session_id):
     session_obj = DBSession.query.get_or_404(session_id)
     
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
+    if session_obj.gallery.admin_id != session['id'] : abort(403)
     
     # EDGE CASES: Check if the gallery is already in the bin
     if getattr(session_obj.gallery, 'is_deleted', False):
@@ -525,7 +525,7 @@ def force_delete_session(session_id):
     session_obj = DBSession.query.get_or_404(session_id)
     
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.admin_id != session['id'] : abort(403)
+    if session_obj.gallery.admin_id != session['id'] : abort(403)
 
     
     try:

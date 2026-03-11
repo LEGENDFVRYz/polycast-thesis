@@ -191,23 +191,27 @@
                                     
                                     {% if is_current_user %}
                                         {% if active_view == 'trash' %}
-                                            <button type="button" class="icon-btn recover-btn" 
+                                            <button type="button" class="icon-btn recover-session-btn" 
                                                     data-session-id="{{ session.id }}" 
                                                     data-modal-target="#recoverSessionModal"
                                                     data-recover-url="{{ url_for('gallery.recover_session', session_id=session.id) }}"
                                                     title="Restore Session">
-                                                <img src="{{ url_for('static', filename='images/icons/recover.svg') }}" width="18" height="18">
+                                                <svg class="folder-icon" width="24" height="24">
+                                                    <use href="#gllry-folder-rev"></use>
+                                                </svg>
                                             </button>
                                             
-                                            <button type="button" class="icon-btn danger-btn force-delete-btn"
+                                            <button type="button" class="icon-btn force-delete-btn"
                                                     data-session-id="{{ session.id }}"
                                                     data-modal-target="#forceDeleteSessionModal"
                                                     data-force-url="{{ url_for('gallery.force_delete_session', session_id=session.id) }}"
                                                     title="Permanently Delete">
-                                                <img src="{{ url_for('static', filename='images/icons/trash-permanent.svg') }}" width="18" height="18">
+                                                <svg class="folder-icon" width="24" height="24">
+                                                    <use href="#gllry-folder-del"></use>
+                                                </svg>
                                             </button>
                                         {% else %}
-                                            <button type="button" class="icon-btn edit-btn"
+                                            <button type="button" class="icon-btn edit-session-btn"
                                                     data-modal-target="#editSessionModal"
                                                     data-session-id="{{ session.id }}"
                                                     data-session-name="{{ session.name }}"
@@ -217,7 +221,7 @@
                                                 </svg>
                                             </button>
 
-                                            <button type="button" class="icon-btn danger-btn delete-btn"
+                                            <button type="button" class="icon-btn delete-session-btn"
                                                     data-modal-target="#deleteSessionModal"
                                                     data-delete-url="{{ url_for('gallery.delete_session', session_id=session.id) }}">
                                                 <svg class="folder-icon" width="24" height="24">

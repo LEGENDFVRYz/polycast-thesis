@@ -77,14 +77,13 @@ class SerialStreamer:
         Unpacks UWB bytes into a usable dictionary.
         """
         try:
-            # Format: Type(1), ID(4), x(4), y(4), d0..d2(12), ts(4)
-            data = struct.unpack('<BIfffffI', payload)
+            # Format: Type(1), ID(4), d0..d2(12), ts(4)
+            data = struct.unpack('<BIfffI', payload)
             return {
                 'type': 'UWB',
                 'id': data[1],
-                'pos': (data[2], data[3]),
-                'dists': (data[4], data[5], data[6]),
-                'ts': data[7] # Hardware Timestamp
+                'dists': (data[2], data[3], data[4]),
+                'ts': data[5] # Hardware Timestamp
             }
         except Exception as e:
             return None
@@ -164,6 +163,59 @@ class SerialStreamer:
         return packets_found
 
 
+# ==============================================================================
+# PACKET LOSS TRACKER
+#   - Tracks sequential IDs per sensor type and counts dropped packets
+# ==============================================================================
+class PacketLossTracker:
+    def __init__(self, name):
+        self.name = name
+        self.last_id = None         # Last seen packet ID
+        self.received = 0           # Total packets received
+        self.dropped = 0            # Total packets dropped (gaps in ID)
+
+    def update(self, packet_id):
+        """
+        Call this with every received packet ID.
+        Detects gaps between last_id and current packet_id.
+        """
+        if self.last_id is None:
+            # First packet — initialize only
+            self.last_id = packet_id
+            self.received += 1
+            return
+
+        gap = packet_id - self.last_id
+
+        if gap > 1:
+            # Gap detected: 
+            self.dropped += gap - 1
+        elif gap <= 0:
+            # EDGE CASES: Out-of-order, skips (in case sensor disconnect)
+            return
+
+        self.received += 1
+        self.last_id = packet_id
+
+    @property
+    def total_expected(self):
+        return self.received + self.dropped
+
+    @property
+    def loss_pct(self):
+        if self.total_expected == 0:
+            return 0.0
+        return (self.dropped / self.total_expected) * 100.0
+
+    def summary_lines(self):
+        """Returns a list of formatted strings for display."""
+        return [
+            f"  Received : {self.received}",
+            f"  Dropped  : {self.dropped}",
+            f"  Expected : {self.total_expected}",
+            f"  Loss     : {self.loss_pct:.2f}%",
+        ]
+
 
 # ==============================================================================
 # DEBUG MODE
@@ -181,7 +233,7 @@ if __name__ == "__main__":
     #   > 'BOTH',   (Shows both sensor data)
     #   > 'IMU',    (Shows IMU data)
     #   > 'UWB'     (Shows UWB data)
-    FILTER_MODE = 'BOTH'
+    FILTER_MODE = 'UWB'
 
     # --- DISPLAY SETTINGS ---
     #   > 0  =  real-speed of transfer between sender and reciever + unpacker.py
@@ -191,6 +243,10 @@ if __name__ == "__main__":
     # Dashboard Data Store
     latest = {'imu': None, 'uwb': None}
     last_draw_time = 0
+
+    # --- PACKET LOSS TRACKERS ---
+    imu_tracker = PacketLossTracker("IMU")
+    uwb_tracker = PacketLossTracker("UWB")
     
     
     # --- MAIN DEBUGGER  ---
@@ -204,6 +260,8 @@ if __name__ == "__main__":
             for pkt in new_packets:
                 if pkt['type'] == 'IMU':
                     latest['imu'] = pkt
+                    imu_tracker.update(pkt['id'])   # <-- track IMU packet ID
+
                     # In History mode, print immediately
                     if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'IMU']:
                         # Print last sample of batch
@@ -212,8 +270,10 @@ if __name__ == "__main__":
                         
                 elif pkt['type'] == 'UWB':
                     latest['uwb'] = pkt
+                    uwb_tracker.update(pkt['id'])   # <-- track UWB packet ID
+
                     if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'UWB']:
-                        print(f">>> [UWB #{pkt['id']}] Pos: {pkt['pos']}")
+                        print(f">>> [UWB #{pkt['id']}] Dists: {pkt['dists']}")
 
             # LIVE VISUALIZATION (Throttled via DISPLAY RATE)
             if VIEW_MODE == 'LIVE' and (time.time() - last_draw_time > DISPLAY_RATE):
@@ -231,13 +291,34 @@ if __name__ == "__main__":
                 if FILTER_MODE in ['BOTH', 'UWB'] and latest['uwb']:
                     u = latest['uwb']
                     print(f"\n[UWB #{u['id']}]")
-                    print(f"  Pos  : X={u['pos'][0]:.2f}, Y={u['pos'][1]:.2f}")
                     print(f"  Dists: {u['dists'][0]:.2f}, {u['dists'][1]:.2f}, {u['dists'][2]:.2f}")
+
+                # --- PACKET LOSS REPORT ---
+                print(f"\n------------ PACKET LOSS REPORT ------------")
+                if FILTER_MODE in ['BOTH', 'IMU']:
+                    print(f"  [IMU]")
+                    for line in imu_tracker.summary_lines():
+                        print(line)
+                if FILTER_MODE in ['BOTH', 'UWB']:
+                    print(f"  [UWB]")
+                    for line in uwb_tracker.summary_lines():
+                        print(line)
                 
                 print("\n============================================")
                 last_draw_time = time.time()
                 
     except KeyboardInterrupt:
-        print("\nStopping...")
+        # --- FINAL SUMMARY ON EXIT ---
+        print("\n\n============ FINAL PACKET LOSS SUMMARY ============")
+        if FILTER_MODE in ['BOTH', 'IMU']:
+            print(f"  [IMU]")
+            for line in imu_tracker.summary_lines():
+                print(line)
+        if FILTER_MODE in ['BOTH', 'UWB']:
+            print(f"\n  [UWB]")
+            for line in uwb_tracker.summary_lines():
+                print(line)
+        print("====================================================\n")
+
+        print("Stopping...")
         streamer.close()
-        

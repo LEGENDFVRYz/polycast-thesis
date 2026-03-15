@@ -8,8 +8,6 @@
 typedef struct __attribute__((packed)) {
     uint8_t type = 0x02;
     uint32_t packetId;
-    float x;
-    float y;
     float dist0;
     float dist1;
     float dist2;
@@ -100,8 +98,6 @@ void loop() {
     if (is_locked) {
         PacketUWB uwb_packet;
         uwb_packet.packetId = uwbPacketCount++;
-        uwb_packet.x = 1.23f; 
-        uwb_packet.y = 4.56f; 
         uwb_packet.dist0 = (float)live_distances[MAP_DIST0];
         uwb_packet.dist1 = (float)live_distances[MAP_DIST1];
         uwb_packet.dist2 = (float)live_distances[MAP_DIST2];

@@ -17,12 +17,11 @@
 
         <!-- SESSION HEADER -->
         <header class="session-header" id="sessionHeader">
-
             <div class="session-header-left">
                 <a href="{{ url_for('gallery.session_page', galleryname=galleryname) }}"
                 class="session-header-back-btn"
                 title="Back to Gallery">
-                    <svg  width="16" height="16">
+                    <svg width="16" height="16">
                         <use href="#gllry-banner-back"></use>
                     </svg>
                 </a>
@@ -34,7 +33,6 @@
             </div>
 
             <div class="session-header-right">
-
                 <span class="session-header-count">
                     <svg width="13" height="13">
                         <use href="#view-header-photo"></use>
@@ -56,24 +54,30 @@
                     <span id="downloadLabel">Download All</span>
                 </button>
 
+                <button class="session-header-btn" id="settingsBtn" title="Settings">
+                    <svg width="15" height="15">
+                        <use href="#view-header-setting"></use>
+                    </svg>
+                </button>
             </div>
         </header>
 
-        <!-- ── IMAGE READER ── -->
-        <main class="session-reader">
+        <!-- IMAGE READER -->
+        <main class="session-reader" id="sessionReader">
             {% if images %}
                 <div class="reader-strip" id="readerStrip">
+
                     {% for image in images %}
-                        <div class="reader-frame" style="animation-delay: {{ loop.index0 * 0.05 }}s">
-                            <div class="reader-frame__shimmer" id="shimmer-{{ loop.index0 }}"></div>
+                        <div class="reader-frame" id="frame-{{ loop.index0 }}">
+
                             <img
                                 data-src="{{ url_for('gallery.serve_image', filename=base_url ~ '/' ~ image) }}"
                                 alt="{{ image }}"
                                 data-filename="{{ image }}"
                                 data-index="{{ loop.index0 }}"
-                                class="lazy-image reader-frame__img"
-                                loading="lazy">
-                            <div class="reader-frame__toolbar">
+                                class="lazy-image reader-frame__img">
+
+                            <div class="reader-frame-toolbar">
                                 <span class="reader-frame__num">#{{ loop.index }}</span>
                                 <button class="reader-frame__dl-btn dl-single-btn"
                                         data-src="{{ url_for('gallery.serve_image', filename=base_url ~ '/' ~ image) }}"
@@ -92,30 +96,147 @@
                     {% endfor %}
                 </div>
 
-                <!-- Page Tracker Pill -->
-                <div class="reader-tracker" id="readerTrack">
-                    <span class="reader-tracker-label" id="readerLevel">1 / {{ images | length }}</span>
-                </div>
-
             {% else %}
                 <div class="empty-state">
-                    <div class="empty-state__icon">
-                        <svg width="44" height="44" viewBox="0 0 24 24" fill="none"
-                            stroke="currentColor" stroke-width="1.3"
-                            stroke-linecap="round" stroke-linejoin="round">
-                            <rect x="3" y="3" width="18" height="18" rx="2"/>
-                            <circle cx="8.5" cy="8.5" r="1.5"/>
-                            <polyline points="21 15 16 10 5 21"/>
+                    <div class="empty-icon">
+                        <svg class="folder-icon" width="24" height="24">
+                            <use href="#session-empty-trash"></use>
                         </svg>
                     </div>
-                    <p class="empty-state__title">No photos yet</p>
-                    <p class="empty-state__sub">Images added to this session will appear here.</p>
+
+                    <h3>No photos yet</h3>
+                    <p>Images added to this session will appear here.</p>
                 </div>
             {% endif %}
         </main>
 
+        <!-- PROGRESS BAR -->
+        {% if images %}
+        <div class="progress-bar-wrap" id="progressBarWrap">
+            <div class="progress-bar-track" id="progressBarTrack">
+                <div class="progress-bar-fill" id="progressBarFill"></div>
+                <div class="progress-bar-ticks" id="progressBarTicks"></div>
+            </div>
+        </div>
+        {% endif %}
 
-        <!-- ── ZOOM OVERLAY ── -->
+
+        <!-- SETTINGS PANEL (HIDE BY DEFAULT) -->
+        <div class="settings-panel" id="settingsPanel">
+            <div class="settings-panel__backdrop" id="settingsPanelBackdrop"></div>
+
+            <div class="settings-panel__drawer">
+
+                <!-- Header -->
+                <div class="settings-panel-header">
+                    <span class="panel-header-title">Viewer Settings</span>
+
+                    <button class="panel-header-close" id="settingsPanelClose">
+                        <svg width="16" height="16">
+                            <use href="#close-button"></use>
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Navigation -->
+                <div class="settings-section">
+                    <p class="settings-section-label">Navigation</p>
+
+                    <div class="settings-row">
+                        <div class="settings-row-info">
+                            <svg width="15" height="15">
+                                <use href="#view-setting-header"></use>
+                            </svg>
+                            <span>Hide Header</span>
+                        </div>
+                        <button class="settings-toggle" id="toggleHeader" data-active="false">
+                            <span class="settings-toggle__knob"></span>
+                        </button>
+                    </div>
+
+                    <div class="settings-row">
+                        <div class="settings-row-info">
+                            <svg width="15" height="15">
+                                <use href="#view-setting-menu"></use>
+                            </svg>
+                            <span>Show Progress Bar</span>
+                        </div>
+                        <button class="settings-toggle active" id="toggleProgress" data-active="true">
+                            <span class="settings-toggle__knob"></span>
+                        </button>
+                    </div>
+
+                    <div class="settings-row">
+                        <div class="settings-row-info">
+                            <svg width="15" height="15">
+                                <use href="#view-setting-zoom"></use>
+                            </svg>
+                            <span>Click to Zoom</span>
+                        </div>
+                        <button class="settings-toggle active" id="toggleZoom" data-active="true">
+                            <span class="settings-toggle__knob"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Reader Width -->
+                <div class="settings-section">
+                    <p class="settings-section-label">Reader Width</p>
+
+                    <div class="settings-width-group" id="widthGroup">
+                        <button class="settings-width-btn" data-width="60">Narrow</button>
+                        <button class="settings-width-btn active" data-width="75">Default</button>
+                        <button class="settings-width-btn" data-width="90">Wide</button>
+                        <button class="settings-width-btn" data-width="100">Full</button>
+                    </div>
+                </div>
+
+                <!-- Jump to Image -->
+                <div class="settings-section">
+                    <p class="settings-section-label">Jump to Image</p>
+
+                    <div class="settings-jump-row">
+                        <input class="settings-jump-input" type="number"
+                               id="jumpInput" min="1"
+                               max="{{ images | length if images else 1 }}"
+                               placeholder="e.g. 12">
+                        <button class="settings-jump-btn" id="jumpBtn">Go</button>
+                    </div>
+                    <p class="settings-hint">Jump directly to a specific image number.</p>
+                </div>
+
+                <!-- Shortcuts -->
+                <div class="settings-section">
+                    <p class="settings-section-label">Shortcuts</p>
+
+                    <div class="settings-shortcuts">
+                        <div class="settings-shortcut-row">
+                            <div class="settings-shortcut-keys"><kbd>H</kbd></div>
+                            <span>Toggle header</span>
+                        </div>
+                        <div class="settings-shortcut-row">
+                            <div class="settings-shortcut-keys"><kbd>↑</kbd><kbd>↓</kbd></div>
+                            <span>Scroll images</span>
+                        </div>
+                        <div class="settings-shortcut-row">
+                            <div class="settings-shortcut-keys"><kbd>G</kbd></div>
+                            <span>Open settings</span>
+                        </div>
+                        <div class="settings-shortcut-row">
+                            <div class="settings-shortcut-keys"><kbd>Esc</kbd></div>
+                            <span>Close zoom / settings</span>
+                        </div>
+                        <div class="settings-shortcut-row">
+                            <div class="settings-shortcut-keys"><kbd>2x (tap)</kbd></div>
+                            <span>(Mobile) Toggle header</span>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ZOOM OVERLAY (HIDE BY DEFAULT) -->
         <div class="zoom-overlay" id="zoomOverlay">
             <div class="zoom-overlay__backdrop" id="zoomBackdrop"></div>
             <button class="zoom-overlay__close" id="zoomClose" title="Close">
@@ -151,254 +272,534 @@
             </div>
         </div>
 
-        <!-- ── TOAST ── -->
+        <!-- TOAST -->
         <div class="toast" id="toast"></div>
 
     </div>
 
 
-{# 
+    {# 
     ==========================================
     SCRIPTS
     ==========================================
-#}
+    #}
 
-<!-- Uses JSZip (MIT License) - https://stuk.github.io/jszip/ -->
-<script src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
-<!-- Uses FileSaver.js (MIT License) - https://github.com/eligrey/FileSaver.js/ -->
-<script src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
+    <!-- Uses JSZip (MIT License) - https://stuk.github.io/jszip/ -->
+    <script src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
 
-<!-- Lazy Loading Script -->
-<script>
-    /* ─────────────────────────────────────────
-       LAZY LOADING
-    ───────────────────────────────────────── */
-    const lazyImages = Array.from(document.querySelectorAll('.lazy-image'));
+    <!-- Uses FileSaver.js (MIT License) - https://github.com/eligrey/FileSaver.js/ -->
+    <script src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
 
-    const imgObserver = new IntersectionObserver((entries, obs) => {
-        entries.forEach(entry => {
-            if (!entry.isIntersecting) return;
+    <!-- Utilities for View Page -->
+    <script>
+        /* ─────────────────────────────────────────
+        STATE
+        ───────────────────────────────────────── */
+        const lazyImages  = Array.from(document.querySelectorAll('.lazy-image'));
+        const frames      = Array.from(document.querySelectorAll('.reader-frame'));
+        const totalFrames = frames.length;
 
-            const img     = entry.target;
-            const idx     = img.dataset.index;
-            const shimmer = document.getElementById('shimmer-' + idx);
+        let zoomEnabled  = true;
+        let currentFrame = 0;
+        let headerHidden = false;
+
+        /* ─────────────────────────────────────────
+        LAZY LOADING
+
+        Fix: Use data-loaded flag instead of
+        checking img.src (which equals page URL
+        when empty on some browsers, causing the
+        guard to silently skip every image).
+
+        Concurrency cap: Orange Pi 3 has limited
+        CPU/RAM — we limit to 3 simultaneous
+        image loads to avoid overwhelming it.
+        ───────────────────────────────────────── */
+        const CONCURRENT_LIMIT = 3;
+        let   activeLoads      = 0;
+        const loadQueue        = [];
+
+        function processQueue() {
+            while (activeLoads < CONCURRENT_LIMIT && loadQueue.length > 0) {
+                const { img, idx } = loadQueue.shift();
+                loadImage(img, idx);
+            }
+        }
+
+        function loadImage(img, idx) {
+            activeLoads++;
+
+            const frame = frames[idx];
+
+            img.dataset.loaded = 'loading';
+            frame.classList.add('loading');
+
+            img.onload = () => {
+                img.dataset.loaded = 'done';
+                img.classList.add('loaded');
+                frame.classList.remove('loading');
+                activeLoads--;
+                updateProgress();
+                processQueue();
+            };
+
+            img.onerror = () => {
+                img.dataset.loaded = 'error';
+                frame.classList.remove('loading');
+                activeLoads--;
+                processQueue();
+            };
 
             img.src = img.dataset.src;
-            img.addEventListener('load', () => {
-                img.classList.add('loaded');
-                if (shimmer) shimmer.classList.add('done');
-            }, { once: true });
+        }
 
-            obs.unobserve(img);
-        });
-    }, { rootMargin: '400px', threshold: 0.01 });
-
-    lazyImages.forEach(img => imgObserver.observe(img));
-
-    /* ─────────────────────────────────────────
-       HEADER SCROLL SHADOW
-    ───────────────────────────────────────── */
-    const sessionHeader = document.getElementById('sessionHeader');
-
-    window.addEventListener('scroll', () => {
-        sessionHeader.classList.toggle('scrolled', window.scrollY > 20);
-    }, { passive: true });
-
-    /* ─────────────────────────────────────────
-       SCROLL POSITION COUNTER
-    ───────────────────────────────────────── */
-    const readerTrack  = document.getElementById('readerTrack');
-    const readerLevel   = document.getElementById('readerLevel');
-    const frames      = Array.from(document.querySelectorAll('.reader-frame'));
-    const totalFrames = frames.length;
-    let   jumpTimer;
-
-    if (totalFrames > 0) {
-        const scrollObserver = new IntersectionObserver((entries) => {
+        const imgObserver = new IntersectionObserver((entries, obs) => {
             entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                    const idx = frames.indexOf(entry.target) + 1;
-                    readerLevel.textContent = idx + ' / ' + totalFrames;
-                    readerTrack.classList.add('visible');
-                    clearTimeout(jumpTimer);
-                    jumpTimer = setTimeout(() => readerTrack.classList.remove('visible'), 1800);
+                if (!entry.isIntersecting) return;
+
+                const img = entry.target;
+
+                /* Skip if already loading or loaded */
+                if (img.dataset.loaded) return;
+
+                const idx = parseInt(img.dataset.index, 10);
+                obs.unobserve(img);
+
+                if (activeLoads < CONCURRENT_LIMIT) {
+                    loadImage(img, idx);
+                } else {
+                    loadQueue.push({ img, idx });
                 }
             });
-        }, { threshold: 0.5 });
+        }, {
+            rootMargin: '400px 0px',
+            threshold: 0
+        });
 
-        frames.forEach(f => scrollObserver.observe(f));
-    }
+        lazyImages.forEach(img => imgObserver.observe(img));
 
-    /* ─────────────────────────────────────────
-       TOAST HELPER
-    ───────────────────────────────────────── */
-    const toastEl = document.getElementById('toast');
-    let   toastTimer;
+        /* ─────────────────────────────────────────
+        HEADER SCROLL
+        ───────────────────────────────────────── */
+        const sessionHeader = document.getElementById('sessionHeader');
 
-    function showToast(msg) {
-        toastEl.textContent = msg;
-        toastEl.classList.add('show');
-        clearTimeout(toastTimer);
-        toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
-    }
+        window.addEventListener('scroll', () => {
+            sessionHeader.classList.toggle('scrolled', window.scrollY > 20);
+            scheduleProgressUpdate();
+        }, { passive: true });
 
-    /* ─────────────────────────────────────────
-       SHARE
-    ───────────────────────────────────────── */
-    document.getElementById('shareBtn').addEventListener('click', () => {
-        const url = window.location.href;
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(url)
-                .then(() => showToast('✓ Link copied to clipboard'))
-                .catch(() => fallbackCopy(url));
-        } else {
-            fallbackCopy(url);
+        /* ─────────────────────────────────────────
+        TOGGLE HEADER
+        Shared by: H key, settings toggle, double-tap
+        ───────────────────────────────────────── */
+        const toggleHeaderBtn = document.getElementById('toggleHeader');
+
+        function syncToggle(btn, state) {
+            if (!btn) return;
+            btn.dataset.active = String(state);
+            btn.classList.toggle('active', state);
         }
-    });
 
-    function fallbackCopy(text) {
-        const tmp = document.createElement('input');
-        tmp.value = text;
-        document.body.appendChild(tmp);
-        tmp.select();
-        try {
-            document.execCommand('copy');
-            showToast('✓ Link copied to clipboard');
-        } catch {
-            showToast('Could not copy link');
+        function setHeaderHidden(hide) {
+            headerHidden = hide;
+            sessionHeader.classList.toggle('hidden-header', hide);
+            syncToggle(toggleHeaderBtn, hide);
+            showToast(hide ? 'Header hidden — double-tap to restore' : 'Header visible');
         }
-        document.body.removeChild(tmp);
-    }
 
-    /* ─────────────────────────────────────────
-       DOWNLOAD ALL
-    ───────────────────────────────────────── */
-    const downloadBtn   = document.getElementById('downloadAllBtn');
-    const downloadLabel = document.getElementById('downloadLabel');
+        function toggleHeader() {
+            setHeaderHidden(!headerHidden);
+        }
 
-    downloadBtn.addEventListener('click', async () => {
-        downloadBtn.disabled = true;
+        /* ─────────────────────────────────────────
+        PROGRESS BAR
 
-        const zip   = new JSZip();
-        const imgs  = document.querySelectorAll('.lazy-image');
-        let   count = 0;
+        Batch tick density by total count:
+            ≤ 20  → every 1
+            ≤ 50  → every 5
+            ≤ 100 → every 10
+            ≤ 200 → every 20
+            > 200 → every 50
+        ───────────────────────────────────────── */
+        const progressWrap  = document.getElementById('progressBarWrap');
+        const progressFill  = document.getElementById('progressBarFill');
+        const progressTicks = document.getElementById('progressBarTicks');
+        const progressTrack = document.getElementById('progressBarTrack');
 
-        for (const img of imgs) {
-            const url      = img.dataset.src || img.src;
-            const filename = img.dataset.filename;
-            try {
-                const res  = await fetch(url, { cache: 'force-cache' });
-                const blob = await res.blob();
-                zip.file(filename, blob);
-            } catch (err) {
-                console.error('Fetch error:', url, err);
+        function batchSize(total) {
+            if (total <= 20)  return 1;
+            if (total <= 50)  return 5;
+            if (total <= 100) return 10;
+            if (total <= 200) return 20;
+            return 50;
+        }
+
+        /* Build ticks once at startup */
+        if (progressTicks && totalFrames > 1) {
+            const batch = batchSize(totalFrames);
+            const frag  = document.createDocumentFragment();
+
+            for (let i = 0; i < totalFrames; i++) {
+                if (i !== 0 && i !== totalFrames - 1 && i % batch !== 0) continue;
+
+                const tick         = document.createElement('button');
+                tick.className     = 'progress-tick';
+                tick.style.left    = ((i / (totalFrames - 1)) * 100) + '%';
+                tick.dataset.index = i;
+                tick.title         = '#' + (i + 1);
+                tick.addEventListener('click', () => scrollToFrame(i));
+                frag.appendChild(tick);
             }
-            count++;
-            downloadLabel.textContent = count + ' / ' + imgs.length;
+
+            progressTicks.appendChild(frag);
         }
 
-        const content = await zip.generateAsync({ type: 'blob' });
-        saveAs(content, '{{ foldername }}.zip');
+        /* Throttled progress update — one rAF per frame */
+        let progressRafId = null;
 
-        downloadLabel.textContent = 'Download All';
-        downloadBtn.disabled = false;
-        showToast('✓ Download complete');
-    });
+        function scheduleProgressUpdate() {
+            if (progressRafId) return;
+            progressRafId = requestAnimationFrame(() => {
+                progressRafId = null;
+                updateProgress();
+            });
+        }
 
-    /* ─────────────────────────────────────────
-       SINGLE DOWNLOAD
-    ───────────────────────────────────────── */
-    document.querySelectorAll('.dl-single-btn').forEach(btn => {
-        btn.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const src      = btn.dataset.src;
-            const filename = btn.dataset.filename;
-            try {
-                const res  = await fetch(src, { cache: 'force-cache' });
-                const blob = await res.blob();
-                saveAs(blob, filename);
-                showToast('✓ Saved ' + filename);
-            } catch {
-                showToast('Download failed');
+        function updateProgress() {
+            if (!totalFrames || !progressWrap) return;
+
+            let best = 0, bestVis = -1;
+            const vh = window.innerHeight;
+
+            for (let i = 0; i < frames.length; i++) {
+                const r   = frames[i].getBoundingClientRect();
+                const vis = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+                if (vis > bestVis) { bestVis = vis; best = i; }
+            }
+
+            if (best === currentFrame) return;
+
+            currentFrame = best;
+            const pct = totalFrames > 1 ? (best / (totalFrames - 1)) * 100 : 100;
+
+            progressFill.style.width = pct + '%';
+
+            document.querySelectorAll('.progress-tick').forEach(t => {
+                const ti = parseInt(t.dataset.index, 10);
+                t.classList.toggle('active', ti === best);
+                t.classList.toggle('passed', ti < best);
+            });
+        }
+
+        /* Click anywhere on track to jump */
+        if (progressTrack) {
+            progressTrack.addEventListener('click', (e) => {
+                const rect = progressTrack.getBoundingClientRect();
+                const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+                scrollToFrame(Math.round(pct * (totalFrames - 1)));
+            });
+        }
+
+        function scrollToFrame(index) {
+            const frame = frames[index];
+            if (frame) frame.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        /* Sync progress on scroll */
+        if (totalFrames > 0) {
+            const scrollObserver = new IntersectionObserver(
+                () => scheduleProgressUpdate(),
+                { threshold: 0.3 }
+            );
+            frames.forEach(f => scrollObserver.observe(f));
+        }
+
+        updateProgress();
+
+        /* ─────────────────────────────────────────
+        TOAST
+        ───────────────────────────────────────── */
+        const toastEl = document.getElementById('toast');
+        let   toastTimer;
+
+        function showToast(msg) {
+            toastEl.textContent = msg;
+            toastEl.classList.add('show');
+            clearTimeout(toastTimer);
+            toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
+        }
+
+        /* ─────────────────────────────────────────
+        SHARE
+        ───────────────────────────────────────── */
+        document.getElementById('shareBtn').addEventListener('click', () => {
+            const url = window.location.href;
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(url)
+                    .then(() => showToast('✓ Link copied to clipboard'))
+                    .catch(() => fallbackCopy(url));
+            } else {
+                fallbackCopy(url);
             }
         });
-    });
 
-    /* ─────────────────────────────────────────
-       ZOOM / IMAGE VIEWER
-    ───────────────────────────────────────── */
-    const zoomOverlay  = document.getElementById('zoomOverlay');
-    const zoomImg      = document.getElementById('zoomImg');
-    const zoomLoader   = document.getElementById('zoomLoader');
-    const zoomCounter  = document.getElementById('zoomCounter');
-    const zoomClose    = document.getElementById('zoomClose');
-    const zoomBackdrop = document.getElementById('zoomBackdrop');
-    const zoomPrev     = document.getElementById('zoomPrev');
-    const zoomNext     = document.getElementById('zoomNext');
+        function fallbackCopy(text) {
+            const tmp = document.createElement('input');
+            tmp.value = text;
+            document.body.appendChild(tmp);
+            tmp.select();
+            try {
+                document.execCommand('copy');
+                showToast('✓ Link copied to clipboard');
+            } catch {
+                showToast('Could not copy link');
+            }
+            document.body.removeChild(tmp);
+        }
 
-    let zoomIndex = 0;
+        /* ─────────────────────────────────────────
+        DOWNLOAD ALL
+        ───────────────────────────────────────── */
+        const downloadBtn   = document.getElementById('downloadAllBtn');
+        const downloadLabel = document.getElementById('downloadLabel');
 
-    function openZoom(index) {
-        zoomIndex = index;
-        zoomOverlay.classList.add('open');
-        document.body.style.overflow = 'hidden';
-        loadZoomImage(index);
-    }
+        downloadBtn.addEventListener('click', async () => {
+            downloadBtn.disabled = true;
+            const zip   = new JSZip();
+            const imgs  = document.querySelectorAll('.lazy-image');
+            let   count = 0;
 
-    function closeZoom() {
-        zoomOverlay.classList.remove('open');
-        document.body.style.overflow = '';
-        zoomImg.classList.remove('ready');
-        zoomImg.src = '';
-    }
+            for (const img of imgs) {
+                const url      = img.dataset.src || img.src;
+                const filename = img.dataset.filename;
+                try {
+                    const res  = await fetch(url, { cache: 'force-cache' });
+                    const blob = await res.blob();
+                    zip.file(filename, blob);
+                } catch (err) {
+                    console.error('Fetch error:', url, err);
+                }
+                count++;
+                downloadLabel.textContent = count + ' / ' + imgs.length;
+            }
 
-    function loadZoomImage(index) {
-        const img      = lazyImages[index];
-        const src      = img.dataset.src || img.src;
+            const content = await zip.generateAsync({ type: 'blob' });
+            saveAs(content, '{{ foldername }}.zip');
+            downloadLabel.textContent = 'Download All';
+            downloadBtn.disabled = false;
+            showToast('✓ Download complete');
+        });
 
-        zoomImg.classList.remove('ready');
-        zoomLoader.style.display = 'block';
-        zoomCounter.textContent  = (index + 1) + ' / ' + lazyImages.length;
+        /* ─────────────────────────────────────────
+        SINGLE DOWNLOAD
+        ───────────────────────────────────────── */
+        document.querySelectorAll('.dl-single-btn').forEach(btn => {
+            btn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                const src      = btn.dataset.src;
+                const filename = btn.dataset.filename;
+                try {
+                    const res  = await fetch(src, { cache: 'force-cache' });
+                    const blob = await res.blob();
+                    saveAs(blob, filename);
+                    showToast('✓ Saved ' + filename);
+                } catch {
+                    showToast('Download failed');
+                }
+            });
+        });
 
-        const tmp = new Image();
-        tmp.onload = () => {
-            zoomImg.src = src;
-            zoomLoader.style.display = 'none';
-            requestAnimationFrame(() => zoomImg.classList.add('ready'));
-        };
-        tmp.onerror = () => {
-            zoomLoader.style.display = 'none';
-        };
-        tmp.src = src;
-    }
+        /* ─────────────────────────────────────────
+        ZOOM
+        ───────────────────────────────────────── */
+        const zoomOverlay  = document.getElementById('zoomOverlay');
+        const zoomImg      = document.getElementById('zoomImg');
+        const zoomLoader   = document.getElementById('zoomLoader');
+        const zoomCounter  = document.getElementById('zoomCounter');
+        const zoomClose    = document.getElementById('zoomClose');
+        const zoomBackdrop = document.getElementById('zoomBackdrop');
+        const zoomPrev     = document.getElementById('zoomPrev');
+        const zoomNext     = document.getElementById('zoomNext');
+        let   zoomIndex    = 0;
 
-    function zoomPrevImg() {
-        zoomIndex = (zoomIndex - 1 + lazyImages.length) % lazyImages.length;
-        loadZoomImage(zoomIndex);
-    }
+        function openZoom(index) {
+            if (!zoomEnabled) return;
+            zoomIndex = index;
+            zoomOverlay.classList.add('open');
+            document.body.style.overflow = 'hidden';
+            loadZoomImage(index);
+        }
 
-    function zoomNextImg() {
-        zoomIndex = (zoomIndex + 1) % lazyImages.length;
-        loadZoomImage(zoomIndex);
-    }
+        function closeZoom() {
+            zoomOverlay.classList.remove('open');
+            document.body.style.overflow = '';
+            zoomImg.classList.remove('ready');
+            zoomImg.src = '';
+        }
 
-    /* Click image card to open zoom */
-    document.querySelectorAll('.reader-frame__img').forEach((img, i) => {
-        img.addEventListener('click', () => openZoom(i));
-    });
+        function loadZoomImage(index) {
+            const img = lazyImages[index];
+            const src = img.dataset.src || img.src;
+            zoomImg.classList.remove('ready');
+            zoomLoader.style.display = 'block';
+            zoomCounter.textContent  = (index + 1) + ' / ' + lazyImages.length;
+            const tmp = new Image();
+            tmp.onload = () => {
+                zoomImg.src = src;
+                zoomLoader.style.display = 'none';
+                requestAnimationFrame(() => zoomImg.classList.add('ready'));
+            };
+            tmp.onerror = () => { zoomLoader.style.display = 'none'; };
+            tmp.src = src;
+        }
 
-    zoomImg.addEventListener('click',      closeZoom);
-    zoomBackdrop.addEventListener('click', closeZoom);
-    zoomClose.addEventListener('click',    closeZoom);
-    zoomPrev.addEventListener('click',     zoomPrevImg);
-    zoomNext.addEventListener('click',     zoomNextImg);
+        function zoomPrevImg() {
+            zoomIndex = (zoomIndex - 1 + lazyImages.length) % lazyImages.length;
+            loadZoomImage(zoomIndex);
+        }
 
-    document.addEventListener('keydown', (e) => {
-        if (!zoomOverlay.classList.contains('open')) return;
-        if (e.key === 'ArrowLeft')  zoomPrevImg();
-        if (e.key === 'ArrowRight') zoomNextImg();
-        if (e.key === 'Escape')     closeZoom();
-    });
-</script>
+        function zoomNextImg() {
+            zoomIndex = (zoomIndex + 1) % lazyImages.length;
+            loadZoomImage(zoomIndex);
+        }
+
+        document.querySelectorAll('.reader-frame__img').forEach((img, i) => {
+            img.addEventListener('click', () => openZoom(i));
+        });
+
+        zoomImg.addEventListener('click',      closeZoom);
+        zoomBackdrop.addEventListener('click', closeZoom);
+        zoomClose.addEventListener('click',    closeZoom);
+        zoomPrev.addEventListener('click',     zoomPrevImg);
+        zoomNext.addEventListener('click',     zoomNextImg);
+
+        /* ─────────────────────────────────────────
+        SETTINGS PANEL
+        ───────────────────────────────────────── */
+        const settingsBtn      = document.getElementById('settingsBtn');
+        const settingsPanel    = document.getElementById('settingsPanel');
+        const settingsBackdrop = document.getElementById('settingsPanelBackdrop');
+        const settingsClose    = document.getElementById('settingsPanelClose');
+        const readerStrip      = document.getElementById('readerStrip');
+
+        function openSettings()  { settingsPanel.classList.add('open'); }
+        function closeSettings() { settingsPanel.classList.remove('open'); }
+
+        settingsBtn.addEventListener('click',      openSettings);
+        settingsClose.addEventListener('click',    closeSettings);
+        settingsBackdrop.addEventListener('click', closeSettings);
+
+        /* Hide Header */
+        toggleHeaderBtn.addEventListener('click', toggleHeader);
+
+        /* Progress Bar */
+        const toggleProgressBtn = document.getElementById('toggleProgress');
+        toggleProgressBtn.addEventListener('click', () => {
+            const next = toggleProgressBtn.dataset.active !== 'true';
+            syncToggle(toggleProgressBtn, next);
+            if (progressWrap) progressWrap.classList.toggle('hidden', !next);
+        });
+
+        /* Zoom */
+        const toggleZoomBtn = document.getElementById('toggleZoom');
+        toggleZoomBtn.addEventListener('click', () => {
+            const next = toggleZoomBtn.dataset.active !== 'true';
+            syncToggle(toggleZoomBtn, next);
+            zoomEnabled = next;
+            document.querySelectorAll('.reader-frame__img').forEach(img => {
+                img.style.cursor = zoomEnabled ? 'zoom-in' : 'default';
+            });
+            showToast(zoomEnabled ? 'Zoom enabled' : 'Zoom disabled');
+        });
+
+        /* Reader Width */
+        document.querySelectorAll('.settings-width-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('.settings-width-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                if (readerStrip) readerStrip.style.maxWidth = btn.dataset.width + '%';
+            });
+        });
+
+        /* Jump to image */
+        const jumpInput = document.getElementById('jumpInput');
+        const jumpBtn   = document.getElementById('jumpBtn');
+
+        function doJump() {
+            const val = parseInt(jumpInput.value, 10);
+            if (isNaN(val) || val < 1 || val > totalFrames) {
+                showToast('Enter a number between 1 and ' + totalFrames);
+                return;
+            }
+            scrollToFrame(val - 1);
+            closeSettings();
+            showToast('Jumped to image #' + val);
+            jumpInput.value = '';
+        }
+
+        jumpBtn.addEventListener('click', doJump);
+        jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') doJump(); });
+
+        /* ─────────────────────────────────────────
+        KEYBOARD SHORTCUTS
+        ───────────────────────────────────────── */
+        document.addEventListener('keydown', (e) => {
+            if (zoomOverlay.classList.contains('open')) {
+                if (e.key === 'ArrowLeft')  { zoomPrevImg(); return; }
+                if (e.key === 'ArrowRight') { zoomNextImg(); return; }
+                if (e.key === 'Escape')     { closeZoom();   return; }
+            }
+
+            if (settingsPanel.classList.contains('open')) {
+                if (e.key === 'Escape') { closeSettings(); return; }
+            }
+
+            if (document.activeElement.tagName === 'INPUT') return;
+
+            if (e.key === 'h' || e.key === 'H') toggleHeader();
+            if (e.key === 'g' || e.key === 'G') openSettings();
+
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                scrollToFrame(Math.min(currentFrame + 1, totalFrames - 1));
+            }
+            if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                scrollToFrame(Math.max(currentFrame - 1, 0));
+            }
+        });
+
+        /* ─────────────────────────────────────────
+        MOBILE: DOUBLE-TAP TO TOGGLE HEADER
+
+        Two taps within 300ms on the reader strip
+        toggles the header. Ignores toolbar taps.
+        ───────────────────────────────────────── */
+        let lastTap    = 0;
+        let tapTimeout = null;
+
+        const sessionReader = document.getElementById('sessionReader');
+
+        if (sessionReader) {
+            sessionReader.addEventListener('touchend', (e) => {
+                if (e.target.closest('.reader-frame-toolbar')
+                    || e.target.closest('.dl-single-btn')) {
+                    return;
+                }
+
+                const now = Date.now();
+                const gap = now - lastTap;
+
+                if (gap < 300 && gap > 0) {
+                    clearTimeout(tapTimeout);
+                    toggleHeader();
+                    lastTap = 0;
+                } else {
+                    lastTap    = now;
+                    tapTimeout = setTimeout(() => { lastTap = 0; }, 300);
+                }
+            }, { passive: true });
+        }
+    </script>
 
 {% endblock %}

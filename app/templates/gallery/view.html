@@ -68,8 +68,13 @@
                 <div class="reader-strip" id="readerStrip">
 
                     {% for image in images %}
-                        <div class="reader-frame" id="frame-{{ loop.index0 }}">
-
+                        <div class="reader-frame" 
+                             id="frame-{{ loop.index0 }}"
+                             data-index="{{ loop.index0 }}"
+                        >
+                            <!-- Gray skeleton placeholder -->
+                            <div class="reader-frame__skeleton"></div>
+                            
                             <img
                                 data-src="{{ url_for('gallery.serve_image', filename=base_url ~ '/' ~ image) }}"
                                 alt="{{ image }}"
@@ -286,7 +291,7 @@
 
     <!-- Uses JSZip (MIT License) - https://stuk.github.io/jszip/ -->
     <script src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
-
+    
     <!-- Uses FileSaver.js (MIT License) - https://github.com/eligrey/FileSaver.js/ -->
     <script src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
 
@@ -302,9 +307,9 @@
         }
         
         /* =======================================
-        VIEWER SETTINGS
+        VIEWER SETTINGS (sessionStorage)
 
-        Structure (key: value):
+        Structure:
             headerHidden : bool,
             progressOn   : bool,
             zoomOn       : bool,
@@ -326,92 +331,18 @@
         }
         
 
-        /* ========= CONSTANTS ========= */
+        /* ========= SHARED STATE ========= */
         const lazyImages  = Array.from(document.querySelectorAll('.lazy-image'));
         const frames      = Array.from(document.querySelectorAll('.reader-frame'));
         const totalFrames = frames.length;
- 
+        
         let zoomEnabled  = true;
         let currentFrame = 0;
         let headerHidden = false;
-        
-
-        /* =======================================
-        LAZY LOADING
-        
-        Concurrency cap: Raspberry Pi / Orange Pi
-        have limited CPU/RAM — cap at 3 simultaneous
-        image loads to avoid overwhelming the server.
-        ========================================== */
-        const CONCURRENT_LIMIT = 3;
-        let   activeLoads      = 0;
-        const loadQueue        = [];
- 
-        function processQueue() {
-            while (activeLoads < CONCURRENT_LIMIT && loadQueue.length > 0) {
-                const { img, idx } = loadQueue.shift();
-                loadImage(img, idx);
-            }
-        }
-
-        function loadImage(img, idx) {
-            activeLoads++;
- 
-            const frame = frames[idx];
- 
-            img.dataset.loaded = 'loading';
-            frame.classList.add('loading');
- 
-            img.onload = () => {
-                img.dataset.loaded = 'done';
-                img.classList.add('loaded');
-                frame.classList.remove('loading');
-                activeLoads--;
-                updateProgress();
-                processQueue();
-            };
- 
-            img.onerror = () => {
-                img.dataset.loaded = 'error';
-                frame.classList.remove('loading');
-                activeLoads--;
-                processQueue();
-            };
- 
-            img.src = img.dataset.src;
-        }
-
-        const imgObserver = new IntersectionObserver((entries, obs) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
- 
-                const img = entry.target;
- 
-                /* Skip if already loading or loaded */
-                if (img.dataset.loaded) return;
- 
-                const idx = parseInt(img.dataset.index, 10);
-                obs.unobserve(img);
- 
-                if (activeLoads < CONCURRENT_LIMIT) {
-                    loadImage(img, idx);
-                } else {
-                    loadQueue.push({ img, idx });
-                }
-            });
-        }, {
-            rootMargin: '400px 0px',
-            threshold: 0
-        });
-
-        lazyImages.forEach(img => imgObserver.observe(img));
 
 
-
-        /* ========= BASE HEADER ========= */
+        /* ========= BASE / VIEW HEADERS ========= */
         const layoutHeader = document.querySelector('header.app-wrapper');
-
-        /* ========= VIEW HEADER ========= */
         const sessionHeader = document.getElementById('sessionHeader');
         
         window.addEventListener('scroll', () => {
@@ -420,21 +351,18 @@
         }, { passive: true });
         
 
-
         /* =======================================
         TOGGLE HEADER
-        - Hides BOTH the session-header and the base
-
-        Triggers: H key, settings toggle, double-tap.
+        - Triggers: H key, settings toggle, double-tap.
         ========================================== */
         const toggleHeaderBtn = document.getElementById('toggleHeader');
- 
+        
         function syncToggle(btn, state) {
             if (!btn) return;
             btn.dataset.active = String(state);
             btn.classList.toggle('active', state);
         }
- 
+        
         function setHeaderHidden(hide) {
             headerHidden = hide;
             
@@ -450,23 +378,21 @@
             saveSettings({ headerHidden: hide });
             showToast(hide ? 'Header hidden — double-tap to restore' : 'Header visible');
         }
- 
+        
         function toggleHeader() {
             setHeaderHidden(!headerHidden);
         }
 
 
-
         /* =======================================
         PROGRESS BAR
- 
-        Batch tick density by total count:
+        - Batch tick density by total count:
         ========================================== */
         const progressWrap  = document.getElementById('progressBarWrap');
         const progressFill  = document.getElementById('progressBarFill');
         const progressTicks = document.getElementById('progressBarTicks');
         const progressTrack = document.getElementById('progressBarTrack');
- 
+        
         function batchSize(total) {
             if (total <= 20)  return 1;
             if (total <= 50)  return 5;
@@ -474,7 +400,7 @@
             if (total <= 200) return 20;
             return 50;
         }
- 
+        
         /* Build ticks once at startup */
         if (progressTicks && totalFrames > 1) {
             const batch = batchSize(totalFrames);
@@ -494,10 +420,10 @@
  
             progressTicks.appendChild(frag);
         }
- 
+        
         /* Throttled progress update — one rAF per frame */
         let progressRafId = null;
- 
+        
         function scheduleProgressUpdate() {
             if (progressRafId) return;
             progressRafId = requestAnimationFrame(() => {
@@ -505,7 +431,7 @@
                 updateProgress();
             });
         }
- 
+        
         function updateProgress() {
             if (!totalFrames || !progressWrap) return;
  
@@ -531,7 +457,7 @@
                 t.classList.toggle('passed', ti < best);
             });
         }
- 
+        
         /* Click anywhere on track to jump */
         if (progressTrack) {
             progressTrack.addEventListener('click', (e) => {
@@ -556,7 +482,6 @@
         }
 
         updateProgress();
-
 
 
         /* =======================================
@@ -729,17 +654,17 @@
         const settingsBackdrop = document.getElementById('settingsPanelBackdrop');
         const settingsClose    = document.getElementById('settingsPanelClose');
         const readerStrip      = document.getElementById('readerStrip');
- 
+        
         function openSettings()  { settingsPanel.classList.add('open'); }
         function closeSettings() { settingsPanel.classList.remove('open'); }
- 
+        
         settingsBtn.addEventListener('click',      openSettings);
         settingsClose.addEventListener('click',    closeSettings);
         settingsBackdrop.addEventListener('click', closeSettings);
- 
+        
         /* Hide Header */
         toggleHeaderBtn.addEventListener('click', toggleHeader);
- 
+        
         /* Progress Bar */
         const toggleProgressBtn = document.getElementById('toggleProgress');
         toggleProgressBtn.addEventListener('click', () => {
@@ -748,12 +673,13 @@
             if (progressWrap) progressWrap.classList.toggle('hidden', !next);
             saveSettings({ progressOn: next });
         });
- 
+        
+
         /* =======================================
         ZOOM TOGGLE
         ========================================== */
         const toggleZoomBtn = document.getElementById('toggleZoom');
- 
+        
         function applyZoom(enabled) {
             zoomEnabled = enabled;
             syncToggle(toggleZoomBtn, enabled);
@@ -761,7 +687,7 @@
                 img.style.cursor = enabled ? 'zoom-in' : 'default';
             });
         }
- 
+        
         toggleZoomBtn.addEventListener('click', () => {
             const next = toggleZoomBtn.dataset.active !== 'true';
             applyZoom(next);
@@ -775,13 +701,13 @@
         applyWidth() is also called by restoreSettings.
         ========================================== */
         const widthBtns = document.querySelectorAll('.settings-width-btn');
- 
+        
         function applyWidth(width) {
             const w = String(width);
             widthBtns.forEach(b => b.classList.toggle('active', b.dataset.width === w));
             if (readerStrip) readerStrip.style.maxWidth = w + '%';
         }
- 
+        
         widthBtns.forEach(btn => {
             btn.addEventListener('click', () => {
                 const width = (IS_PHONE && btn.dataset.width === '75')
@@ -823,16 +749,16 @@
                 if (e.key === 'ArrowRight') { zoomNextImg(); return; }
                 if (e.key === 'Escape')     { closeZoom();   return; }
             }
- 
+            
             if (settingsPanel.classList.contains('open')) {
                 if (e.key === 'Escape') { closeSettings(); return; }
             }
- 
+            
             if (document.activeElement.tagName === 'INPUT') return;
- 
+            
             if (e.key === 'h' || e.key === 'H') toggleHeader();
             if (e.key === 'g' || e.key === 'G') openSettings();
- 
+            
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
                 scrollToFrame(Math.min(currentFrame + 1, totalFrames - 1));
@@ -844,10 +770,8 @@
         });
 
 
-
         /* =======================================
         MOBILE: DOUBLE-TAP TO TOGGLE HEADER
-
         Two taps within 300ms on the reader strip triggers
         ========================================== */
         let lastTap    = 0;
@@ -877,7 +801,6 @@
         }
 
 
-
         /* =======================================
         RESTORE CLIENT PREFRENCES
 
@@ -886,7 +809,6 @@
             progressOn    true
             zoomOn        true on desktop, FALSE on phones
             readerWidth   '75'/'100'
-
         ========================================== */
         (function restoreSettings() {
             const s = loadSettings();
@@ -917,5 +839,115 @@
             applyWidth(width);
         })();
     </script>
+
+    {# 
+    LAZY LOADER:
+        Viewport-priority queue
+        - CONCURRENT_LIMIT = (2) caps simultaneous server requests
+        - PRELOAD_MARGIN = image is requested from the server
+    #}
+    <script>
+        (function LazyLoader() {
+
+            const CONCURRENT_LIMIT = 2;         /* Max simultaneous fetches */
+            const PRELOAD_MARGIN   = '300px';   /* Start fetching 300px before */
+
+            let activeLoads = 0;
+            const queue     = [];               /* Array of img elements pending load */
+
+
+            /* Distance from img frame to viewport */
+            function distanceToViewport(img) {
+                const rect  = img.closest('.reader-frame').getBoundingClientRect();
+                const mid   = rect.top + rect.height / 2;
+                const vpMid = window.innerHeight / 2;
+                return Math.abs(mid - vpMid);
+            }
  
+            /* Sort the queue so the image nearest (priority) */
+            function sortQueueByProximity() {
+                queue.sort((a, b) => distanceToViewport(a) - distanceToViewport(b));
+            }
+
+            function processQueue() {
+                while (activeLoads < CONCURRENT_LIMIT && queue.length > 0) {
+                    sortQueueByProximity();
+                    const img = queue.shift();
+ 
+                    /* Guard: could have been loaded already (e.g. zoom pre-fetch) */
+                    if (img.dataset.loaded === 'done') {
+                        continue;
+                    }
+ 
+                    startLoad(img);
+                }
+            }
+
+            /* Fetch the image from the server */
+            function startLoad(img) {
+                activeLoads++;
+ 
+                const idx   = parseInt(img.dataset.index, 10);
+                const frame = document.getElementById('frame-' + idx);
+ 
+                img.dataset.loaded = 'loading';
+ 
+                img.onload = function () {
+                    img.dataset.loaded = 'done';
+                    img.classList.add('loaded');
+ 
+                    /* Hide the skeleton once the real image is visible */
+                    const skeleton = frame ? frame.querySelector('.reader-frame__skeleton') : null;
+                    if (skeleton) skeleton.classList.add('hidden');
+ 
+                    activeLoads--;
+                    processQueue();
+                };
+ 
+                img.onerror = function () {
+                    img.dataset.loaded = 'error';
+                    activeLoads--;
+                    processQueue();
+                };
+ 
+                /* fires the HTTP request */
+                img.src = img.dataset.src;
+            }
+
+            function enqueue(img) {
+                if (img.dataset.loaded) return;      /* Already handled */
+                if (queue.includes(img)) return;     /* Already in queue */
+ 
+                img.dataset.loaded = 'queued';
+                queue.push(img);
+ 
+                if (activeLoads < CONCURRENT_LIMIT) {
+                    processQueue();
+                }
+            }
+ 
+            /*  IntersectionObserver  */
+            const observer = new IntersectionObserver(function (entries, obs) {
+                entries.forEach(function (entry) {
+                    if (!entry.isIntersecting) return;
+
+                    const img = entry.target;
+                    obs.unobserve(img);   /* Stop watching — we only need one trigger */
+                    enqueue(img);
+                });
+            }, {
+                rootMargin: PRELOAD_MARGIN + ' 0px',
+                threshold: 0
+            });
+
+            /* Attach observer to every lazy image */
+            document.querySelectorAll('.lazy-image').forEach(function (img) {
+                observer.observe(img);
+            });
+
+            window.lazyEnqueue = enqueue;
+            window.lazyQueue   = queue;
+
+        })();
+    </script>
 {% endblock %}

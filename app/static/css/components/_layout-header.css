@@ -11,6 +11,10 @@ header.app-wrapper {
     transition: transform 0.3s ease;
     transform: translateY(0); 
 
+    &.hidden-header {
+        display: none;  
+    }
+
     /* Header Section */
     .app-header {
         display: flex;

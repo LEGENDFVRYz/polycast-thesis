@@ -37,9 +37,7 @@
         }
 
         &.hidden-header {
-            opacity: 0;
-            pointer-events: none;
-            transform: translateY(-110%);
+            display: none;  
         }
 
         .session-header-left {

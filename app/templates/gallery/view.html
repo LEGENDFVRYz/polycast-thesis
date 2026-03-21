@@ -74,7 +74,7 @@
                         >
                             <!-- Gray skeleton placeholder -->
                             <div class="reader-frame__skeleton"></div>
-                            
+
                             <img
                                 data-src="{{ url_for('gallery.serve_image', filename=base_url ~ '/' ~ image) }}"
                                 alt="{{ image }}"
@@ -812,30 +812,32 @@
         ========================================== */
         (function restoreSettings() {
             const s = loadSettings();
- 
+
             /* Header */
             if (s.headerHidden === true) {
                 setHeaderHidden(true);
             }
- 
+
             /* Progress bar */
             if (s.progressOn === false) {
                 syncToggle(toggleProgressBtn, false);
                 if (progressWrap) progressWrap.classList.add('hidden');
             }
- 
+
             /* Zoom */
             const zoomDefault = IS_PHONE ? false : true;
             const zoomOn      = s.zoomOn !== undefined ? s.zoomOn : zoomDefault;
             applyZoom(zoomOn);
- 
+
             /* -- Persist the phone default on first visit so it survives refresh */
             if (s.zoomOn === undefined && IS_PHONE) {
                 saveSettings({ zoomOn: false });
             }
- 
+
             /* Reader width */
-            const width = s.readerWidth || '75';
+            const widthDefault = IS_PHONE ? '99' : '75';
+
+            const width = s.readerWidth || widthDefault;
             applyWidth(width);
         })();
     </script>

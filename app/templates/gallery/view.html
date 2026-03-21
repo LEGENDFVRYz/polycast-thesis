@@ -296,6 +296,10 @@
         /* ========= CONSTANTS ========= */
         const IS_PHONE = window.innerWidth < 640;   /* Phone breakpoint */
         
+        const sWidthButton = document.querySelector('.settings-width-btn[data-width="75"]');
+        if (IS_PHONE && sWidthButton) {
+            sWidthButton.dataset.width = '99';
+        }
         
         /* =======================================
         VIEWER SETTINGS
@@ -433,14 +437,14 @@
  
         function setHeaderHidden(hide) {
             headerHidden = hide;
- 
-            /* Session header (inside view-wrap) */
-            sessionHeader.classList.toggle('hidden-header', hide);
- 
-            /* Base layout header (outside view-wrap, from base.html) */
+            
+            /* Base layout header */
             if (layoutHeader) {
                 layoutHeader.classList.toggle('hidden-header', hide);
             }
+
+            /* Session header */
+            sessionHeader.classList.toggle('hidden-header', hide);
  
             syncToggle(toggleHeaderBtn, hide);
             saveSettings({ headerHidden: hide });
@@ -450,17 +454,14 @@
         function toggleHeader() {
             setHeaderHidden(!headerHidden);
         }
- 
-        /* ─────────────────────────────────────────
+
+
+
+        /* =======================================
         PROGRESS BAR
  
         Batch tick density by total count:
-            ≤ 20  → every 1
-            ≤ 50  → every 5
-            ≤ 100 → every 10
-            ≤ 200 → every 20
-            > 200 → every 50
-        ───────────────────────────────────────── */
+        ========================================== */
         const progressWrap  = document.getElementById('progressBarWrap');
         const progressFill  = document.getElementById('progressBarFill');
         const progressTicks = document.getElementById('progressBarTicks');
@@ -539,12 +540,12 @@
                 scrollToFrame(Math.round(pct * (totalFrames - 1)));
             });
         }
- 
+
         function scrollToFrame(index) {
             const frame = frames[index];
             if (frame) frame.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
- 
+
         /* Sync progress on scroll */
         if (totalFrames > 0) {
             const scrollObserver = new IntersectionObserver(
@@ -553,25 +554,28 @@
             );
             frames.forEach(f => scrollObserver.observe(f));
         }
- 
+
         updateProgress();
- 
-        /* ─────────────────────────────────────────
+
+
+
+        /* =======================================
         TOAST
-        ───────────────────────────────────────── */
+        ========================================== */
         const toastEl = document.getElementById('toast');
         let   toastTimer;
- 
+
         function showToast(msg) {
             toastEl.textContent = msg;
             toastEl.classList.add('show');
             clearTimeout(toastTimer);
             toastTimer = setTimeout(() => toastEl.classList.remove('show'), 2600);
         }
- 
-        /* ─────────────────────────────────────────
+
+
+        /* =======================================
         SHARE
-        ───────────────────────────────────────── */
+        ========================================== */
         document.getElementById('shareBtn').addEventListener('click', () => {
             const url = window.location.href;
             if (navigator.clipboard && navigator.clipboard.writeText) {
@@ -596,13 +600,14 @@
             }
             document.body.removeChild(tmp);
         }
- 
-        /* ─────────────────────────────────────────
-        DOWNLOAD ALL
-        ───────────────────────────────────────── */
+        
+
+        /* =======================================
+        BULK DOWNLOAD
+        ========================================== */
         const downloadBtn   = document.getElementById('downloadAllBtn');
         const downloadLabel = document.getElementById('downloadLabel');
- 
+
         downloadBtn.addEventListener('click', async () => {
             downloadBtn.disabled = true;
             const zip   = new JSZip();
@@ -629,10 +634,11 @@
             downloadBtn.disabled = false;
             showToast('✓ Download complete');
         });
- 
-        /* ─────────────────────────────────────────
+
+
+        /* =======================================
         SINGLE DOWNLOAD
-        ───────────────────────────────────────── */
+        ========================================== */
         document.querySelectorAll('.dl-single-btn').forEach(btn => {
             btn.addEventListener('click', async (e) => {
                 e.stopPropagation();
@@ -648,10 +654,11 @@
                 }
             });
         });
- 
-        /* ─────────────────────────────────────────
-        ZOOM
-        ───────────────────────────────────────── */
+        
+
+        /* =======================================
+        ZOOM FEATURE
+        ========================================== */
         const zoomOverlay  = document.getElementById('zoomOverlay');
         const zoomImg      = document.getElementById('zoomImg');
         const zoomLoader   = document.getElementById('zoomLoader');
@@ -661,7 +668,7 @@
         const zoomPrev     = document.getElementById('zoomPrev');
         const zoomNext     = document.getElementById('zoomNext');
         let   zoomIndex    = 0;
- 
+
         function openZoom(index) {
             if (!zoomEnabled) return;
             zoomIndex = index;
@@ -669,14 +676,14 @@
             document.body.style.overflow = 'hidden';
             loadZoomImage(index);
         }
- 
+
         function closeZoom() {
             zoomOverlay.classList.remove('open');
             document.body.style.overflow = '';
             zoomImg.classList.remove('ready');
             zoomImg.src = '';
         }
- 
+
         function loadZoomImage(index) {
             const img = lazyImages[index];
             const src = img.dataset.src || img.src;
@@ -692,17 +699,17 @@
             tmp.onerror = () => { zoomLoader.style.display = 'none'; };
             tmp.src = src;
         }
- 
+
         function zoomPrevImg() {
             zoomIndex = (zoomIndex - 1 + lazyImages.length) % lazyImages.length;
             loadZoomImage(zoomIndex);
         }
- 
+
         function zoomNextImg() {
             zoomIndex = (zoomIndex + 1) % lazyImages.length;
             loadZoomImage(zoomIndex);
         }
- 
+
         document.querySelectorAll('.reader-frame__img').forEach((img, i) => {
             img.addEventListener('click', () => openZoom(i));
         });
@@ -712,10 +719,11 @@
         zoomClose.addEventListener('click',    closeZoom);
         zoomPrev.addEventListener('click',     zoomPrevImg);
         zoomNext.addEventListener('click',     zoomNextImg);
- 
-        /* ─────────────────────────────────────────
+
+
+        /* =======================================
         SETTINGS PANEL
-        ───────────────────────────────────────── */
+        ========================================== */
         const settingsBtn      = document.getElementById('settingsBtn');
         const settingsPanel    = document.getElementById('settingsPanel');
         const settingsBackdrop = document.getElementById('settingsPanelBackdrop');
@@ -741,11 +749,9 @@
             saveSettings({ progressOn: next });
         });
  
-        /* ─────────────────────────────────────────
+        /* =======================================
         ZOOM TOGGLE
-        applyZoom() is also called by restoreSettings
-        so it is defined here before that IIFE runs.
-        ───────────────────────────────────────── */
+        ========================================== */
         const toggleZoomBtn = document.getElementById('toggleZoom');
  
         function applyZoom(enabled) {
@@ -762,11 +768,12 @@
             saveSettings({ zoomOn: next });
             showToast(next ? 'Zoom enabled' : 'Zoom disabled');
         });
- 
-        /* ─────────────────────────────────────────
+
+
+        /* =======================================
         READER WIDTH
         applyWidth() is also called by restoreSettings.
-        ───────────────────────────────────────── */
+        ========================================== */
         const widthBtns = document.querySelectorAll('.settings-width-btn');
  
         function applyWidth(width) {
@@ -777,15 +784,19 @@
  
         widthBtns.forEach(btn => {
             btn.addEventListener('click', () => {
-                applyWidth(btn.dataset.width);
+                const width = (IS_PHONE && btn.dataset.width === '75')
+                                ? '99'      /* temporary fix */
+                                : btn.dataset.width;
+
+                applyWidth(width);
                 saveSettings({ readerWidth: btn.dataset.width });
             });
         });
- 
+
         /* Jump to image */
         const jumpInput = document.getElementById('jumpInput');
         const jumpBtn   = document.getElementById('jumpBtn');
- 
+
         function doJump() {
             const val = parseInt(jumpInput.value, 10);
             if (isNaN(val) || val < 1 || val > totalFrames) {
@@ -797,13 +808,15 @@
             showToast('Jumped to image #' + val);
             jumpInput.value = '';
         }
- 
+
         jumpBtn.addEventListener('click', doJump);
         jumpInput.addEventListener('keydown', e => { if (e.key === 'Enter') doJump(); });
- 
-        /* ─────────────────────────────────────────
-        KEYBOARD SHORTCUTS
-        ───────────────────────────────────────── */
+
+
+
+        /* =======================================
+        DESKTOP: KEYBOARD SHORTCUTS
+        ========================================== */
         document.addEventListener('keydown', (e) => {
             if (zoomOverlay.classList.contains('open')) {
                 if (e.key === 'ArrowLeft')  { zoomPrevImg(); return; }
@@ -829,18 +842,19 @@
                 scrollToFrame(Math.max(currentFrame - 1, 0));
             }
         });
- 
-        /* ─────────────────────────────────────────
+
+
+
+        /* =======================================
         MOBILE: DOUBLE-TAP TO TOGGLE HEADER
- 
-        Two taps within 300ms on the reader strip
-        toggles both headers. Ignores toolbar taps.
-        ───────────────────────────────────────── */
+
+        Two taps within 300ms on the reader strip triggers
+        ========================================== */
         let lastTap    = 0;
         let tapTimeout = null;
- 
+
         const sessionReader = document.getElementById('sessionReader');
- 
+
         if (sessionReader) {
             sessionReader.addEventListener('touchend', (e) => {
                 if (e.target.closest('.reader-frame-toolbar')
@@ -861,48 +875,44 @@
                 }
             }, { passive: true });
         }
- 
-        /* ─────────────────────────────────────────
-        RESTORE SETTINGS  (runs last — all functions
-        and DOM elements are ready at this point)
- 
+
+
+
+        /* =======================================
+        RESTORE CLIENT PREFRENCES
+
         Default values:
             headerHidden  false
             progressOn    true
             zoomOn        true on desktop, FALSE on phones
-            readerWidth   '75'
- 
-        Phone rule: if no saved zoomOn value exists,
-        phones start with zoom off so double-tap works
-        without fighting click-to-zoom.
-        ───────────────────────────────────────── */
+            readerWidth   '75'/'100'
+
+        ========================================== */
         (function restoreSettings() {
             const s = loadSettings();
  
-            /* 1 — Header */
+            /* Header */
             if (s.headerHidden === true) {
                 setHeaderHidden(true);
             }
  
-            /* 2 — Progress bar */
+            /* Progress bar */
             if (s.progressOn === false) {
                 syncToggle(toggleProgressBtn, false);
                 if (progressWrap) progressWrap.classList.add('hidden');
             }
  
-            /* 3 — Zoom
-                 Phones default to zoom OFF so double-tap works freely.
-                 The user can still manually enable it in settings.       */
+            /* Zoom */
             const zoomDefault = IS_PHONE ? false : true;
             const zoomOn      = s.zoomOn !== undefined ? s.zoomOn : zoomDefault;
             applyZoom(zoomOn);
  
-            /* Persist the phone default on first visit so it survives refresh */
+            /* -- Persist the phone default on first visit so it survives refresh */
             if (s.zoomOn === undefined && IS_PHONE) {
                 saveSettings({ zoomOn: false });
             }
  
-            /* 4 — Reader width */
+            /* Reader width */
             const width = s.readerWidth || '75';
             applyWidth(width);
         })();

@@ -14,6 +14,9 @@ class Gallery(db.Model, SoftDeleteMixin):
     description = db.Column(db.String(255), nullable=True, default='')
     is_favorite = db.Column(db.Boolean, nullable=False, default=False, server_default='0')
     
+    created_at          = db.Column(db.DateTime, nullable=False, default=db.func.now())
+    last_activity_at    = db.Column(db.DateTime, nullable=True)     # updated when a session is added or recovered
+    last_activity_type  = db.Column(db.String(32), nullable=True)   # ex. 'session_added', 'gallery_recovered'
     
     
     #-------------------------------------------
@@ -32,6 +35,8 @@ class Gallery(db.Model, SoftDeleteMixin):
     #-------------------------------------------
     __table_args__ = (
         db.UniqueConstraint('admin_id', 'name', name='uq_admin_gallery_name'),
+        db.Index('idx_gallery_admin',           'admin_id'),                        # Fast lookup of galleries per admin
+        db.Index('idx_gallery_last_activity',   'last_activity_at'),                # Fast sorting by recent activity
     )
     
     
@@ -47,3 +52,13 @@ class Gallery(db.Model, SoftDeleteMixin):
     
     def get_gallery_name(self):
         return self.name
+    
+    
+    def record_activity(self, activity_type: str):
+        """
+        Convenience method to stamp last_activity_at and last_activity_type.
+        - NOTE: Does NOT commit — caller is responsible for db.session.commit().
+        """
+        self.last_activity_at   = db.func.now()
+        self.last_activity_type = activity_type
+        

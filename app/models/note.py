@@ -14,6 +14,8 @@ class Note(db.Model):
     page_number = db.Column(db.Integer, nullable=False) # Used for logical sorting, and file naming
     
     # Metadata columns: additional info like width/height or generated timestamp
+    file_size_bytes = db.Column(db.Integer, nullable=True)
+    
     
     
     # -------------------------------------------

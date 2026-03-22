@@ -1,6 +1,6 @@
 from app import db
 from .mixins import SoftDeleteMixin
-from datetime import timedelta
+from datetime import datetime, UTC, timedelta
 
 
 class Session(db.Model, SoftDeleteMixin):
@@ -60,16 +60,15 @@ class Session(db.Model, SoftDeleteMixin):
     @property
     def is_new(self) -> bool:
         """True if the session was created within the last 7 days."""
-
         if not self.created_at:
             return False
-        return (db.func.now() - self.created_at) <= timedelta(days=7)
+        return (datetime.utcnow() - self.created_at) <= timedelta(days=7)
  
+
     @property
     def is_recently_updated(self) -> bool:
-        """True if the session was updated within the last 7 days (but not new)."""
-        
-        if not self.updated_at or self.is_new:
+        """True if last_activity_at was updated within the last 7 days (but session is not brand-new)."""
+        if not self.last_activity_at or self.is_new:
             return False
-        return (db.func.now() - self.updated_at) <= timedelta(days=7)
+        return (datetime.utcnow() - self.last_activity_at) <= timedelta(days=7)
         

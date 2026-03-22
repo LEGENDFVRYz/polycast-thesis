@@ -6,6 +6,7 @@ from app import db
 from app.models.admin import Admin
 from app.models.gallery import Gallery
 from app.models.session import Session as DBSession
+from app.models.note import Note
 from app.routes._helpers import get_current_admin, get_eligible_galleries
 from config import BROWSER_WS_PORT
 
@@ -132,6 +133,38 @@ def session_page(galleryname):
         folder_path = os.path.join(gallery_filepath, str(s.id))
         if os.path.isdir(folder_path):
             sessions.append(s)
+
+    # STATS: Compute note count and total file size per session
+    session_ids = [s.id for s in sessions]
+    stats_rows = (
+        db.session.query(
+            Note.session_id,
+            db.func.count(Note.id).label('note_count'),
+            db.func.coalesce(db.func.sum(Note.file_size_bytes), 0).label('total_bytes')
+        )
+        .filter(Note.session_id.in_(session_ids))
+        .group_by(Note.session_id)
+        .all()
+    ) if session_ids else []
+
+    def _fmt_size(num_bytes):
+        """Human-readable file size. Kept short for card display."""
+        for unit in ('B', 'KB', 'MB', 'GB'):
+            if num_bytes < 1024:
+                return f"{num_bytes:.1f} {unit}" if unit != 'B' else f"{int(num_bytes)} B"
+            num_bytes /= 1024
+        return f"{num_bytes:.1f} TB"
+
+    session_stats = {
+        row.session_id: {
+            'note_count': row.note_count,
+            'file_size':  _fmt_size(row.total_bytes),
+        }
+        for row in stats_rows
+    }
+    # Ensure every session has a default entry even if it has zero notes yet
+    for s in sessions:
+        session_stats.setdefault(s.id, {'note_count': 0, 'file_size': '0 B'})
     
     
     return render_template(
@@ -139,10 +172,12 @@ def session_page(galleryname):
         selected_gallery=gallery_item.name,
         gallery=gallery_item,
         sessions=sessions,
+        session_stats=session_stats,
         active_view=current_view,
         is_current_user=is_current_user,
         now=datetime.utcnow()
     )
+
 
 
 @gallery_bp.route("/gallery/<string:galleryname>/<string:sessionname>")

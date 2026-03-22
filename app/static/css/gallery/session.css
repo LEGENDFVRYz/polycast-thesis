@@ -137,7 +137,7 @@ div.session-wrap{
                 display: flex;
                 flex-direction: row;
                 flex-wrap: wrap;
-                border-bottom: 1px solid #f2f5f9;
+                border-bottom: 1px solid var(--color-border);
 
                 .meta-cell {
                     display: flex;
@@ -147,35 +147,21 @@ div.session-wrap{
                     flex: 1 1 50%;
                     padding: 0.65rem 0;
 
-                    &:nth-child(odd) {
-                        padding-right: 1.5rem;
-                    }
-
                     &:nth-child(even) {
                         padding-left: 1rem;
-                        border-left: 1px solid #f0f4f8;
-                    }
-
-                    /* Odd last child spans full width */
-                    &:last-child:nth-child(odd) {
-                        flex: 1 1 100%;
-                        padding-right: 0;
-                        border-top: 1px solid #f0f4f8;
                     }
 
                     .detail-icon {
                         display: flex;
                         align-items: center;
                         justify-content: center;
-                        width: 30px;
-                        height: 30px;
+                        width: 2rem;
+                        height: 2rem;
                         border-radius: 0.5rem;
-                        background: #f4f7fb;
-                        flex-shrink: 0;
+                        margin-top: 1px;
+                        background-color: var(--color-muted);
 
-                        svg {
-                            display: block;
-                        }
+                        svg { stroke: var(--color-muted-foreground); }
                     }
 
                     .detail-content {
@@ -183,12 +169,11 @@ div.session-wrap{
                         flex-direction: column;
                         gap: 0.1rem;
                         flex: 1;
-                        min-width: 0;
 
                         .detail-label {
                             font-size: 0.72rem;
                             font-weight: 600;
-                            color: #a0b4c8;
+                            color: #a0b4c8;         /* temp only */
                             letter-spacing: 0.06em;
                             text-transform: uppercase;
                         }
@@ -211,7 +196,7 @@ div.session-wrap{
                 flex-direction: row;
                 align-items: flex-start;
                 gap: 0.75rem;
-                padding: 0.65rem 0rem;
+                padding: 0.75rem 0rem;
 
                 .detail-icon {
                     display: flex;
@@ -222,7 +207,8 @@ div.session-wrap{
                     border-radius: 0.5rem;
                     margin-top: 1px;
                     background-color: var(--color-muted);
-                    color: var(--color-muted-foreground);
+                    
+                    svg { stroke: var(--color-muted-foreground); }
                 }
 
                 .detail-content {
@@ -230,7 +216,6 @@ div.session-wrap{
                     flex-direction: column;
                     gap: 0.1rem;
                     flex: 1;
-                    min-width: 0;
 
                     .detail-label {
                         font-size: 0.72rem;
@@ -303,7 +288,7 @@ div.session-wrap{
             }
         }
 
-        /* ── Pills & Badges ── */
+        /* session count badge */
         .sessions-pill {
             display: inline-flex;
             align-items: center;
@@ -317,7 +302,7 @@ div.session-wrap{
         }
     }
 
-    /* ── Utility ── */
+    /* Utilities */
     .hidden {
         display: none !important;
     }
@@ -427,28 +412,6 @@ div.session-wrap{
                             color: var(--color-primary);
                         }
 
-                        /* Badge Styling  */
-                        .badge {
-                            padding: 0.15rem 0.6rem;
-                            border-radius: 0.5rem;
-                            font-size: 0.75rem;
-                            font-weight: 600;
-                        }
-
-                        .badge-yellow {
-                            background-color: #fff8d6;
-                            color: #b5850b;
-                        }
-                        
-                        .badge-red {
-                            background-color: #feeced;
-                            color: #d73a49;
-                        }
-
-                        .badge-green {
-                            background-color: #e6f7ef;
-                            color: #1a8f59;
-                        }
                     }
 
                     .card-description {
@@ -467,17 +430,8 @@ div.session-wrap{
                         .detail-group {
                             display: flex;
                             gap: 0.5rem;
-                            
-                            .avatar {
-                                width: 1.25rem;
-                                height: 1.25rem;
-                                border-radius: 50%;
-                                border: 2px solid var(--color-border);
-                                background-color: var(--color-accent-foreground);
 
-                            }
-
-                            .creator-tag {
+                            .meta-tag {
                                 font-size: 0.85rem;
                                 color: var(--slate-400);
                             }
@@ -490,7 +444,7 @@ div.session-wrap{
                     display: flex;
                     align-items: center;
                     gap: 1rem;
-                    z-index: 2; /* Keeps buttons clickable above the overlay */
+                    z-index: 2;
 
                     .action-buttons {
                         display: flex;
@@ -521,7 +475,7 @@ div.session-wrap{
                     .chevron-icon {
                         width: 20px;
                         height: 20px;
-                        color: #4b5563;
+                        color: var(--slate-500);
                         transition: all 0.2s ease;
                     }
                 }

@@ -1,6 +1,6 @@
 {% from '_components/_modal.html' import modal_shell %}
 
-{% extends "gallery/index.html" %}
+{% extends "_layouts/base.html" %}
 
 {% block inclusion %}
     {{ super() }}
@@ -13,7 +13,7 @@
     <div class="session-wrap">
 
         <!-- Gallery Banner -->
-        <div class="gallery-banner">
+        <div class="session-banner">
 
             <div class="banner-header">
                 <div class="header-left">
@@ -171,11 +171,11 @@
                                     {% set days_ago = ((now - session.last_activity_at).days) if session.last_activity_at else None %}
                                     {% if days_ago is not none %}
                                         {% if days_ago == 0 %}
-                                            <span class="badge badge-green">Today</span>
+                                            <span class="badge">Today</span>
                                         {% elif days_ago == 1 %}
-                                            <span class="badge badge-green">1 Day Ago</span>
+                                            <span class="badge">1 Day Ago</span>
                                         {% else %}
-                                            <span class="badge badge-green">{{ days_ago }} Days Ago</span>
+                                            <span class="badge">{{ days_ago }} Days Ago</span>
                                         {% endif %}
                                     {% endif %}
                                 </div>
@@ -183,16 +183,16 @@
                                 <p class="card-description">
                                     <!-- FLAGS FOR RECENTS -->
                                     {% if session.is_new %}
-                                        <b class="badge badge-green">NEW!</b>
+                                        <b>NEW!</b>
                                     {% elif session.is_recently_updated %}
-                                        <b class="badge badge-blue">UPDATED!</b>
+                                        <b>UPDATED!</b>
                                     {% endif %}
 
                                     <!-- STATUS OF LAST ACTIVITY -->
                                     {% if session.last_activity_type == 'RECOVERED' %}
-                                        <span class="activity-tag activity-tag--recovered">↩ Recovered at</span>
+                                        <span>↩ Recovered at</span>
                                     {% else %}
-                                        <span class="activity-tag activity-tag--active">✦ Active Last at</span>
+                                        <span>✦ Active Last at</span>
                                     {% endif %}
                                     
                                     <!-- DATE OF LAST ACTIVITY -->
@@ -270,6 +270,10 @@
                                                 </svg>
                                             </button>
                                         {% endif %}
+
+                                    {% else %}
+                                        <!-- Temporary design solution -->
+                                        <span>Proceed</span>
                                     {% endif %}
                                 </div>
 

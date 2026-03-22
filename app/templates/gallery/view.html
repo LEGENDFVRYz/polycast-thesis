@@ -850,9 +850,10 @@
     #}
     <script>
         (function LazyLoader() {
+            const IS_PHONE = window.innerWidth < 640; 
 
-            const CONCURRENT_LIMIT = 2;         /* Max simultaneous fetches */
-            const PRELOAD_MARGIN   = '300px';   /* Start fetching 300px before */
+            const CONCURRENT_LIMIT = 2;                             /* Max simultaneous fetches */
+            const PRELOAD_MARGIN   = IS_PHONE ? '300px' : '750px';  /* Start fetching before margin threshold */
 
             let activeLoads = 0;
             const queue     = [];               /* Array of img elements pending load */

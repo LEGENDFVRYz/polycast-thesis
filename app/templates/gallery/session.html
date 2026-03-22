@@ -93,7 +93,7 @@
 
                 </div>
 
-                <div class="detail-row" data-gallery-id="1">
+                <div class="detail-row" data-gallery-id="{{ gallery.id }}">
                     <div class="detail-icon">
                         <svg width="14" height="14">
                             <use href="#gllry-banner-detail"></use>
@@ -153,10 +153,19 @@
                             <div class="card-main">
                                 <div class="card-header">
                                     <h3 class="card-title">{{ session.name }}</h3>
-                                    <span class="badge badge-green">6 Days Ago</span>
+                                    {% set days_ago = ((now - session.created_at).days) if session.created_at else None %}
+                                    {% if days_ago is not none %}
+                                        {% if days_ago == 0 %}
+                                            <span class="badge badge-green">Today</span>
+                                        {% elif days_ago == 1 %}
+                                            <span class="badge badge-green">1 Day Ago</span>
+                                        {% else %}
+                                            <span class="badge badge-green">{{ days_ago }} Days Ago</span>
+                                        {% endif %}
+                                    {% endif %}
                                 </div>
 
-                                <p class="card-description">BSCPE 4-3 • Showcasing captured session data and elements.</p>
+                                <p class="card-description">{{ gallery.name }} • {{ session.name }}</p>
 
                                 <div class="card-details">
                                     <div class="detail-group">
@@ -166,11 +175,11 @@
                                             <line x1="8" y1="2" x2="8" y2="6"></line>
                                             <line x1="3" y1="10" x2="21" y2="10"></line>
                                         </svg>
-                                        <span class="creator-tag">Dec 12 2025</span>
+                                        <span class="creator-tag">{{ session.created_at.strftime('%b %d %Y') if session.created_at else 'Unknown' }}</span>
                                     </div>
                                     <div class="detail-group">
                                         <div class="avatar"></div>
-                                        <span class="creator-tag">By Current Admin</span>
+                                        <span class="creator-tag">By {{ gallery.admin.username | title }}</span>
                                     </div>
                                 </div>
                             </div>
@@ -244,10 +253,8 @@
     </div>
 
 
-
     <!-- DETAILS TOGGLE SCRIPT -->
     <script>
-        // ── Info toggle ──
         const toggle = document.getElementById('detailsToggle');
         const panel  = document.getElementById('detailsPanel');
 
@@ -256,54 +263,8 @@
                 panel.classList.toggle('collapsed');
             });
         }
-
-        // ── Description logic ──
-        const descInput   = document.getElementById('descInput');
-        const descDisplay = document.getElementById('descDisplay');
-        const descText    = document.getElementById('descText');
-        const descEditBtn = document.getElementById('descEditBtn');
-
-        // Pre-fill from server — replace '' with "{{ gallery.description|default('') }}" in Jinja
-        const saved = '';
-        
-        if (saved && descText && descInput && descDisplay) {
-            descText.textContent = saved;
-            descInput.value = saved;
-            descDisplay.classList.remove('hidden');
-            descInput.classList.add('hidden');
-        }
-
-        if (descInput && descDisplay && descText) {
-            descInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    const val = descInput.value.trim();
-                    if (val) {
-                        descText.textContent = val;
-                        descDisplay.classList.remove('hidden');
-                        descInput.classList.add('hidden');
-                        // → fire PATCH /api/gallery/:id/description here utilizing fetch() in Flask
-                    }
-                    descInput.blur();
-                }
-                if (e.key === 'Escape') {
-                    descInput.classList.add('hidden');
-                    if (descText.textContent) {
-                        descDisplay.classList.remove('hidden');
-                    }
-                    descInput.blur();
-                }
-            });
-        }
-
-        if (descEditBtn && descDisplay && descInput && descText) {
-            descEditBtn.addEventListener('click', () => {
-                descDisplay.classList.add('hidden');
-                descInput.classList.remove('hidden');
-                descInput.value = descText.textContent;
-                descInput.focus();
-            });
-        }
     </script>
+
 
     <!-- DESCRIPTION INLINE EDIT SCRIPT -->
     <script>
@@ -324,7 +285,7 @@
             // Track the last saved value to avoid redundant API calls
             let originalValue = descInput.value.trim();
 
-            // 1. Click edit button to edit
+            // Click edit button to edit
             if (descEditBtn) {
                 descEditBtn.addEventListener('click', function() {
                     descDisplay.classList.add('hidden');
@@ -338,10 +299,11 @@
                 });
             }
 
-            // 2. Manage the UI state based on whether text exists
+            // Manage the UI state based on whether text exists
             function restoreUI() {
                 if (originalValue) {
-                    // We have a description: show text, hide input
+                    // We have a description: show text display, hide input
+                    descText.textContent = originalValue;
                     descDisplay.classList.remove('hidden');
                     descInput.classList.add('hidden');
                 } else {
@@ -351,7 +313,7 @@
                 }
             }
 
-            // 3. Save Logic
+            // Save Logic
             function saveDescription() {
                 const newDescription = descInput.value.trim();
                 
@@ -384,7 +346,6 @@
                 .then(data => {
                     if (data.success) {
                         originalValue = newDescription;
-                        descText.textContent = newDescription;
                         restoreUI();
                     } else {
                         console.error('Failed to save description:', data.message);
@@ -415,6 +376,7 @@
             });
         });
     </script>
+
 
     <!-- MODALS SCRIPT -->
     <script src="{{ url_for('static', filename='js/modal.js') }}"></script>
@@ -493,6 +455,7 @@
             });
         });
     </script>
+
 {% endblock %}
 
 {# ==========================================

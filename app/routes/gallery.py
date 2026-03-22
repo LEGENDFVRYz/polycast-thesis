@@ -1,6 +1,7 @@
 import os
+from datetime import datetime
+
 from flask import Blueprint, render_template, redirect, url_for, request, session, jsonify, flash, send_from_directory, abort
-from werkzeug.utils import secure_filename
 from app import db
 from app.models.admin import Admin
 from app.models.gallery import Gallery
@@ -130,7 +131,7 @@ def session_page(galleryname):
     for s in sessions_db:
         folder_path = os.path.join(gallery_filepath, str(s.id))
         if os.path.isdir(folder_path):
-            sessions.append({'id': s.id, 'name': s.name})
+            sessions.append(s)
     
     
     return render_template(
@@ -139,7 +140,8 @@ def session_page(galleryname):
         gallery=gallery_item,
         sessions=sessions,
         active_view=current_view,
-        is_current_user=is_current_user
+        is_current_user=is_current_user,
+        now=datetime.utcnow()
     )
 
 

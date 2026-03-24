@@ -1,5 +1,10 @@
-{% macro folder_card(folder, view_type) %}
+{% macro folder_card(folder, view_type, is_current_user=false, count=0) %}
     <div class="folder-item">
+
+        {# Inset overlay #}
+        <a href="{{ url_for('gallery.session_page', galleryname=folder.name) }}" 
+           class="card-link-overlay" 
+           aria-label="Open {{ folder.name }}"></a>
 
         {% if view_type != 'trash' %}
             <button type="button" 
@@ -18,53 +23,66 @@
         {% endif %}
 
         <div class="item-icon">
-            <img src="{{ url_for('static', filename='images/icons/folder1.svg') }}">
+            <svg width="20" height="20">
+                <use href="#gllry-banner-folder"></use>
+            </svg>
         </div>
 
         <div class="item-info">
-            <a href="{{ url_for('gallery.session_page', galleryname=folder.name) }}" class="folder-link-wrapper">
-                <h3 class="item-title">{{ folder.name }}</h3>
-            </a>
-            <p class="item-subtitle">BSCPE 4-3</p>
+            <h3 class="item-title">{{ folder.name }}</h3>
+            <div class="item-meta">
+                <span class="item-session-count">{{ count }} sessions</span>
+                <span class="item-separator">·</span>
+                <span class="item-activity">{{ folder.created_at.strftime('%b %d, %Y') }}</span>
+            </div>
         </div>
 
         <div class="item-actions">
-            {% if view_type == 'trash' %}
-                <button type="button" class="icon-button recover-gallery-btn" 
-                        data-gallery-id="{{ folder.id }}" 
-                        data-modal-target="#recoverGalleryModal"
-                        data-recover-url="{{ url_for('gallery.recover_gallery', gallery_id=folder.id) }}">
-                    <svg class="folder-icon" width="24" height="24">
-                        <use href="#gllry-folder-rev"></use>
-                    </svg>
-                </button>
-                
-                <button type="button" class="icon-button force-delete-btn"
-                        data-gallery-id="{{ folder.id }}"
-                        data-modal-target="#forceDeleteGalleryModal"
-                        data-force-url="{{ url_for('gallery.force_delete_gallery', gallery_id=folder.id) }}">
-                    <svg class="folder-icon" width="24" height="24">
-                        <use href="#gllry-folder-del"></use>
-                    </svg>
-                </button>
+            {% if is_current_user %}
+                {# Non-admin: gallery actions #}
+                {% if view_type == 'trash' %}
+                    <button type="button" class="icon-button recover-gallery-btn" 
+                            data-gallery-id="{{ folder.id }}" 
+                            data-modal-target="#recoverGalleryModal"
+                            data-recover-url="{{ url_for('gallery.recover_gallery', gallery_id=folder.id) }}">
+                        <svg class="folder-icon" width="24" height="24">
+                            <use href="#gllry-folder-rev"></use>
+                        </svg>
+                    </button>
+                    
+                    <button type="button" class="icon-button force-delete-btn"
+                            data-gallery-id="{{ folder.id }}"
+                            data-modal-target="#forceDeleteGalleryModal"
+                            data-force-url="{{ url_for('gallery.force_delete_gallery', gallery_id=folder.id) }}">
+                        <svg class="folder-icon" width="24" height="24">
+                            <use href="#gllry-folder-del"></use>
+                        </svg>
+                    </button>
+
+                {% else %}
+                    <button type="button" class="icon-button edit-session-btn" 
+                            data-gallery-id="{{ folder.id }}" 
+                            data-gallery-name="{{ folder.name }}"
+                            data-modal-target="#editGalleryModal">
+                        <svg class="folder-icon" width="24" height="24">
+                            <use href="#gllry-folder-edit"></use>
+                        </svg>
+                    </button>
+                    
+                    <button type="button" class="icon-button delete-session-btn"
+                            data-modal-target="#deleteGalleryModal"
+                            data-delete-url="{{ url_for('gallery.delete_gallery', gallery_id=folder.id) }}">
+                        <svg class="folder-icon" width="24" height="24">
+                            <use href="#gllry-folder-bins"></use>
+                        </svg>
+                    </button>
+                {% endif %}
 
             {% else %}
-                <button type="button" class="icon-button edit-session-btn" 
-                        data-gallery-id="{{ folder.id }}" 
-                        data-gallery-name="{{ folder.name }}"
-                        data-modal-target="#editGalleryModal">
-                    <svg class="folder-icon" width="24" height="24">
-                        <use href="#gllry-folder-edit"></use>
-                    </svg>
-                </button>
-                
-                <button type="button" class="icon-button delete-session-btn"
-                        data-modal-target="#deleteGalleryModal"
-                        data-delete-url="{{ url_for('gallery.delete_gallery', gallery_id=folder.id) }}">
-                    <svg class="folder-icon" width="24" height="24">
-                        <use href="#gllry-folder-bins"></use>
-                    </svg>
-                </button>
+                {# Non-admin: simple chevron #}
+                <svg class="chevron" width="20" height="20">
+                    <use href="#chevron-right"></use>
+                </svg>
             {% endif %}
         </div>
     </div>

@@ -50,7 +50,8 @@ def get_eligible_galleries(admin, view_type='all'):
             eligible_folders.append({
                 'id': gllry.id, 
                 'name': gllry.name, 
-                'is_favorite': gllry.is_favorite
+                'is_favorite': gllry.is_favorite,
+                'created_at' : gllry.created_at,
             })
 
     return eligible_folders

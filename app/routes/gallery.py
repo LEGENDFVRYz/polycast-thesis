@@ -16,6 +16,44 @@ import app.globals as g
 gallery_bp = Blueprint('gallery', __name__)
 
 
+def _get_session_counts(folders):
+    """
+    Returns {gallery_id: active_session_count} in one aggregation query.
+    Works with folders as either ORM objects or dicts.
+    """
+    if not folders:
+        return {}
+ 
+    # Support both ORM objects and plain dicts
+    def _id(f):
+        return f['id'] if isinstance(f, dict) else f.id
+ 
+    gallery_ids = [_id(f) for f in folders]
+ 
+    rows = (
+        db.session.query(
+            DBSession.gallery_id,
+            db.func.count(DBSession.id).label('count')
+        )
+        .filter(
+            DBSession.gallery_id.in_(gallery_ids),
+            DBSession.deleted_at.is_(None)
+        )
+        .group_by(DBSession.gallery_id)
+        .all()
+    )
+ 
+    counts = {row.gallery_id: row.count for row in rows}
+ 
+    # Default to 0 for any gallery with no sessions yet
+    for f in folders:
+        counts.setdefault(_id(f), 0)
+ 
+    return counts
+
+
+
+
 # ---------------------------------------------------------------------
 # General Gallery Page Routes
 # - Waiting page for the clients if the stream is not yet setup
@@ -30,11 +68,14 @@ def index():
     folders = get_eligible_galleries(admin, view_type='all')
     is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
+    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    
     return render_template(
-        "gallery/gallery.html", 
-        is_setup=is_setup, 
-        ws_port=BROWSER_WS_PORT, 
-        folders=folders
+        "gallery/gallery.html",
+        is_setup=is_setup,
+        folders=folders,
+        session_counts=_get_session_counts(folders),
+        is_current_user=is_current_user,
     )
 
 

@@ -17,16 +17,21 @@
     <section class="recently-added">
         <h2 class="section-title">Recently Added</h2>
         <div class="recently-added__scroll-container">
-            </div>
+        </div>
     </section>
 
     <section class="folders">
-        <h2 class="folders-header">Quick Access</h2>
+        <div class="folders-header">
+            <h2>Quick Access</h2>
+            <a href="{{ url_for('gallery.all_galleries') }}" class="view-all-link">View all</a>
+        </div>
         <div class="folders-list">
-            {% for folder in folders[:5] %} {# Only show the first 5 folders on the dashboard #}
-                {{ folder_card(folder) }}
+            {% for folder in folders[:5] %} 
+                {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id])}}
             {% else %}
-                <p class="text-muted">No folders available.</p>
+                <div class="folders-empty">
+                    <p>No galleries yet.</p>
+                </div>
             {% endfor %}
         </div>
     </section>

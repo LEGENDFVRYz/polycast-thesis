@@ -89,87 +89,9 @@ div.gallery-wrap {
     }
 
 
-    /* --- Recents --- */
-    .recently-added {
-        margin-bottom: 0.5rem;
-
-        .section-title {
-            font-size: 0.95rem;
-            font-weight: 600;
-            color: var(--color-primary);
-            margin: 0 0 0.75rem 0;
-        }
-    }
-
-    .recently-added__scroll-container {
-        display: flex;
-        overflow-x: auto;
-        gap: 0.75rem;
-        padding-bottom: 0.75rem;
-        -ms-overflow-style: none;
-        scrollbar-width: none;
-    }
-
-    .recently-added__scroll-container::-webkit-scrollbar {
-        display: none;
-    }
-
-    .file-card {
-        flex: 0 0 160px;
-        background-color: var(--color-background);
-        border-radius: 0.875rem;
-        box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-        border: 1px solid var(--color-border);
-        overflow: hidden;
-
-        .fc-preview {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            height: 110px;
-            background-color: var(--color-muted);
-
-            img {
-                width: 28px;
-                height: 28px;
-                filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-            }
-        }
-
-        .fc-info {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 0.6rem 0.6rem 0.6rem 0.75rem;
-
-            .fc-name {
-                font-size: 0.8rem;
-                color: var(--color-primary);
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-
-            .fc-menu-btn {
-                background: none;
-                border: none;
-                cursor: pointer;
-                color: var(--color-muted-foreground);
-                display: flex;
-                align-items: center;
-
-                img {
-                    width: 14px;
-                    height: 14px;
-                    filter: invert(26%) sepia(29%) saturate(1221%) hue-rotate(165deg) brightness(92%) contrast(88%);
-                }
-            }
-        }
-    }
-
-
     /* --- Folders / Quick Access --- */
     .folders {
+        flex: 1;
 
         .folders-header {
             display: flex;
@@ -197,21 +119,9 @@ div.gallery-wrap {
             }
         }
 
-        .folders-list {
+        .folders-wrap {
             display: flex;
-            flex-direction: column;
-            gap: 0.6rem;
-        }
-
-        .folders-empty {
-            padding: 2rem 1rem;
-            text-align: center;
-
-            p {
-                font-size: 0.85rem;
-                color: var(--color-muted-foreground);
-                margin: 0;
-            }
+            flex: 1;
         }
     }
 
@@ -418,15 +328,10 @@ div.gallery-wrap {
             }
         }
 
-        .file-card {
-            flex: 0 0 190px;
-            .fc-preview { height: 140px; }
-            .fc-info .fc-name { font-size: 0.85rem; }
-        }
-
         .folders .folders-list {
             display: grid;
             grid-template-columns: repeat(2, 1fr);
+            align-items: start;
             gap: 0.75rem;
         }
 

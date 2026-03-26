@@ -89,10 +89,13 @@ def all_galleries():
     folders = get_eligible_galleries(admin, view_type='all')
     is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
+    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    
     return render_template(
         "gallery/gallery-all.html", 
         is_setup=is_setup, 
-        ws_port=BROWSER_WS_PORT, 
+        session_counts=_get_session_counts(folders),
+        is_current_user=is_current_user,
         folders=folders
     )
 
@@ -104,10 +107,13 @@ def favorites():
     folders = get_eligible_galleries(admin, view_type='favorites')
     is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
+    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    
     return render_template(
         "gallery/gallery-fav.html", 
         is_setup=is_setup, 
-        ws_port=BROWSER_WS_PORT, 
+        session_counts=_get_session_counts(folders),
+        is_current_user=is_current_user,
         folders=folders
     )
 
@@ -119,10 +125,13 @@ def trash():
     folders = get_eligible_galleries(admin, view_type='trash')
     is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
+    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    
     return render_template(
         "gallery/gallery-bin.html", 
         is_setup=is_setup, 
-        ws_port=BROWSER_WS_PORT, 
+        session_counts=_get_session_counts(folders),
+        is_current_user=is_current_user,
         folders=folders
     )
 

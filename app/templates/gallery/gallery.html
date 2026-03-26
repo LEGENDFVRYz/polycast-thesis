@@ -11,28 +11,34 @@
             <h2>Explore the Vast Galleries.</h2>
             <p>Most recent and shortcut access to all system notes.</p>
         </div>
-
     </div>
 
-    <section class="recently-added">
-        <h2 class="section-title">Recently Added</h2>
-        <div class="recently-added__scroll-container">
-        </div>
-    </section>
-
+    <!-- Quick Access Folders -->
     <section class="folders">
         <div class="folders-header">
             <h2>Quick Access</h2>
             <a href="{{ url_for('gallery.all_galleries') }}" class="view-all-link">View all</a>
         </div>
-        <div class="folders-list">
-            {% for folder in folders[:5] %} 
-                {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id])}}
-            {% else %}
-                <div class="folders-empty">
-                    <p>No galleries yet.</p>
+
+        <div class="folders-wrap">
+            {% if folders %}
+                <div class="folders-list">
+                    {% for folder in folders[:5] %} 
+                        {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id])}}
+                    {% endfor %}
                 </div>
-            {% endfor %}
-        </div>
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m22 19-2 2H4l-2-2V6l2-2h6l2 3h8l2 2z"/>
+                        </svg>
+                    </div>
+                    
+                    <h3>No galleries yet!</h3>
+                    <p>Start streaming to capture and organize your notes.</p>
+                </div>
+            {% endif %}
+        </>
     </section>
 {% endblock %}

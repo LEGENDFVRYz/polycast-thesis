@@ -16,11 +16,13 @@
     <section class="folders">
         <h2 class="folders-title">Favorites</h2>
         
-        <div class="folders-list">
+        <div class="folders-wrap">
             {% if folders %}  
-                {% for folder in folders %}
-                    {{ folder_card(folder) }}
-                {% endfor %}
+                <div class="folders-list">
+                    {% for folder in folders %}
+                        {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id]) }}
+                    {% endfor %}
+                </div>
             {% else %}
                 <div class="empty-state">
                     <div class="empty-icon">

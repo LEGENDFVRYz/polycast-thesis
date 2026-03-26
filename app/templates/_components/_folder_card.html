@@ -1,7 +1,7 @@
 {% macro folder_card(folder, view_type, is_current_user=false, count=0) %}
     <div class="folder-item">
 
-        {# Inset overlay #}
+        {# Inset overlay — covers the entire card, sits below all interactive elements #}
         <a href="{{ url_for('gallery.session_page', galleryname=folder.name) }}" 
            class="card-link-overlay" 
            aria-label="Open {{ folder.name }}"></a>
@@ -39,7 +39,7 @@
 
         <div class="item-actions">
             {% if is_current_user %}
-                {# Non-admin: gallery actions #}
+                {# Admin: show action buttons above the overlay #}
                 {% if view_type == 'trash' %}
                     <button type="button" class="icon-button recover-gallery-btn" 
                             data-gallery-id="{{ folder.id }}" 
@@ -79,11 +79,12 @@
                 {% endif %}
 
             {% else %}
-                {# Non-admin: simple chevron #}
-                <svg class="chevron" width="20" height="20">
-                    <use href="#chevron-right"></use>
+                {# Non-admin: simple chevron, the overlay handles navigation #}
+                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
             {% endif %}
         </div>
+
     </div>
 {% endmacro %}

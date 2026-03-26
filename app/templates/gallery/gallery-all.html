@@ -31,11 +31,13 @@
     <section class="folders">
         <h2 class="folders-title">My Galleries</h2>
         
-        <div class="folders-list">
-            {% if folders %}  
-                {% for folder in folders %}
-                    {{ folder_card(folder) }}
-                {% endfor %}
+        <div class="folders-wrap">
+            {% if folders %}
+                <div class="folders-list">
+                    {% for folder in folders %}
+                        {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id]) }}
+                    {% endfor %}
+                </div>
             {% else %}
                 <div class="empty-state">
                     <div class="empty-icon">

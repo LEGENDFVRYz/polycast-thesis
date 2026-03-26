@@ -1,5 +1,5 @@
 import json
-from flask import Blueprint, render_template, redirect, url_for, Response
+from flask import Blueprint, render_template, redirect, url_for, session, Response
 from config import BROWSER_WS_PORT
 from background.image_generator import generate_frames
 
@@ -114,10 +114,16 @@ def status_updates():
 # ---------------------------------------------------------------------
 @stream_bp.route("/stream")
 def index():
+    
+    # If no host, redirect them to the client page
     if not g.admin_status.get_field("hosting_active"):
-        # If no host, redirect them to the client page
-        print("[CLIENT] Denied access to /stream, hosting not active.")
-        return redirect(url_for("stream.client_page"))
+        
+        is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+        
+        if is_current_user:
+            return redirect(url_for("admin.index"))
+        else:
+            return redirect(url_for("stream.client_page"))
         
     print("[CLIENT] Accessing /stream.")
     return render_template("stream.html", ws_port=BROWSER_WS_PORT)

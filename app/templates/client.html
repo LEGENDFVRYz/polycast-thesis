@@ -1,127 +1,63 @@
 {% extends "_layouts/base.html" %}
 
 {% block inclusion %}
-<style>
-    .client-ctn {
-        font-family: 'Poppins';
-        font-weight: 500;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        flex: 1;
-
-        .client-wrapper {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-
-            #status-box {
-                text-align: center;
-
-                #status-message {
-                    font-weight: normal;
-                    font-size: 17px;
-                }
-            }
-
-            a {
-                align-self: center;
-                margin-top: 2rem;
-
-                .button-temp {
-                    font-family: 'Poppins';
-                    font-weight: 600;
-                    background-color: #1a2c47;
-                    color: white;
-                    padding: 1rem;
-                    border: none;
-                    border-radius: 0.5rem;
-                    font-size: 1rem;
-                    
-                    cursor: pointer;
-                    width: 12em;
-                    transition: background-color 0.3s;
-
-                    &:hover {
-                        background-color: #2b4a7a;
-                    }
-                }
-            }
-
-            .popup-fade {
-                opacity: 0;
-                transform: scale(1.1);
-                transition: opacity 0.5s ease, transform 1s ease;
-            }
-
-            .popup-fade.show {
-                opacity: 1;
-                transform: scale(1); 
-            }
-        }
-    }
-</style>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/client.css') }}">
 {% endblock %}
 
 {% block content %}
     <div class="client-ctn">
         <div class="client-wrapper">
-            <div id="status-box">
+            <div class="client-card">
                 <!-- temporary, minimized but can be optimized in other ways -->
                 <img id="status-image" 
                     src="{{ url_for('static', filename='images/placeholder.png') }}" 
-                    alt="status" 
-                    class="popup-fade"
-                    style="width:200px; height:200px;">
-                    <!-- add transition: opacity 0.5s; for fade effect -->
+                    alt="status">
+
                 <h1 id="status-comment">...</h1>
                 <h3 id="status-message">connecting to server</h3>
+                
+                {# <div class="card-divider"></div> #}
+                
+                <!-- action button -->
+                <a href="{{ url_for('stream.index') }}">
+                    <button class="btn-stream">Go to Stream</button>
+                </a>
             </div>
-            
-            <a href="{{ url_for('stream.index') }}">
-                <button class="button-temp">Go to Stream</button>
-            </a>
-            
         </div>
     </div>
 
     <script>
-        const statusImage = document.getElementById('status-image');
+        const statusImage   = document.getElementById('status-image');
         const statusComment = document.getElementById('status-comment');
         const statusMessage = document.getElementById('status-message');
-
+        
+        /* Pop-in on first load  */
+        statusImage.onload = () => statusImage.classList.add('show');
+    
+        /* SSE Logic Update */
         const eventSource = new EventSource("{{ url_for('stream.status_updates') }}");
-
+    
         eventSource.onmessage = function(event) {
             const data = JSON.parse(event.data);
             console.log("Received status update:", data);
-
-            // Update text fields
+    
+            /* Update text */
             statusComment.textContent = data.main_hook;
             statusMessage.textContent = data.status_detail;
-
-            // Smoothly change image
-            // statusImage.style.opacity = 0;      // for fade  effect
+    
+            /* Smooth image swap — fade out → swap src → fade in */
+            statusImage.classList.remove('show');
             setTimeout(() => {
                 statusImage.src = `/static/${data.image}`;
-                // statusImage.style.opacity = 1;
+                /* onload will re-add .show */
             }, 300);
         };
-
+    
         eventSource.onerror = function(err) {
             console.error("EventSource failed:", err);
             statusComment.textContent = "Connection Error";
             statusMessage.textContent = "Please refresh or try again later.";
             eventSource.close();
-        };
-    </script>
-
-    <script>
-        const img = document.querySelector('.popup-fade');
-
-        img.onload = () => {
-            img.classList.add('show');
         };
     </script>
 {% endblock %}

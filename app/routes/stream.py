@@ -33,7 +33,7 @@ def client_page():
     elif current_status == "HOSTING":
         image_number = 6
     
-    return render_template("client.html", initial_image=f"{image_number}.png", ws_port=BROWSER_WS_PORT)
+    return render_template("client.html", initial_image=f"{image_number}.webp", ws_port=BROWSER_WS_PORT)
 
 
 @stream_bp.route("/status_updates")
@@ -98,7 +98,7 @@ def status_updates():
                 "status": current_status,
                 "main_hook": main_hook,
                 "status_detail": status_detail,
-                "image": f"images/{image_number}.png"
+                "image": f"images/{image_number}.webp"
             })
 
             # Send as an SSE message

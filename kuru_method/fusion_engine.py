@@ -7,10 +7,10 @@ class FusionEngine:
         # We treat the wall as X (width) and Y (height). 
         # Z is depth (distance from wall).
         self.anchors = np.array([
-            [0.00, 0.00, 0.00],
+            # [0.00, 0.00, 0.00],
             [1.23, 0.00, 0.00], 
             [1.23, 1.23, 0.00], 
-            [0.00, 1.23, 0.00],
+            [0.00, 1.23, 0.00], # Anchor 3 (D3)
         ])
 
         # Bounds: 
@@ -21,28 +21,40 @@ class FusionEngine:
         self.last_pos = np.mean(self.anchors, axis=0)
 
     def _residuals(self, guess, anchors, measured_dists):
-        # 1. Calculate distance from guess to all 3 anchors at once (Vectorized)
+        # Calculate distance from guess to all valid anchors at once
         dist_calc = np.linalg.norm(anchors - guess, axis=1)
         
-        # 2. Return vector of errors
+        # Return vector of errors
         return np.nan_to_num(dist_calc - measured_dists)
 
     def trilaterate(self, dists):
-        # Convert list to numpy array
-        dists = np.array(dists)
+        # --- DYNAMIC ANCHOR FILTERING ---
+        valid_anchors = []
+        valid_dists = []
 
-        # Sanity check: If all distances are bad/zero, return last position
-        if np.all(dists <= 0):
+        # Safely pair the distances with however many anchors you defined.
+        # min() prevents crashes if you have 3 anchors defined but 4 distances arrive.
+        for i in range(min(len(self.anchors), len(dists))):
+            # Ignore missing anchors (-0.01) or dead preprocessor values (0.0)
+            if dists[i] > 0.01:  
+                valid_anchors.append(self.anchors[i])
+                valid_dists.append(dists[i])
+
+        valid_anchors = np.array(valid_anchors)
+        valid_dists = np.array(valid_dists)
+
+        # We need at least 3 valid anchors to calculate a stable 3D position
+        if len(valid_dists) < 3:
             return self.last_pos
 
-        # The 'soft_l1' loss function automatically ignores spikes (outliers)
+        # --- STANDARD UNWEIGHTED LEAST SQUARES ---
+        # loss='linear' forces standard least squares with no outlier weights/softening
         res = least_squares(
             self._residuals, 
             self.last_pos, 
             bounds=(self.bounds_min, self.bounds_max), 
-            args=(self.anchors, dists), 
-            loss='soft_l1',  # <--- This prevents teleporting!
-            f_scale=0.5,    # Scale of the outlier rejection
+            args=(valid_anchors, valid_dists), 
+            loss='linear',  
             method='trf'
         )
 

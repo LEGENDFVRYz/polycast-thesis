@@ -11,34 +11,40 @@ def parse_packet(line):
     """
     Parses a single line of CSV data from the Receiver.
     Expected Format:
-    DIST0, DIST1, DIST2, [QX, QY, QZ, QW, AX, AY, AZ, FORCE, TS] x 5
-    Total Columns: 3 + (9 * 5) = 48 columns
+    SEQ, BATCH_TS, UWB_TS, DIST0, DIST1, DIST2, DIST3, [QX, QY, QZ, QW, AX, AY, AZ, FORCE, TS] x 5
+    Total Columns: 3 (Headers) + 4 (UWB) + (9 * 5) = 52 columns
     """
     try:
         # 1. Remove whitespace and split by comma
         parts = line.strip().split(',')
         
         # 2. Basic Validation
-        # We expect exactly 48 data points based on your loop structure
-        if len(parts) != 48:
-            print(f"[WARNING] Invalid Packet Size: {len(parts)} columns (Expected 48)")
+        # We expect exactly 52 data points based on your new 4-anchor loop structure
+        if len(parts) != 52:
+            print(f"[ESP32 MSG]: {line.strip()}")
             return
 
-        # 3. Extract UWB Distances (First 3 items)
-        # Using float() to convert string '1.234' to number 1.234
-        d0 = float(parts[0])
-        d1 = float(parts[1])
-        d2 = float(parts[2])
+        # 3. Extract Headers (First 3 items)
+        seq = int(parts[0])
+        batch_ts = int(parts[1])
+        uwb_ts = int(parts[2])
 
-        print("-" * 50)
-        print(f"📡 UWB ANCHORS | D0: {d0:.2f}m | D1: {d1:.2f}m | D2: {d2:.2f}m")
-        print("-" * 50)
+        # 4. Extract UWB Distances (Next 4 items)
+        d0 = float(parts[3])
+        d1 = float(parts[4])
+        d2 = float(parts[5])
+        d3 = float(parts[6])
 
-        # 4. Extract the 5 Batched IMU Samples
+        print("-" * 65)
+        print(f"📦 PACKET SEQ: {seq} | BATCH TS: {batch_ts} | UWB TS: {uwb_ts}")
+        print(f"📡 UWB ANCHORS | D0: {d0}m | D1: {d1}m | D2: {d2}m | D3: {d3}m")
+        print("-" * 65)
+
+        # 5. Extract the 5 Batched IMU Samples
         # Each sample has 9 values: QX, QY, QZ, QW, AX, AY, AZ, FORCE, TS
         samples_per_packet = 5
         data_per_sample = 9
-        start_index = 3 # Data starts after the 3 UWB distances
+        start_index = 7 # IMU Data now starts after the 3 headers + 4 distances
 
         for i in range(samples_per_packet):
             # Calculate where this specific sample starts in the list
@@ -58,7 +64,7 @@ def parse_packet(line):
             ts = int(parts[offset + 8])
 
             # Print readable output for verification
-            print(f"   Sample {i+1}: T={ts} | Quat:({qx:.4f}, {qy:.4f}, {qz:.4f}, {qw:.4f}) | Acc: ({ax:.2f}, {ay:.2f}, {az:.2f}) | Force: {force:.1f}")
+            print(f"   Sample {i+1}: T={ts} | Quat:({qx}, {qy}, {qz}, {qw}) | Acc: ({ax}, {ay}, {az}) | Force: {force}")
 
         print("✅ Packet Parsed Successfully\n")
 

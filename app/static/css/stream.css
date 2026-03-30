@@ -29,7 +29,7 @@
     }
 }
 
-.stream-ctn .stream-wrapper{
+.stream-ctn {
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -86,15 +86,16 @@
 
 
     .video-wrapper {
-        width: 100%;
-        aspect-ratio: 16 / 9;
-        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
-        border-radius: 16px;
-        overflow: hidden;
-        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.3);
         display: flex;
         justify-content: center;
         align-items: center;
+        width: 100%;
+        aspect-ratio: 16 / 9;
+
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+        border-radius: 0.25rem;
+        overflow: hidden;
+        box-shadow: 0 4px 20px rgba(15, 23, 42, 0.3);
         animation: fadeInUp 0.5s ease-out 0.1s forwards;
         opacity: 0;
         transition: box-shadow 0.3s ease, transform 0.3s ease;

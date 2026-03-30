@@ -114,7 +114,7 @@ def status_updates():
 # ---------------------------------------------------------------------
 @stream_bp.route("/stream")
 def index():
-    
+
     # If no host, redirect them to the client page
     if not g.admin_status.get_field("hosting_active"):
         
@@ -126,7 +126,7 @@ def index():
             return redirect(url_for("stream.client_page"))
         
     print("[CLIENT] Accessing /stream.")
-    return render_template("stream.html", ws_port=BROWSER_WS_PORT)
+    return render_template("stream/stream.html", ws_port=BROWSER_WS_PORT)
 
 
 @stream_bp.route("/video_feed")

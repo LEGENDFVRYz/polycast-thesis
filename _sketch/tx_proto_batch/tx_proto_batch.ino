@@ -27,6 +27,8 @@ volatile float shared_dist3 = -1.0f;
 volatile uint32_t shared_uwb_ts = 0;
 uint32_t uwbPacketCount = 0;
 
+portMUX_TYPE distMux = portMUX_INITIALIZER_UNLOCKED;
+
 int live_distances[MAX_ANCHOR_LIST_SIZE];
 
 // Prototype anchors
@@ -74,11 +76,13 @@ void IMUTask(void *parameter) {
             if (current_batch_idx >= BATCH_SIZE) {
                 
                 // Copy the latest known UWB data from the Shared Memory
+                taskENTER_CRITICAL(&distMux);
                 tx_packet.dist0 = shared_dist0;
                 tx_packet.dist1 = shared_dist1;
                 tx_packet.dist2 = shared_dist2;
                 tx_packet.dist3 = shared_dist3;
                 tx_packet.uwb_ts = shared_uwb_ts;
+                taskEXIT_CRITICAL(&distMux);
                 
                 tx_packet.batch_ts = micros();
                 
@@ -127,11 +131,13 @@ void loop() {
     bool is_locked = runUWBCycle((int*)live_distances);
 
     if (is_locked) {
-        shared_dist0 = (float)live_distances[MAP_DIST0]/100;
-        shared_dist1 = (float)live_distances[MAP_DIST1]/100;
-        shared_dist2 = (float)live_distances[MAP_DIST2]/100;
-        shared_dist3 = (float)live_distances[MAP_DIST3]/100;
+        taskENTER_CRITICAL(&distMux);
+        shared_dist0 = (float)live_distances[MAP_DIST0] / 100.0f;
+        shared_dist1 = (float)live_distances[MAP_DIST1] / 100.0f;
+        shared_dist2 = (float)live_distances[MAP_DIST2] / 100.0f;
+        shared_dist3 = (float)live_distances[MAP_DIST3] / 100.0f;
         shared_uwb_ts = micros();
+        taskEXIT_CRITICAL(&distMux);
 
         Serial.println("[UWB] Sent Payload");
     } else {

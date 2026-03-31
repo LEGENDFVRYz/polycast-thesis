@@ -92,7 +92,8 @@ def main():
                     # Optional: Print raw line for debugging
                     # print(f"RAW: {line}") 
                     parse_packet(line)
-                    
+          
+                          
     except serial.SerialException:
         print(f"[FATAL] Could not open port {SERIAL_PORT}. Is another program (Arduino IDE) using it?")
     except KeyboardInterrupt:

@@ -1,29 +1,40 @@
+"""
+data_stream.py  —  PolyCast Data Ingestion Layer
+=================================================
+Supports two modes:
+    live — reads from ESP32 WROOM over serial
+    csv  — replays a previously-recorded dataset file
+
+get_packet() now returns 'uwb_weights' in the packet dict so that
+main.py can forward them into FusionEngine for IRLS weighting.
+"""
+
 import os
 import serial
 import time
 from preprocessor import UWBPreprocessor, IMUPreprocessor
 
+
 class DataStream:
     def __init__(self, port, baud_rate, dataset_filename=""):
-        self.port = port
-        self.baud_rate = baud_rate
+        self.port             = port
+        self.baud_rate        = baud_rate
         self.dataset_filename = dataset_filename
-        
-        # Determine mode based on whether a filename was provided
-        self.mode = "csv" if dataset_filename.strip() else "live"
-        
-        self.ser = None
+
+        self.mode     = "csv" if dataset_filename.strip() else "live"
+        self.ser      = None
         self.csv_file = None
-        
-        # Initialize the cleaners
-        self.uwb_cleaner = UWBPreprocessor()
+
+        self.uwb_cleaner = UWBPreprocessor(offsets=(-0.19, -0.20, -0.15, -0.40))
         self.imu_cleaner = IMUPreprocessor()
+
+    # ── connection ────────────────────────────────────────────────────
 
     def connect(self):
         if self.mode == "live":
             try:
                 self.ser = serial.Serial(self.port, self.baud_rate, timeout=1)
-                time.sleep(2) # Wait for Arduino reset
+                time.sleep(2)               # wait for Arduino reset
                 print(f"✅ Connected to LIVE stream on {self.port}")
                 return True
             except Exception as e:
@@ -31,43 +42,45 @@ class DataStream:
                 return False
         else:
             try:
-                # 1. Get the directory where data_stream.py is located
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                
-                # 2. Join it with your dataset filename
-                full_path = os.path.join(script_dir, self.dataset_filename)
-                
-                # 3. Open the file using the absolute path
+                full_path  = os.path.join(script_dir, self.dataset_filename)
                 self.csv_file = open(full_path, 'r')
-                # -----------------------------------
-                
-                # --- AUTO HEADER DETECTION ---
-                first_pos = self.csv_file.tell()
+
+                # Auto-detect and skip optional CSV header row
+                first_pos  = self.csv_file.tell()
                 first_line = self.csv_file.readline()
                 try:
                     float(first_line.split(',')[0])
-                    self.csv_file.seek(first_pos)
+                    self.csv_file.seek(first_pos)   # numeric first column → no header
                 except ValueError:
-                    pass 
-                # -----------------------------
-                
+                    pass                            # non-numeric → header, already consumed
+
                 print(f"✅ Opened CSV dataset: {full_path}")
                 return True
             except Exception as e:
                 print(f"❌ Failed to open CSV: {e}")
                 return False
 
+    # ── helpers ───────────────────────────────────────────────────────
+
     def data_available(self):
-        """Helper to check if there is data in the serial buffer."""
-        if self.mode == "live":
-            return self.ser and self.ser.in_waiting > 0
-        return False
+        """True if live serial buffer has bytes waiting."""
+        return self.mode == "live" and bool(self.ser and self.ser.in_waiting > 0)
+
+    # ── core read / parse ─────────────────────────────────────────────
 
     def get_packet(self):
-        """Reads one line, parses it, cleans it, and returns structured data."""
+        """
+        Read one CSV line, parse, preprocess, and return a structured dict.
+
+        Returns
+        -------
+        dict  — successfully parsed packet
+        "EOF" — end of CSV file (csv mode only)
+        None  — no data yet / line corrupt / wrong column count
+        """
+        # 1. Read one line
         line = ""
-        
-        # 1. READ LINE based on mode
         if self.mode == "live":
             if not self.ser or self.ser.in_waiting == 0:
                 return None
@@ -80,65 +93,72 @@ class DataStream:
                 return None
             line = self.csv_file.readline().strip()
             if not line:
-                return "EOF" # Signal end of file
+                return "EOF"
 
-        if not line: 
+        if not line:
             return None
 
-        # 2. PARSE AND CLEAN
+        # 2. Parse
         try:
             parts = line.split(',')
-            
-            # Validation: 3 Headers + 4 UWB + (9 IMU * 5 samples) = 52 columns
+
+            # Expected layout:
+            #   3 headers  +  4 UWB  +  (9 fields × 5 samples)  =  52 columns
             if len(parts) != 52:
                 return None
-            
-            # --- PARSE HEADERS ---
-            seq = int(parts[0])
-            batch_ts = int(parts[1])
-            uwb_ts = int(parts[2])
 
-            # --- PARSE & CLEAN UWB ---
+            # ── Headers ───────────────────────────────────────────────
+            seq      = int(parts[0])
+            batch_ts = int(parts[1])
+            uwb_ts   = int(parts[2])
+
+            # ── UWB distances ─────────────────────────────────────────
             raw_d0 = float(parts[3])
             raw_d1 = float(parts[4])
             raw_d2 = float(parts[5])
             raw_d3 = float(parts[6])
-            
-            # The cleaner returns the median-filtered distances
-            d0, d1, d2, d3 = self.uwb_cleaner.process(raw_d0, raw_d1, raw_d2, raw_d3)
 
-            # --- PARSE & CLEAN IMU BATCH ---
+            # Preprocessor now returns (filtered_dists, quality_weights)
+            (d0, d1, d2, d3), (w0, w1, w2, w3) = self.uwb_cleaner.process(
+                raw_d0, raw_d1, raw_d2, raw_d3
+            )
+
+            # ── IMU batch (5 samples × 9 fields) ─────────────────────
             imu_batch = []
             start_idx = 7
             for i in range(5):
-                off = start_idx + (i * 9)
-                
-                qx, qy, qz, qw = float(parts[off]), float(parts[off+1]), float(parts[off+2]), float(parts[off+3])
-                ax, ay, az = float(parts[off+4]), float(parts[off+5]), float(parts[off+6])
+                off = start_idx + i * 9
+                qx, qy, qz, qw_ = (float(parts[off]),   float(parts[off+1]),
+                                    float(parts[off+2]), float(parts[off+3]))
+                ax, ay, az       = (float(parts[off+4]), float(parts[off+5]),
+                                    float(parts[off+6]))
                 force = float(parts[off+7])
-                ts = int(parts[off+8])
+                ts    = int(parts[off+8])
 
-                clean_sample = self.imu_cleaner.process_sample(qx, qy, qz, qw, ax, ay, az)
-                
+                clean = self.imu_cleaner.process_sample(qx, qy, qz, qw_, ax, ay, az)
+
                 imu_batch.append({
-                    'quat': clean_sample[0:4],
-                    'acc': clean_sample[4:7],
+                    'quat' : clean[0:4],
+                    'acc'  : clean[4:7],
                     'force': force,
-                    'ts': ts
+                    'ts'   : ts,
                 })
 
             return {
-                'seq': seq,
-                'batch_ts': batch_ts,
-                'uwb_ts': uwb_ts,
-                'uwb': (d0, d1, d2, d3),
-                'uwb_raw': (raw_d0, raw_d1, raw_d2, raw_d3),
-                'imu': imu_batch
+                'seq'        : seq,
+                'batch_ts'   : batch_ts,
+                'uwb_ts'     : uwb_ts,
+                'uwb'        : (d0, d1, d2, d3),           # filtered distances
+                'uwb_raw'    : (raw_d0, raw_d1, raw_d2, raw_d3),
+                'uwb_weights': (w0, w1, w2, w3),            # ← NEW: quality weights
+                'imu'        : imu_batch,
             }
 
-        except ValueError:
-            return None # Skip corrupt lines
-            
+        except (ValueError, IndexError):
+            return None             # corrupt line — silently skip
+
+    # ── cleanup ───────────────────────────────────────────────────────
+
     def close(self):
         if self.ser:
             self.ser.close()

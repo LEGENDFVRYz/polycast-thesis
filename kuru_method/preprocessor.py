@@ -117,11 +117,14 @@ class UWBPreprocessor:
 
         for i, raw in enumerate([d0, d1, d2, d3]):
             # ── Stage 1: validity gate ────────────────────────────────
-            if raw <= 0.05 or raw > self.max_range or not np.isfinite(raw):
-                raw = self._last[i]         # hold last known-good value
-                
-            # ── Offset calibration ──────────────────────────────────────
-            raw = max(0.05, raw + self.offsets[i])   # clamp so it stays positive
+            # Apply offset to the raw reading FIRST
+            raw_with_offset = raw + self.offsets[i]
+
+            # Check if it's valid
+            if raw_with_offset <= 0.05 or raw_with_offset > self.max_range or not np.isfinite(raw_with_offset):
+                raw = self._last[i]  # Use the last good value
+            else:
+                raw = raw_with_offset # Use the fresh, offset value
 
             # ── Stage 2: median despike ───────────────────────────────
             self._med_bufs[i].append(raw)

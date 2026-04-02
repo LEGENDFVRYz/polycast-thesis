@@ -5,15 +5,15 @@ class Config:
     # --- PHYSICAL SETUP ---
     # The Anchor coordinates on your wall
     ANCHORS = np.array([
-        [1.25, 0.00, 0.00], 
-        [1.25, 1.25, 0.00], 
-        [0.00, 1.25, 0.00]
+        [1.23, 0.00, 0.00],   # A0 – bottom-left
+        [1.23, 1.23, 0.00],   # A1 – bottom-right
+        [0.00, 1.23, 0.00],   # A2 – top-right
     ])
 
     # --- PHASE 1: IMU SETTINGS ---
-    IMU_ZUPT_THRESH = 0.15     # m/s^2. Below this, we force 0.0 (noise floor)
-    ZUPT_ACC_THRESH  = 0.075   # m/s²
-    ZUPT_JERK_THRESH = 7.839   # m/s³
+    IMU_ZUPT_THRESH  = 0.15    # m/s^2. Below this, we force 0.0 (noise floor)
+    ZUPT_ACC_THRESH  = 0.097   # m/s² (Auto-calibrated)
+    ZUPT_JERK_THRESH = 2.975   # m/s³ (Auto-calibrated)
     ZUPT_TIME_THRESH = 0.080   # seconds
     
     # --- PHASE 2: UWB PHYSICS GATES ---

@@ -81,7 +81,7 @@ class StrokeTracker:
 # ==============================================================================
 if __name__ == "__main__":
     # 1. SETUP HARDWARE STREAM
-    streamer = SerialStreamer(port='COM3', baud=115200)
+    streamer = SerialStreamer(port='COM20', baud=115200)
     
     # 2. SETUP PIPELINE MODULES
     imu_cleaner = IMUCleaner()

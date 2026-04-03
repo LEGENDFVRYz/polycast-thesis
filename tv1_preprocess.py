@@ -271,7 +271,7 @@ if __name__ == "__main__":
             return hw_sec + self.offset
 
     # SETUP
-    streamer = SerialStreamer(port='COM3', baud=115200)
+    streamer = SerialStreamer(port='COM20', baud=115200)
     imu_cleaner = IMUCleaner()
     time_syncer = TimeSyncer()
     uwb_cleaner = UWBCleaner()

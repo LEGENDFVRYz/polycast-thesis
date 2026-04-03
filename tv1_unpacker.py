@@ -83,7 +83,7 @@ class SerialStreamer:
                 'type': 'UWB',
                 'id': data[1],
                 'pos': (data[2], data[3]),
-                'dists': (data[4], data[5], data[6]),
+                'dists': (data[4] / 100, data[5] / 100, data[6] / 100),     # Temporary fix, since the old algo need in meters
                 'ts': data[7] # Hardware Timestamp
             }
         except Exception as e:
@@ -194,7 +194,7 @@ if __name__ == "__main__":
     
     
     # --- MAIN DEBUGGER  ---
-    streamer = SerialStreamer(port='COM3', baud=115200)
+    streamer = SerialStreamer(port='COM20', baud=115200)
     
     try:
         while True:

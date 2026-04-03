@@ -474,6 +474,9 @@ section.landing-content div.content-block.--about {
 @media (min-width: 1024px) {
     section.landing-content {
         div.content-block.--about {
+            gap: 20rem;
+            margin-bottom: 5rem;
+
             .about-header {
                 .title-quote {
                     gap: 2em;

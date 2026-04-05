@@ -9,7 +9,7 @@ import os
 # ==============================================================================
 VIRTUAL_COM_PORT = 'COM19'  # The port the replayer sends TO
 BAUD_RATE = 115200
-CSV_FILE = 'sc1_loop.csv'  # <--- CHANGE THIS to your actual CSV filename
+CSV_FILE = 'imu_1a.csv'  # <--- CHANGE THIS to your actual CSV filename
 
 # Scaling factors (Must match the original unpacker)
 Q_SCALE = 32767.0
@@ -58,22 +58,23 @@ def build_imu_payload(rows):
 def build_uwb_payload(row):
     """Rebuilds the UWB binary payload from 1 CSV row"""
     packet_id = int(row['Packet_ID'])
-    pos_x = float(row['Pos_x'])
-    pos_y = float(row['Pos_y'])
+    
+    # Extract the 4 distances (Pos_x and Pos_y removed)
     d0 = float(row['Dist_0'])
     d1 = float(row['Dist_1'])
     d2 = float(row['Dist_2'])
+    d3 = float(row['Dist_3'])
     ts = int(float(row['HW_TS']))
     
-    # Pack: Type(0x02) + ID(4) + x(4) + y(4) + d0..d2(12) + ts(4)
-    payload = struct.pack('<BIfffffI', 0x02, packet_id, pos_x, pos_y, d0, d1, d2, ts)
+    # Pack: Type(0x02) + ID(4) + d0..d3(16) + ts(4)
+    payload = struct.pack('<BIffffI', 0x02, packet_id, d0, d1, d2, d3, ts)
     return payload
 
 def wrap_frame(payload):
     """Wraps payload with Header, Length, RecvTS, and Footer"""
     header = b'\xAA\x55'
     
-    # FIX: The receiver's payload_len calculation includes the 4 bytes of RecvTS!
+    # The receiver's payload_len calculation includes the 4 bytes of RecvTS!
     length_val = len(payload) + 4 
     length_byte = struct.pack('<B', length_val)
     

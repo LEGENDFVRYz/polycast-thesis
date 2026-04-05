@@ -60,10 +60,12 @@ class SerialStreamer:
 
     def _parse_uwb(self, payload):
         try:
-            data = struct.unpack('<BIfffffI', payload)
+            data = struct.unpack('<BIffffI', payload)
             return {
-                'type': 'UWB', 'id': data[1], 'pos': (data[2], data[3]),
-                'dists': (data[4], data[5], data[6]), 'ts': data[7]
+                'type': 'UWB',
+                'id': data[1],
+                'dists': (data[2], data[3], data[4], data[5]), 
+                'ts': data[6]
             }
         except Exception as e:
             return None
@@ -76,6 +78,7 @@ class SerialStreamer:
             if self.ser.in_waiting:
                 self.buffer.extend(self.ser.read(self.ser.in_waiting))
             
+            # Parsing the Frames
             while len(self.buffer) >= 4:
                 if self.buffer[0] != 0xAA or self.buffer[1] != 0x55:
                     self.buffer.pop(0) 
@@ -84,10 +87,12 @@ class SerialStreamer:
                 payload_len = self.buffer[2]
                 total_frame = 2 + 1 + payload_len + 1 
                 
-                if len(self.buffer) < total_frame: break 
+                if len(self.buffer) < total_frame:
+                    break # Wait for more data
                 
+                # Footer Check (0xFF)
                 if self.buffer[total_frame - 1] != 0xFF:
-                    self.buffer.pop(0) 
+                    self.buffer.pop(0) # Corrupt, slide 1 byte
                     continue
                 
                 frame = self.buffer[:total_frame]
@@ -107,11 +112,12 @@ class SerialStreamer:
             
         return packets_found
 
+
+
 # ==============================================================================
 # CSV CAPTURE ROUTINE
 # ==============================================================================
 if __name__ == "__main__":
-    # CHANGE THIS to your actual physical COM port connected to the sender
     CAPTURE_PORT = 'COM3' 
     streamer = SerialStreamer(port=CAPTURE_PORT, baud=115200)
     
@@ -119,11 +125,12 @@ if __name__ == "__main__":
     
     with open(filename, mode='w', newline='') as f:
         writer = csv.writer(f)
-        # Unified Header for both sensor types
+
+        # csv header
         writer.writerow([
             'System_Time', 'Type', 'Packet_ID', 'Sample_Idx', 'HW_TS',
             'Q_x', 'Q_y', 'Q_z', 'Q_w', 'A_x', 'A_y', 'A_z', 'Force',
-            'Pos_x', 'Pos_y', 'Dist_0', 'Dist_1', 'Dist_2'
+            'Dist_0', 'Dist_1', 'Dist_2', 'Dist_3'
         ])
         
         print(f"[*] Capturing serial data to {filename}...")
@@ -142,16 +149,15 @@ if __name__ == "__main__":
                                 sys_t, 'IMU', pkt['id'], idx, s['ts'],
                                 s['quat'][0], s['quat'][1], s['quat'][2], s['quat'][3],
                                 s['acc'][0], s['acc'][1], s['acc'][2], s['force'],
-                                '', '', '', '', '' # Leave UWB fields blank
+                                '', '', '', ''  # Leave 4 UWB distance fields blank
                             ])
                             
                     elif pkt['type'] == 'UWB':
                         # UWB has 1 sample per packet
                         writer.writerow([
                             sys_t, 'UWB', pkt['id'], 0, pkt['ts'],
-                            '', '', '', '', '', '', '', '', # Leave IMU fields blank
-                            pkt['pos'][0], pkt['pos'][1],
-                            pkt['dists'][0], pkt['dists'][1], pkt['dists'][2]
+                            '', '', '', '', '', '', '', '', # Leave 8 IMU fields blank
+                            pkt['dists'][0], pkt['dists'][1], pkt['dists'][2], pkt['dists'][3]
                         ])
                         
         except KeyboardInterrupt:

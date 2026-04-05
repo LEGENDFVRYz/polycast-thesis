@@ -89,7 +89,7 @@ void loop() {
         uwb_packet.dist0 = (float)live_distances[MAP_DIST0] / 100.0f;
         uwb_packet.dist1 = (float)live_distances[MAP_DIST1] / 100.0f;
         uwb_packet.dist2 = (float)live_distances[MAP_DIST2] / 100.0f;
-        uwb_packet.dist2 = (float)live_distances[MAP_DIST3] / 100.0f;
+        uwb_packet.dist3 = (float)live_distances[MAP_DIST3] / 100.0f;
         uwb_packet.ts = micros();
 
         esp_now_send(receiverMAC, (uint8_t *)&uwb_packet, sizeof(PacketUWB));

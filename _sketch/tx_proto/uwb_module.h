@@ -13,8 +13,6 @@
 typedef struct __attribute__((packed)) {
     uint8_t type = 0x02;
     uint32_t packetId;
-    float x;
-    float y;
     float dist0;
     float dist1;
     float dist2;

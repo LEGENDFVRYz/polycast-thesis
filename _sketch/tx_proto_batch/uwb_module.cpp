@@ -10,8 +10,8 @@ extern void reselect(uint8_t ss);
 #define PIN_SS  10
 
 // --- ANTENNA DELAY CALIBRATIONS ---
-#define TX_ANT_DLY 16385
-#define RX_ANT_DLY 16385
+#define TX_ANT_DLY 16336
+#define RX_ANT_DLY 16336
 
 
 

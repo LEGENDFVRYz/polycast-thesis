@@ -1,11 +1,11 @@
 """
-Module 1 — Stream Normalizer
+Module 1 — Stream Unpacker
 
 Responsibility:
     - Enable to read all the raw data came from the reciever module
 
 Input  (from the prototype reciever, fetched via serial com):
-    - Binary Structures
+    - Binary Structures (Sender Packets)
 
 Output (build differen packet per each packet type):
     IMU packet: { 'type': 'IMU', 'id': int, 'samples': [ {ts, quat, acc, force}, ... ] }
@@ -29,7 +29,7 @@ class SerialStreamer:
         # --- SCALING FACTORS ---
         self.Q_SCALE = 32767.0
         self.A_SCALE = 1000.0
-        self.F_SCALE = 1.0
+        self.F_SCALE = 100.0
         
         self.connect()
 
@@ -87,14 +87,13 @@ class SerialStreamer:
         Unpacks UWB bytes into a usable dictionary.
         """
         try:
-            # Format: Type(1), ID(4), x(4), y(4), d0..d2(12), ts(4)
-            data = struct.unpack('<BIfffffI', payload)
+            # Format: Type(1), ID(4), x(4), y(4), d0..d3(4), ts(4)
+            data = struct.unpack('<BIffffI', payload)
             return {
                 'type': 'UWB',
                 'id': data[1],
-                'pos': (data[2], data[3]),
-                'dists': (data[4] / 100, data[5] / 100, data[6] / 100),     # Temporary fix, since the old algo need in meters
-                'ts': data[7] # Hardware Timestamp
+                'dists': (data[2], data[3], data[4], data[5]),  # Temporary fix, since the old algo need in meters
+                'ts': data[6]                                   # Hardware Timestamp
             }
         except Exception as e:
             return None
@@ -222,8 +221,10 @@ if __name__ == "__main__":
                         
                 elif pkt['type'] == 'UWB':
                     latest['uwb'] = pkt
+                    
                     if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'UWB']:
-                        print(f">>> [UWB #{pkt['id']}] Pos: {pkt['pos']}")
+                        d = pkt['dists']
+                        print(f">>> [UWB #{pkt['id']}] Dists: {d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}, {d[3]:.2f}")
 
             # LIVE VISUALIZATION (Throttled via DISPLAY RATE)
             if VIEW_MODE == 'LIVE' and (time.time() - last_draw_time > DISPLAY_RATE):
@@ -241,8 +242,7 @@ if __name__ == "__main__":
                 if FILTER_MODE in ['BOTH', 'UWB'] and latest['uwb']:
                     u = latest['uwb']
                     print(f"\n[UWB #{u['id']}]")
-                    print(f"  Pos  : X={u['pos'][0]:.2f}, Y={u['pos'][1]:.2f}")
-                    print(f"  Dists: {u['dists'][0]:.2f}, {u['dists'][1]:.2f}, {u['dists'][2]:.2f}")
+                    print(f"  Dists: {u['dists'][0]:.2f}, {u['dists'][1]:.2f}, {u['dists'][2]:.2f}, {u['dists'][3]:.2f}")
                 
                 print("\n============================================")
                 last_draw_time = time.time()
@@ -250,3 +250,4 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         print("\nStopping...")
         streamer.close()
+        

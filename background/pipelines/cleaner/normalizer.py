@@ -28,8 +28,7 @@ Output (normalized event schema):
         'packet_id':  int,
         'sample_idx': 0,        # always 0 (UWB is not batched)
         'ts_hw':      int,
-        'pos':        (x, y),
-        'dists':      (d0, d1, d2)
+        'dists':      (d0, d1, d2, d3)
     }
 """
 
@@ -126,7 +125,6 @@ class StreamNormalizer:
             'packet_id':  pkt.get('id'),
             'sample_idx': 0,
             'ts_hw':      pkt.get('ts'),
-            'pos':        pkt.get('pos'),
             'dists':      pkt.get('dists'),
         }
 
@@ -174,7 +172,7 @@ if __name__ == '__main__':
                         print(f"[{sensor}] Pkt:{ev['packet_id']} Sub:{ev['sample_idx']} | TS:{ts} | Force:{ev['force']:.2f}")
                     
                     elif sensor == 'UWB':
-                        print(f"[{sensor}] Pkt:{ev['packet_id']} | TS:{ts} | Pos:{ev['pos']}")
+                        print(f"[{sensor}] Pkt:{ev['packet_id']} | TS:{ts} | Dist:{ev['dists']}")
 
             time.sleep(0.01)
 

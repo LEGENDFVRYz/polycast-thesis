@@ -5,9 +5,10 @@ class Config:
     # --- PHYSICAL SETUP ---
     # The Anchor coordinates on your wall
     ANCHORS = np.array([
-        [1.23, 0.00, 0.00],   # A0 – bottom-left
-        [1.23, 1.23, 0.00],   # A1 – bottom-right
-        [0.00, 1.23, 0.00],   # A2 – top-right
+        [0.00, 0.00, 0.07],   # A1 – botton-left
+        [1.23, 0.00, 0.07],   # A2 – bottom-right
+        [1.23, 1.23, 0.07],   # A3 – top-right
+        [0.00, 1.23, 0.07],   # A7 – top-left
     ])
 
     # --- PHASE 1: IMU SETTINGS ---
@@ -29,4 +30,4 @@ class Config:
     
     
     # --- FORCE CONFIG ---
-    FORCE_CONTACT_THRESH = 3.1
+    FORCE_CONTACT_THRESH = 0.3

@@ -203,7 +203,8 @@ class UWBCleaner:
         Output: Valid Position Vector, Status String
         """
         # 1. GEOMETRY
-        dists_vec = np.array(raw_dists[:3])
+        # UPDATED: Slice up to 4 elements to support the 4-anchor setup (d0, d1, d2, d3).
+        dists_vec = np.array(raw_dists[:4])
         raw_pos = self._solve_geometry(dists_vec)
         self.state['raw_pos'] = raw_pos[:2]
         

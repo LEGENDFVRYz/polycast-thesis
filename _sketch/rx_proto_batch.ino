@@ -104,9 +104,9 @@ void loop() {
       Serial.print(myPacket.samples[i].qz, 4); Serial.print(",");
       Serial.print(myPacket.samples[i].qw, 4); Serial.print(",");
 
-      Serial.print(myPacket.samples[i].ax, 2); Serial.print(",");
-      Serial.print(myPacket.samples[i].ay, 2); Serial.print(",");
-      Serial.print(myPacket.samples[i].az, 2); Serial.print(",");
+      Serial.print(myPacket.samples[i].ax, 4); Serial.print(",");
+      Serial.print(myPacket.samples[i].ay, 4); Serial.print(",");
+      Serial.print(myPacket.samples[i].az, 4); Serial.print(",");
 
       Serial.print(myPacket.samples[i].force); Serial.print(",");
       Serial.print(myPacket.samples[i].ts);

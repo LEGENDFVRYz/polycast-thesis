@@ -104,33 +104,48 @@ class UWBPreprocessor:
         self._last     = [0.0]  * self.n
         self._trackers = [AnchorQualityTracker() for _ in range(self.n)]
 
+        # Smaller window for EKF path (offset + despike, NO EMA — avoids lag
+        # and temporal correlation that violate the EKF's white-noise assumption)
+        self._med_bufs_ekf = [deque(maxlen=3) for _ in range(self.n)]
+        self._last_ekf     = [0.0] * self.n
+
     # ── main entry point ──────────────────────────────────────────────
 
     def process(self, d0: float, d1: float, d2: float, d3: float):
         """
         Returns:
-            filtered  : tuple(float, float, float, float)
-            weights   : tuple(float, float, float, float)
+            filtered  : tuple(float×4)  — offset + median + EMA  (low-noise, for visualisation)
+            weights   : tuple(float×4)  — per-anchor quality [0.1, 1.0]
+            despiked  : tuple(float×4)  — offset + small median, NO EMA  (for EKF measurement update)
+
+        The 'despiked' output avoids the EMA's lag (~40 ms) and temporal
+        correlation, satisfying the EKF's white-measurement-noise assumption.
         """
         filtered = []
         weights  = []
+        despiked = []
 
         for i, raw in enumerate([d0, d1, d2, d3]):
-            # ── Stage 1: validity gate ────────────────────────────────
-            # Apply offset to the raw reading FIRST
+            # ── Stage 1: validity gate (shared) ───────────────────────
             raw_with_offset = raw + self.offsets[i]
-
-            # Check if it's valid
-            if raw_with_offset <= 0.05 or raw_with_offset > self.max_range or not np.isfinite(raw_with_offset):
-                raw = self._last[i]  # Use the last good value
+            if (raw_with_offset <= 0.05 or raw_with_offset > self.max_range
+                    or not np.isfinite(raw_with_offset)):
+                cooked = self._last[i]
             else:
-                raw = raw_with_offset # Use the fresh, offset value
+                cooked = raw_with_offset
 
-            # ── Stage 2: median despike ───────────────────────────────
-            self._med_bufs[i].append(raw)
+            # ── Stage 2 (EKF path): small-window median only ──────────
+            self._med_bufs_ekf[i].append(cooked)
+            ekf_val = float(np.median(self._med_bufs_ekf[i]))
+            if ekf_val > 0.05:
+                self._last_ekf[i] = ekf_val
+            despiked.append(self._last_ekf[i])
+
+            # ── Stage 2 (vis path): larger-window median despike ──────
+            self._med_bufs[i].append(cooked)
             median_val = float(np.median(self._med_bufs[i]))
 
-            # ── Stage 3: variable-rate EMA ────────────────────────────
+            # ── Stage 3 (vis path): variable-rate EMA ─────────────────
             if self._ema[i] is None:
                 self._ema[i] = median_val
             else:
@@ -143,12 +158,12 @@ class UWBPreprocessor:
 
             # ── NLOS quality scoring ──────────────────────────────────
             self._trackers[i].push(median_val)
-            w = self._trackers[i].weight(raw)
+            w = self._trackers[i].weight(cooked)
 
             filtered.append(smooth)
             weights.append(w)
 
-        return tuple(filtered), tuple(weights)
+        return tuple(filtered), tuple(weights), tuple(despiked)
 
     # ── feedback from FusionEngine ────────────────────────────────────
 

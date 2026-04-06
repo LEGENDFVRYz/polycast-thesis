@@ -25,7 +25,7 @@ class DataStream:
         self.ser      = None
         self.csv_file = None
 
-        self.uwb_cleaner = UWBPreprocessor(offsets=(-0.19, -0.20, -0.15, -0.40))
+        self.uwb_cleaner = UWBPreprocessor(offsets=(-0.1700, -0.0492, -0.2651, -0.1664))
         self.imu_cleaner = IMUPreprocessor()
 
     # ── connection ────────────────────────────────────────────────────
@@ -118,8 +118,8 @@ class DataStream:
             raw_d2 = float(parts[5])
             raw_d3 = float(parts[6])
 
-            # Preprocessor now returns (filtered_dists, quality_weights)
-            (d0, d1, d2, d3), (w0, w1, w2, w3) = self.uwb_cleaner.process(
+            # Preprocessor returns (filtered, weights, despiked)
+            (d0, d1, d2, d3), (w0, w1, w2, w3), (e0, e1, e2, e3) = self.uwb_cleaner.process(
                 raw_d0, raw_d1, raw_d2, raw_d3
             )
 
@@ -148,9 +148,10 @@ class DataStream:
                 'seq'        : seq,
                 'batch_ts'   : batch_ts,
                 'uwb_ts'     : uwb_ts,
-                'uwb'        : (d0, d1, d2, d3),           # filtered distances
+                'uwb'        : (d0, d1, d2, d3),           # EMA-filtered (visualisation)
                 'uwb_raw'    : (raw_d0, raw_d1, raw_d2, raw_d3),
-                'uwb_weights': (w0, w1, w2, w3),            # ← NEW: quality weights
+                'uwb_weights': (w0, w1, w2, w3),            # per-anchor quality
+                'uwb_ekf'    : (e0, e1, e2, e3),            # offset+despike, no EMA (EKF input)
                 'imu'        : imu_batch,
             }
 

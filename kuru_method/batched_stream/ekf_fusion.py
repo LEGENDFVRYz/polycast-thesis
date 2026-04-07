@@ -501,7 +501,7 @@ class EKFFusionEngine:
         self._is_writing  = False
 
         # Cold-start IRLS (reuses existing solver)
-        from kuru_method.batched_stream.fusion_engine import IRLSTrilateration
+        from fusion_engine import IRLSTrilateration
         _bmin = [-0.30, -0.30, -0.50]
         _bmax = [ 1.55,  1.55,  1.00]
         self._irls = IRLSTrilateration(

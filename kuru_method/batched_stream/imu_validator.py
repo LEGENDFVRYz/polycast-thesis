@@ -100,7 +100,7 @@ class IMUValidatorDashboard:
     # ── layout ────────────────────────────────────────────────────────
 
     def _make_irls(self):
-        from kuru_method.batched_stream.fusion_engine import IRLSTrilateration
+        from fusion_engine import IRLSTrilateration
         bmin = [-0.30, -0.30, -0.50]
         bmax = [ 1.55,  1.55,  1.00]
         return IRLSTrilateration(ANCHORS, bmin, bmax, tag_z=MARKER_Z)

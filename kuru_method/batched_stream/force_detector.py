@@ -36,7 +36,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from collections import deque
-from kuru_method.batched_stream.data_stream import DataStream
+from data_stream import DataStream
 
 # ── Configuration ─────────────────────────────────────────────────────
 SERIAL_PORT      = 'COM5'

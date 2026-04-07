@@ -1,21 +1,53 @@
 {% extends "_layouts/landing.html" %}
 
-{# 
-    About Us Page (root):
-    - Note: this page is a web static
-    - Page dedicated for knowing our vision and team
-#}
 {% block inclusion %}
     <title>PolyCast - About Us</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='css/web/about.css') }}">
+    <style>
+        .landing-banner .landing-banner-content .about-hero-copy {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            gap: clamp(0.9rem, 2.2vw, 1.8rem);
+            padding-top: 0;
+            padding-bottom: clamp(10rem, 30vh, 20rem);
+            padding-inline: clamp(0.5rem, 2vw, 1.5rem);
+        }
+
+        .landing-banner .landing-banner-content .about-hero-copy h1 {
+            margin: 0;
+            font-family: "Archivo", "Poppins", sans-serif;
+            font-size: clamp(2.7rem, 8.4vw, 5rem);
+            line-height: 1.06;
+            letter-spacing: 0.02em;
+            text-align: center;
+            text-wrap: balance;
+        }
+
+        .landing-banner .landing-banner-content .about-hero-copy h2 {
+            margin: 0;
+            padding-top: 0;
+            width: min(44ch, 100%);
+            font-family: "Archivo", "Poppins", sans-serif;
+            font-size: clamp(1.05rem, 2.9vw, 1.5rem);
+            font-weight: 600;
+            letter-spacing: 0.03em;
+            line-height: 1.25;
+            text-align: center;
+            text-wrap: pretty;
+        }
+    </style>
 {% endblock %}
 
 
 
 {# --- Landing Banner Header --- #}
 {% block landing_header %}
-    <h1>About Us,<br>Built With Purpose.</h1>
-    <h2>Helping students learn smarter — not harder</h2>
+    <div class="about-hero-copy">
+        <h1>About Us,<br>Built With Purpose.</h1>
+        <h2>Helping students learn smarter — not harder</h2>
+    </div>
 {% endblock %}
 
 {# --- Landing Banner Content --- #}
@@ -25,7 +57,7 @@
         - meaning all design should have a parent div class named "content-block"
         - check the example below
     #}
-    <div class="content-block --about">
+    <div class="content-block --about" style="gap: clamp(4.5em, 8vw, 12rem);">
         {# 
         <div class="about-header">
             <div class="title-quote">
@@ -85,57 +117,6 @@
                 PolyCast seeks <span>to bridge conventional whiteboard teaching with structured digital archiving</span>. 
                 The goal is to maintain the natural, unhindered flow of face-to-face instruction while ensuring that no critical 
                 computations or diagrams are lost when the board is erased.
-            </div>
-        </div>
-        <div class="about-system">
-            <div class="sys-title">
-                How the System <span>Works</span>
-            </div>
-            <div class="sys-content"> 
-                <div class="sys-intro">
-                    PolyCast pairs a <span>custom hardware marker</span> with a synchronized web platform to create a seamless archiving process:
-                </div>
-                <div class="admin-block">
-                    <div class="admin-main">
-                        <div class="admin-header">
-                            <div>Class</br>Administrator</div>
-                            <img src="/static/images/icons/class-admin.svg" alt="Admin Icon">
-                        </div>
-                        <div class="admin-role">
-                            An admin can be any designated representative of the class—such as a student president, the instructor, or an assigned 
-                            facilitator.
-                        </div>
-                    </div>
-                    <div class="admin-sub">
-                        <div>
-                            <span>They configure the digital workspace by setting up subject directories and specific session folders.</span> </br></br>
-                        </div>
-                        <div>
-                            Once a live stream is initiated, the physical marker's movements are translated and saved directly into these folders as 
-                            the lecture progresses. Admins retain full control to manage, delete, or recover these archives throughout the academic term.
-                        </div>
-                    </div>
-                </div>
-                <div class="student-block">
-                    <div class="student-main">
-                        <div class="student-header">
-                            <div>
-                                Student</br><span>(Guest User)</span>
-                            </div>
-                            <img src="/static/images/icons/student-guest.svg" alt="Student Icon">
-                        </div>
-                        <div class="student-role">
-                            Students simply visit the platform and wait for the class admin to initiate a session.
-                        </div>
-                    </div>
-                    <div class="student-sub">
-                        <p>
-                            Once live, <span>students can watch the whiteboard notes generate on their own screens.</span> The platform allows students 
-                            to freely navigate past notes in the gallery even while a stream is actively ongoing, and download complete note sequences with 
-                            a single click.
-                        </p>
-                    </div>
-                </div>
             </div>
         </div>
         <div class="about-researchers">

@@ -102,7 +102,7 @@ class IMUIntegrator:
     """
 
     # ── Tuning ─────────────────────────────────────────────────────────
-    HEADING_INIT_SAMPLES = 30    # samples before heading lock
+    HEADING_INIT_SAMPLES = 50    # samples before heading lock (500ms at 100Hz)
     ACC_DEADBAND_MS2     = 0.02  # m/s² — sub-noise floor
     ACC_CLAMP_MS2        = 20.0  # m/s² — glitch hard-clamp
 
@@ -126,6 +126,10 @@ class IMUIntegrator:
         """
         q = np.asarray(q, dtype=float)
         a = np.asarray(a_body_raw, dtype=float)
+
+        # Reject identity quaternion — BNO085 boot artifact (first 1-2 samples)
+        if abs(q[3] - 1.0) < 0.01 and np.linalg.norm(q[:3]) < 0.01:
+            return np.zeros(2)
 
         a = np.clip(a, -self.ACC_CLAMP_MS2, self.ACC_CLAMP_MS2)
         if np.linalg.norm(a) < self.ACC_DEADBAND_MS2:

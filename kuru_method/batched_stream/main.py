@@ -20,7 +20,7 @@ from fusion_engine import FusionEngine
 # ── Configuration ──────────────────────────────────────────────────────
 SERIAL_PORT      = 'COM5'
 BAUD_RATE        = 115200
-DATASET_FILENAME = 'datasets_v2/big_rectangle.csv'       # '' = live serial;  'mydata.csv' = playback
+DATASET_FILENAME = '../datasets_v2/big_rectangle.csv'       # '' = live serial;  'mydata.csv' = playback
 MAX_HISTORY      = 500      # trail length (packets)
 
 # ── Global objects ──────────────────────────────────────────────────────

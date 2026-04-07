@@ -88,17 +88,17 @@ class TightlyCoupledEKF:
     # ── Tuning ─────────────────────────────────────────────────────────
 
     # Process noise
-    SIGMA_ACC  = 2.5     # m/s²      Raised from 1.5: keeps covariance larger so the chi²
-                         #           gate stays permissive while the -0.131 m/s² observed
-                         #           IMU bias converges during the first ~1-2 seconds.
+    SIGMA_ACC  = 1.5     # m/s²      Lowered from 2.5: with stale UWB skipped, the gate
+                         #           sees less noise.  Typical stroke accel is 1-2 m/s²;
+                         #           the chi² gate handles occasional peaks.
     SIGMA_BIAS = 0.002   # m/s²/√s   Reduced from 0.005: prevents the bias estimate from
                          #           oscillating during fast circular motion, where equal
                          #           positive/negative accelerations confuse the estimator.
 
     # Measurement noise
-    SIGMA_UWB  = 0.060   # m         Raised from 0.035: the despiked 'uwb_ekf' path has
-                         #           ~1.8cm raw noise vs ~0.9cm for the EMA-smoothed path.
-                         #           After running calibrate.py: set to max(0.050, RMSE*1.5).
+    SIGMA_UWB  = 0.080   # m         Raised from 0.060: per-anchor raw std is 0.19-0.39m.
+                         #           With fresh-only UWB updates each one carries more
+                         #           weight, so R should be conservative to avoid yanking.
 
     # Chi-squared gate threshold (1 degree of freedom, scalar range measurement)
     GATE_CHI2  = 6.635
@@ -112,6 +112,20 @@ class TightlyCoupledEKF:
     # pen is lifted after a fast stroke.
     # 0.90 per 10ms step:  after 200ms → 12% remaining,  after 500ms → ~0.5%
     LIFTED_VEL_DAMP   = 0.90
+
+    # Slow-motion velocity decay (contact = 1, speed below threshold).
+    # During deliberate slow strokes (e.g. careful rectangle corners), small
+    # accumulated IMU noise can build up.  A gentle per-step decay keeps
+    # velocity honest without affecting fast strokes at all.
+    SLOW_SPEED_THRESH = 0.06   # m/s — below this, slow decay is applied
+    SLOW_VEL_DECAY    = 0.92   # per 10ms step when slow and pen is down
+
+    # Zero-velocity update (ZUPT) — pseudo-measurement [vx, vy] = 0
+    # Triggered when bias-corrected acceleration stays below threshold for
+    # ZUPT_WINDOW consecutive IMU samples.  Prevents drift at corners/pauses.
+    ZUPT_ACCEL_THRESH = 0.15   # m/s² — below this the marker is "stationary"
+    ZUPT_WINDOW       = 5      # consecutive low-accel samples to trigger
+    ZUPT_R_VEL        = 0.001  # (m/s)² — measurement noise for zero-velocity
 
     # Speed above which bias estimation is frozen during a UWB update.
     # During fast circular motion the centripetal acceleration has equal + and -
@@ -133,9 +147,14 @@ class TightlyCoupledEKF:
 
         # Diagnostics
         self._consec_outage   = 0
+        self._zupt_count      = 0
         self._n_imu_steps     = 0
         self._n_uwb_accepted  = 0
         self._n_uwb_rejected  = 0
+
+        # RTS smoother history (offline CSV mode only)
+        self.record_history   = False
+        self._history         = []    # list of dicts with x, P, F, Q per predict step
 
     # ── predict step (IMU) ─────────────────────────────────────────────
 
@@ -164,6 +183,10 @@ class TightlyCoupledEKF:
         # Velocity damping — two independent triggers:
         #   1. Prolonged UWB outage: no anchor accepted for N consecutive packets
         #   2. Pen lifted: damp residual writing velocity after each stroke ends
+        # Note: SLOW_VEL_DECAY was removed. With UWB-first ordering, position is
+        # already anchored at the start of each 50ms window. Decaying velocity
+        # during slow writing creates artificial UWB innovations that corrupt the
+        # bias estimate (see: feedback loop that drove bias_y to -0.09 incorrectly).
         if self._consec_outage > self.MAX_CONSEC_OUTAGE:
             self._x[2] *= self.VELOCITY_DAMP
             self._x[3] *= self.VELOCITY_DAMP
@@ -206,6 +229,50 @@ class TightlyCoupledEKF:
         self._P = F @ self._P @ F.T + Q
         self._P = 0.5 * (self._P + self._P.T)   # enforce symmetry
         self._n_imu_steps += 1
+
+        # ZUPT: clamp velocity when stationary (pen down, low acceleration)
+        if is_contact:
+            a_wb_mag = np.sqrt(ax * ax + ay * ay)
+            self.check_zupt(a_wb_mag)
+        else:
+            self._zupt_count = 0
+
+        # RTS history: save state after each predict step
+        if self.record_history:
+            self._history.append({
+                'x': self._x.copy(),
+                'P': self._P.copy(),
+                'F': F.copy(),
+                'Q': Q.copy(),
+            })
+
+    # ── zero-velocity update (ZUPT) ──────────────────────────────────
+
+    def _zupt_update(self):
+        """Apply zero-velocity pseudo-measurement [vx, vy] = [0, 0]."""
+        if self._x is None:
+            return
+        H = np.array([
+            [0, 0, 1, 0, 0, 0],
+            [0, 0, 0, 1, 0, 0],
+        ], dtype=float)
+        y = -self._x[2:4]                        # innovation = 0 - [vx, vy]
+        R = np.eye(2) * self.ZUPT_R_VEL
+        S = H @ self._P @ H.T + R
+        K = self._P @ H.T @ np.linalg.inv(S)
+        self._x = self._x + K @ y
+        I_KH = np.eye(6) - K @ H
+        self._P = I_KH @ self._P @ I_KH.T + K @ R @ K.T
+        self._P = 0.5 * (self._P + self._P.T)
+
+    def check_zupt(self, a_wb_mag: float):
+        """Trigger ZUPT if acceleration stays below threshold for ZUPT_WINDOW samples."""
+        if a_wb_mag < self.ZUPT_ACCEL_THRESH:
+            self._zupt_count += 1
+        else:
+            self._zupt_count = 0
+        if self._zupt_count >= self.ZUPT_WINDOW:
+            self._zupt_update()
 
     # ── update step (UWB) ──────────────────────────────────────────────
 
@@ -359,6 +426,36 @@ class TightlyCoupledEKF:
             'velocity'     : self.velocity,
         }
 
+    # ── RTS backward smoother (offline only) ──────────────────────────
+
+    def rts_smooth(self):
+        """
+        Rauch-Tung-Striebel backward smoother over recorded history.
+
+        Returns
+        -------
+        smoothed_positions : np.ndarray (N, 2)  — optimal position estimates
+        """
+        n = len(self._history)
+        if n < 2:
+            return np.array([h['x'][:2] for h in self._history])
+
+        xs = [h['x'].copy() for h in self._history]
+        Ps = [h['P'].copy() for h in self._history]
+
+        for k in range(n - 2, -1, -1):
+            F = self._history[k + 1]['F']
+            Q = self._history[k + 1]['Q']
+            P_pred = F @ Ps[k] @ F.T + Q
+            try:
+                G = Ps[k] @ F.T @ np.linalg.inv(P_pred)
+            except np.linalg.LinAlgError:
+                continue
+            xs[k] = xs[k] + G @ (xs[k + 1] - F @ xs[k])
+            Ps[k] = Ps[k] + G @ (Ps[k + 1] - P_pred) @ G.T
+
+        return np.array([x[:2] for x in xs])
+
 
 # ─────────────────────────────────────────────────────────────────────
 #  FUSION ENGINE — top-level interface for main_ekf.py
@@ -399,11 +496,12 @@ class EKFFusionEngine:
         self._imu     = IMUIntegrator()
         self._contact = ButtonContactDetector()
 
-        self._last_ts    = None
-        self._is_writing = False
+        self._last_ts     = None
+        self._last_uwb_ts = None
+        self._is_writing  = False
 
         # Cold-start IRLS (reuses existing solver)
-        from fusion_engine import IRLSTrilateration
+        from kuru_method.batched_stream.fusion_engine import IRLSTrilateration
         _bmin = [-0.30, -0.30, -0.50]
         _bmax = [ 1.55,  1.55,  1.00]
         self._irls = IRLSTrilateration(
@@ -420,7 +518,7 @@ class EKFFusionEngine:
     # ── main entry point ───────────────────────────────────────────────
 
     def update(self, imu_batch, filtered_dists,
-               quality_weights=None, packet_ts=None):
+               quality_weights=None, packet_ts=None, uwb_ts=None):
         """
         Full fusion update for one DataStream packet.
 
@@ -430,6 +528,7 @@ class EKFFusionEngine:
         filtered_dists  : tuple (d0, d1, d2, d3)  preprocessed UWB distances
         quality_weights : tuple (w0, w1, w2, w3)  per-anchor quality or None
         packet_ts       : batch_ts in microseconds for adaptive dt
+        uwb_ts          : UWB measurement timestamp — used to detect stale data
 
         Returns
         -------
@@ -476,27 +575,50 @@ class EKFFusionEngine:
                 return (np.array([px, py]), np.zeros(2),
                         self._is_writing, [], [])
 
-        # ── 1. IMU predict (5 steps) ───────────────────────────────────
-        for sample in imu_batch:
-            a_wb = self._imu.get_wb_acceleration(sample['quat'], sample['acc'])
+        # ── 1. UWB update FIRST (skip if stale) ─────────────────────────
+        # Correct the position at the START of this time window before the
+        # IMU predict steps advance it forward.  This means each IMU step
+        # begins from a UWB-anchored position, so the trajectory within the
+        # 50ms window (the stroke shape) comes purely from the IMU.
+        #
+        # Stale detection: UWB updates at ~10 Hz but packets arrive at ~20 Hz.
+        # Every other packet carries the same uwb_ts and identical distances.
+        # Feeding stale data into the EKF double-counts the correction,
+        # creating a sawtooth that destroys shape.  Skip entirely when stale.
+        uwb_is_fresh = True
+        if uwb_ts is not None:
+            if self._last_uwb_ts is not None and uwb_ts == self._last_uwb_ts:
+                uwb_is_fresh = False
+            self._last_uwb_ts = uwb_ts
 
-            # Evaluate contact state first — predict() uses it for lifted damping
-            state, _ = self._contact.process(sample['force'])
-            self._is_writing = bool(state)
-
-            self._ekf.predict(a_wb, dt_imu, is_contact=self._is_writing)
-
-        # ── 2. UWB update ─────────────────────────────────────────────
-        accepted, rejected = self._ekf.update_uwb(filtered_dists, quality_weights)
-
-        # ── 3. Feed-back: update anchor predictions in preprocessor
-        #       (caller does this — main_ekf.py)
+        if uwb_is_fresh:
+            accepted, rejected = self._ekf.update_uwb(filtered_dists, quality_weights)
+        else:
+            accepted, rejected = [], []
 
         # Warn on prolonged outage
         n_out = self._ekf.consecutive_outage
         if n_out == self._ekf.MAX_CONSEC_OUTAGE:
             print(f"[EKF] WARNING: {n_out} consecutive UWB outage packets "
                   f"({n_out*50} ms) — velocity damping active")
+
+        # ── 2. IMU predict (5 steps, advance through this time window) ─
+        prev_writing = self._is_writing
+        for sample in imu_batch:
+            a_wb = self._imu.get_wb_acceleration(sample['quat'], sample['acc'])
+
+            # Evaluate contact state first — predict() uses it for damping
+            state, _ = self._contact.process(sample['force'])
+            self._is_writing = bool(state)
+
+            # Zero velocity on pen touchdown (transition lifting → writing).
+            # Prevents residual lifted velocity from corrupting stroke start.
+            if self._is_writing and not prev_writing:
+                self._ekf._x[2] = 0.0
+                self._ekf._x[3] = 0.0
+
+            prev_writing = self._is_writing
+            self._ekf.predict(a_wb, dt_imu, is_contact=self._is_writing)
 
         pos = self._ekf.position
         vel = self._ekf.velocity

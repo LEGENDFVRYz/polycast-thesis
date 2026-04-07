@@ -33,7 +33,7 @@ from data_stream import DataStream
 # ── Configuration ─────────────────────────────────────────────────────
 SERIAL_PORT      = 'COM5'
 BAUD_RATE        = 115200
-DATASET_FILENAME = ''           # '' = live;  'data.csv' = playback
+DATASET_FILENAME = '../datasets_v2/abcde.csv'           # '' = live;  'data.csv' = playback
 
 MAX_DISPLAY = 300               # rolling window width (samples)
 

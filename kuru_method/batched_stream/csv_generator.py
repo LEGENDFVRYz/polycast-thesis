@@ -8,7 +8,7 @@ SERIAL_PORT = "COM5"   # Check your Device Manager
 BAUD_RATE = 115200
 
 # 1. NAME YOUR CSV FILE HERE
-FILE_NAME = "datasets_v2/hello_world.csv" 
+FILE_NAME = "../datasets_v2/abcde.csv" 
 
 # --- FOLDER SETUP ---
 # Get the directory where THIS script is located

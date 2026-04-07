@@ -9,7 +9,7 @@ SERIAL_PORT = 'COM5'
 BAUD_RATE = 115200
 # For variance testing, use a dataset where the tag is completely stationary
 # For SNR testing, use a dataset with actual writing/movement
-DATASET_FILENAME = ''  # Leave empty "" for live mode, or provide path to CSV dataset
+DATASET_FILENAME = '../datasets_v2/big_circle.csv'  # Leave empty "" for live mode, or provide path to CSV dataset
 
 MAX_SAMPLES = 200  # Number of points visible on the scrolling live graph
 

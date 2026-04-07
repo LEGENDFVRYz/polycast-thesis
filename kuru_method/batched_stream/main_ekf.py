@@ -25,16 +25,49 @@ Configuration
 import sys
 import time
 import numpy as np
+from collections import deque
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from data_stream  import DataStream
 from ekf_fusion   import EKFFusionEngine
 
+
+# ── Causal output smoother ────────────────────────────────────────────
+class TrailSmoother:
+    """Weighted moving average over the last N positions (causal, no lookahead)."""
+
+    _WEIGHTS = np.array([0.05, 0.10, 0.20, 0.30, 0.35])
+
+    def __init__(self):
+        n = len(self._WEIGHTS)
+        self._buf_x = deque(maxlen=n)
+        self._buf_y = deque(maxlen=n)
+
+    def push(self, x: float, y: float):
+        self._buf_x.append(x)
+        self._buf_y.append(y)
+
+    def get(self):
+        n = len(self._buf_x)
+        if n == 0:
+            return 0.0, 0.0
+        if n == 1:
+            return self._buf_x[0], self._buf_y[0]
+        w = self._WEIGHTS[-n:]
+        w = w / w.sum()
+        sx = sum(w[i] * self._buf_x[i] for i in range(n))
+        sy = sum(w[i] * self._buf_y[i] for i in range(n))
+        return float(sx), float(sy)
+
+    def reset(self):
+        self._buf_x.clear()
+        self._buf_y.clear()
+
 # ── Configuration ──────────────────────────────────────────────────────
 SERIAL_PORT      = 'COM5'
 BAUD_RATE        = 115200
-DATASET_FILENAME = 'datasets_v2/big_rectangle.csv'   # '' = live serial
+DATASET_FILENAME = '../datasets_v2/big_triangle.csv'   # '' = live serial
 
 MAX_TRAIL        = 600    # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True   # initial state; toggle with V key
@@ -42,8 +75,9 @@ VEL_SCALE        = 0.3    # arrow length multiplier
 DIAG_INTERVAL_S  = 1.0    # console diagnostic print interval
 
 # ── Global state ───────────────────────────────────────────────────────
-stream = DataStream(SERIAL_PORT, BAUD_RATE, DATASET_FILENAME)
-engine = EKFFusionEngine()
+stream   = DataStream(SERIAL_PORT, BAUD_RATE, DATASET_FILENAME)
+engine   = EKFFusionEngine()
+smoother = TrailSmoother()
 
 # Drawing trail — only positions where is_writing == True
 draw_x, draw_y   = [], []
@@ -55,6 +89,7 @@ rej_x, rej_y     = [], []
 _show_vel        = SHOW_VELOCITY
 _last_diag_time  = 0.0
 _prev_writing    = False   # tracks previous contact state to detect lift events
+_eof_handled     = False   # ensures RTS smoother runs once at end of CSV
 
 
 def _trim(lst, maxlen):
@@ -62,11 +97,34 @@ def _trim(lst, maxlen):
         del lst[:len(lst) - maxlen]
 
 
+# Enable RTS history recording for CSV playback
+if stream.mode == 'csv':
+    engine.ekf.record_history = True
+
+
+def _run_rts_smoother():
+    """Run RTS backward smoother at end of CSV and overlay smoothed trajectory."""
+    if not engine.ekf.record_history or len(engine.ekf._history) < 10:
+        print("[RTS] Not enough history to smooth.")
+        return
+    print(f"[RTS] Running backward smoother on {len(engine.ekf._history)} steps…")
+    smoothed = engine.ekf.rts_smooth()
+    # Overlay smoothed trajectory in green (toggle with 'S' key)
+    ax = line_draw.axes
+    ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='limegreen', lw=1.5,
+            alpha=0.8, label='RTS smoothed', zorder=5)
+    ax.legend(loc='upper right', fontsize=9)
+    ax.figure.canvas.draw_idle()
+    print(f"[RTS] Smoothed trajectory overlaid ({len(smoothed)} points).")
+
+
 # ── Animation callback ─────────────────────────────────────────────────
 def update(frame):
     global _last_diag_time
 
     packet = None
+
+    global _eof_handled
 
     if stream.mode == 'live':
         while stream.data_available():
@@ -76,6 +134,9 @@ def update(frame):
     else:
         tmp = stream.get_packet()
         if tmp == 'EOF':
+            if not _eof_handled:
+                _eof_handled = True
+                _run_rts_smoother()
             return artists
         if tmp:
             packet = tmp
@@ -89,6 +150,7 @@ def update(frame):
         filtered_dists  = packet['uwb_ekf'],   # offset+despike, no EMA
         quality_weights = packet.get('uwb_weights'),
         packet_ts       = packet.get('batch_ts'),
+        uwb_ts          = packet.get('uwb_ts'),
     )
 
     # ── Feed-back: update NLOS predictions in preprocessor ────────────
@@ -103,7 +165,9 @@ def update(frame):
     global _prev_writing
 
     if is_writing:
-        draw_x.append(pos[0]);  draw_y.append(pos[1])
+        smoother.push(pos[0], pos[1])
+        sx, sy = smoother.get()
+        draw_x.append(sx);  draw_y.append(sy)
         _trim(draw_x, MAX_TRAIL); _trim(draw_y, MAX_TRAIL)
     else:
         # Insert a NaN break the moment the pen lifts so that the next
@@ -112,6 +176,7 @@ def update(frame):
         if _prev_writing:
             draw_x.append(float('nan'))
             draw_y.append(float('nan'))
+            smoother.reset()
         lift_x.append(pos[0]);  lift_y.append(pos[1])
         _trim(lift_x, 100); _trim(lift_y, 100)
 
@@ -171,6 +236,7 @@ def on_key(event):
         draw_x.clear(); draw_y.clear()
         lift_x.clear(); lift_y.clear()
         rej_x.clear();  rej_y.clear()
+        smoother.reset()
         _prev_writing = False
         print("[UI] Trail cleared.")
     elif event.key == 'r':

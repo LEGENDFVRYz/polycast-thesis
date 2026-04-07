@@ -53,7 +53,7 @@ from button_detector import ButtonContactDetector
 # ── Configuration ──────────────────────────────────────────────────────
 SERIAL_PORT      = 'COM5'
 BAUD_RATE        = 115200
-DATASET_FILENAME = 'datasets_v2/big_rectangle.csv'   # '' = live; 'path/to/data.csv' = playback
+DATASET_FILENAME = '../datasets_v2/big_rectangle.csv'   # '' = live; 'path/to/data.csv' = playback
 
 MAX_SAMPLES      = 500 # rolling window width for time-series plots
 RESET_INTERVAL_S = 2.0  # seconds between dead-reckoning resets to UWB
@@ -100,7 +100,7 @@ class IMUValidatorDashboard:
     # ── layout ────────────────────────────────────────────────────────
 
     def _make_irls(self):
-        from fusion_engine import IRLSTrilateration
+        from kuru_method.batched_stream.fusion_engine import IRLSTrilateration
         bmin = [-0.30, -0.30, -0.50]
         bmax = [ 1.55,  1.55,  1.00]
         return IRLSTrilateration(ANCHORS, bmin, bmax, tag_z=MARKER_Z)

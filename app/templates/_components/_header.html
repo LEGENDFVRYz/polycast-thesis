@@ -22,13 +22,13 @@
                         id="profileBtn"
                         data-modal-target="#profileModal"
                         style="cursor: pointer;">
-                    <div class="profile-info">
-                        <p class="name">Dummy Name</p>
-                        <p class="role">Role</p>
+                    <div class="profile-info" data-modal-target="#profileModal" style="cursor: pointer;">
+                        <p class="name">{{ admin_operator if is_admin else 'Guest' }}</p>
+                        <p class="role">{{ 'Admin' if is_admin else 'Client' }} Role</p>
                     </div>
 
                     <!-- chevron logo -->
-                    <svg class="chevron" width="28" height="28">
+                    <svg class="chevron" width="28" height="28" data-modal-target="#profileModal" style="cursor: pointer;">
                         <use href="#chevron-down"></use>
                     </svg>
                 </div>

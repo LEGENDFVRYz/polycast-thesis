@@ -52,6 +52,19 @@ def _get_session_counts(folders):
     return counts
 
 
+def _get_recent_sessions(limit=4):
+    """
+    Returns the most recently created or updated sessions across all galleries.
+    Returns a list of sessions ordered by last activity or creation date.
+    """
+    sessions = (
+        db.session.query(DBSession)
+        .filter(DBSession.deleted_at.is_(None))
+        .order_by(DBSession.last_activity_at.desc().nulls_last(), DBSession.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return sessions
 
 
 # ---------------------------------------------------------------------
@@ -69,6 +82,7 @@ def index():
     is_setup = g.admin_status.get_field("hosting_active") if admin else False
     
     is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    recent_sessions = _get_recent_sessions(limit=4)
     
     return render_template(
         "gallery/gallery.html",
@@ -76,6 +90,7 @@ def index():
         folders=folders,
         session_counts=_get_session_counts(folders),
         is_current_user=is_current_user,
+        recent_sessions=recent_sessions,
     )
 
 
@@ -156,14 +171,28 @@ def session_page(galleryname):
     is_current_user = ('user' in session) and (session['user'] == admin_name)
     
 
-    # QUERY: Fetch requested gallery, ensure it belong to logged in admin and not softdeleted 
-    gallery_item = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id) \
-                           .filter(Gallery.deleted_at.is_(None)) \
-                           .first()
+    # QUERY: Fetch requested gallery (ANY state first)
+    gallery_item = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id).first()
 
     if not gallery_item:
-        return "Gallery not found or deleted", 404
-
+        return "Gallery not found", 404
+    
+    # CHECK: If gallery is deleted, show modal instead of error
+    is_gallery_deleted = gallery_item.deleted_at is not None
+    
+    if is_gallery_deleted:
+        # Pass minimal data and show recovery modal
+        return render_template(
+            "gallery/session.html",
+            selected_gallery=gallery_item.name,
+            gallery=gallery_item,
+            sessions=[],
+            session_stats={},
+            active_view='all',
+            is_current_user=is_current_user,
+            is_gallery_deleted=True,
+            now=datetime.utcnow()
+        )
 
     # Path to the specific gallery folder
     gallery_filepath = os.path.join(g.GALLERY_PATH, str(current_admin.id), str(gallery_item.id))

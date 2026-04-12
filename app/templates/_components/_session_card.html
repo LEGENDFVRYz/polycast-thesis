@@ -1,0 +1,43 @@
+{% macro session_card(session, is_current_user=false) %}
+    <div class="session-item">
+
+        {# Link overlay — covers the entire card, sits below all interactive elements #}
+        <a href="{{ url_for('gallery.view_page', galleryname=session.gallery.name, sessionname=session.name) }}" 
+           class="card-link-overlay" 
+           aria-label="Open {{ session.name }} from {{ session.gallery.name }}"></a>
+
+        {# Thumbnail preview area #}
+        <div class="session-thumbnail">
+            <div class="thumbnail-placeholder"></div>
+        </div>
+
+        {# Session info #}
+        <div class="session-info">
+            <h3 class="session-title">{{ session.name }}</h3>
+            <p class="session-gallery">{{ session.gallery.name }}</p>
+        </div>
+
+        {# Action menu #}
+        <div class="session-actions">
+            {% if is_current_user %}
+                <button type="button" 
+                        class="icon-button session-menu-btn" 
+                        data-session-id="{{ session.id }}"
+                        data-gallery-id="{{ session.gallery.id }}"
+                        data-modal-target="#sessionActionModal"
+                        title="Session options">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="12" cy="5" r="2"/>
+                        <circle cx="12" cy="12" r="2"/>
+                        <circle cx="12" cy="19" r="2"/>
+                    </svg>
+                </button>
+            {% else %}
+                <svg class="chevron-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+            {% endif %}
+        </div>
+
+    </div>
+{% endmacro %}

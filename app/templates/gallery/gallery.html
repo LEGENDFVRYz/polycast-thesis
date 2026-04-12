@@ -1,5 +1,6 @@
 {% extends "gallery/index.html" %}
 {% from "_components/_folder_card.html" import folder_card %}
+{% from "_components/_session_card.html" import session_card %}
 
 {% block gallery_content %}
     <div class="gallery-page-header">
@@ -13,6 +14,23 @@
         </div>
     </div>
 
+    <!-- Recent Sessions -->
+    {% if recent_sessions %}
+    <section class="recent-sessions">
+        <div class="sessions-header">
+            <h2>Recent Sessions:</h2>
+        </div>
+
+        <div class="sessions-wrap">
+            <div class="sessions-list">
+                {% for session in recent_sessions %}
+                    {{ session_card(session, is_current_user=is_current_user) }}
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
     <!-- Quick Access Folders -->
     <section class="folders">
         <div class="folders-header">
@@ -24,7 +42,7 @@
             {% if folders %}
                 <div class="folders-list">
                     {% for folder in folders[:5] %} 
-                        {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id])}}
+                        {{ folder_card(folder, 'all', is_current_user=is_current_user, count=session_counts[folder.id])}}
                     {% endfor %}
                 </div>
             {% else %}
@@ -39,6 +57,6 @@
                     <p>Start streaming to capture and organize your notes.</p>
                 </div>
             {% endif %}
-        </>
+        </div>
     </section>
 {% endblock %}

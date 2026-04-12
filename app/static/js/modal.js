@@ -30,7 +30,8 @@ document.addEventListener('DOMContentLoaded', function() {
     document.querySelectorAll('.modal-overlay').forEach(modal => {
         modal.addEventListener('click', event => {
             // Check if the click was on the overlay itself, not the content
-            if (event.target === modal) {
+            // Don't close the gallery deleted modal by clicking outside
+            if (event.target === modal && modal.id !== 'galleryDeletedModal') {
                 closeModal(modal);
             }
         });

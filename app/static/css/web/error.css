@@ -1,0 +1,294 @@
+@import "../_variables.css";
+
+body.error-page-body {
+    margin: 0;
+    padding: 0;
+    background: #F0F4F8;
+    font-family: "Archivo", sans-serif;
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+}
+
+/* Error Header */
+.error-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: clamp(1rem, 3vw, 1.5rem) clamp(1.5rem, 4vw, 3rem);
+    background: #F0F4F8;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+    flex-shrink: 0;
+}
+
+.error-header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.error-logo {
+    font-family: "Poppins", sans-serif;
+    font-size: 1.1rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-decoration: none;
+    color: #0B2B4A;
+    border: 1px solid #0B2B4A;
+    padding: 0.45rem 1rem;
+    border-radius: 999px;
+    transition: all 0.2s ease;
+}
+
+.error-logo:hover {
+    background: #0B2B4A;
+    color: white;
+}
+
+.error-nav-link {
+    font-family: "Poppins", sans-serif;
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-decoration: none;
+    color: #0B2B4A;
+    border: 1px solid #0B2B4A;
+    padding: 0.5rem 1.2rem;
+    border-radius: 999px;
+    transition: all 0.2s ease;
+}
+
+.error-nav-link:hover {
+    background: #0B2B4A;
+    color: white;
+}
+
+/* Main Error Content */
+.error-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.error-page-wrapper {
+    width: 100%;
+    background: #F0F4F8;
+    padding: 0;
+    flex: 1;
+}
+
+.error-page-wrapper div.content-block.--error {
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    background: #F0F4F8;
+    min-height: 100vh;
+    font-family: "Archivo", sans-serif;
+
+    .error-container {
+        display: grid;
+        grid-template-columns: 1fr;
+        align-items: center;
+        gap: 2rem;
+        padding: clamp(2rem, 6vw, 4rem);
+        width: 100%;
+        height: 100%;
+    }
+
+    .error-left {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        max-width: 45rem;
+        z-index: 1;
+    }
+
+    .error-heading {
+        margin: 0;
+        font-family: "Archivo", sans-serif;
+        font-size: clamp(2.4rem, 7vw, 3.6rem);
+        line-height: 1.05;
+        letter-spacing: -0.02em;
+        color: #0A1F3F;
+        font-weight: 700;
+    }
+
+    .error-code-prefix {
+        color: #0078D4;
+    }
+
+    .error-message {
+        margin: 0;
+        padding: 0;
+        text-indent: 0;
+        font-family: "Archivo", sans-serif;
+        font-size: clamp(1rem, 2.5vw, 1.2rem);
+        line-height: 1.5;
+        font-style: italic;
+        letter-spacing: -0.02em;
+        color: #333333;
+        max-width: none;
+    }
+
+    .error-button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: fit-content;
+        min-height: 2.8rem;
+        padding: 0.7rem 1.8rem;
+        border-radius: 999px;
+        background-color: #1B3A52;
+        color: white;
+        font-family: "Poppins", sans-serif;
+        font-size: 0.95rem;
+        font-weight: 600;
+        text-decoration: none;
+        border: none;
+        cursor: pointer;
+        transition: background-color 0.2s ease, transform 0.2s ease;
+        margin-top: 0.5rem;
+    }
+
+    .error-button:hover {
+        background-color: #0f2635;
+        transform: translateY(-2px);
+    }
+
+    .error-right {
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 0;
+    }
+
+    .error-placeholder {
+        width: 100%;
+        max-width: 28rem;
+        aspect-ratio: 1 / 1;
+        border-radius: 1.5rem;
+        border: 2px dashed #CCDDEE;
+        background: linear-gradient(135deg, #E8F2FF 0%, #F5FAFF 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #667799;
+        font-family: "Poppins", sans-serif;
+        font-size: 0.85rem;
+        font-weight: 600;
+        text-align: center;
+        padding: 2rem;
+    }
+
+    .error-placeholder::before {
+        content: "Placeholder for illustration";
+    }
+
+    /* Remove old unnecessary styles */
+    .error-copy-block,
+    .error-shell,
+    .error-placeholder-card,
+    .placeholder-badge,
+    .placeholder-art,
+    .placeholder-window,
+    .placeholder-cloud,
+    .placeholder-panel,
+    .placeholder-desk {
+        display: none !important;
+    }
+
+}
+
+/* 500 Error Layout - Placeholder on Left */
+.error-page-wrapper div.content-block.--error-500 {
+    .error-container {
+        grid-template-columns: 1fr;
+    }
+
+    .error-left-500 {
+        order: -1;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .error-right-500 {
+        display: flex;
+        flex-direction: column;
+        gap: 1.5rem;
+        max-width: 45rem;
+        z-index: 1;
+        text-align: left;
+    }
+}
+
+/* Small size */
+@media (min-width: 640px) {
+    .error-page-wrapper div.content-block.--error {
+        .error-heading {
+            font-size: clamp(2.8rem, 7.5vw, 4rem);
+        }
+    }
+}
+
+/* Medium size */
+@media (min-width: 769px) {
+    .error-page-wrapper div.content-block.--error {
+        .error-container {
+            grid-template-columns: 1.1fr 1fr;
+            gap: 3rem;
+            align-items: stretch;
+        }
+
+        .error-right {
+            display: flex;
+        }
+    }
+
+    /* 500 Error at medium size - placeholder on left, content on right */
+    .error-page-wrapper div.content-block.--error-500 {
+        .error-container {
+            grid-template-columns: 1fr 1.1fr;
+            gap: 3rem;
+            align-items: stretch;
+        }
+
+        .error-left-500 {
+            order: 0;
+        }
+
+        .error-right-500 {
+            justify-content: center;
+        }
+    }
+}
+
+/* Large size */
+@media (min-width: 1024px) {
+    .error-page-wrapper div.content-block.--error {
+        .error-container {
+            gap: clamp(3rem, 8vw, 5rem);
+            padding: clamp(3rem, 7vw, 5rem);
+        }
+
+        .error-heading {
+            font-size: clamp(3rem, 8vw, 4.2rem);
+        }
+
+        .error-left {
+            gap: 1.8rem;
+        }
+    }
+
+    /* 500 Error at large size */
+    .error-page-wrapper div.content-block.--error-500 {
+        .error-container {
+            gap: clamp(3rem, 8vw, 5rem);
+            padding: clamp(3rem, 7vw, 5rem);
+        }
+
+        .error-right-500 {
+            gap: 1.8rem;
+        }
+    }
+}

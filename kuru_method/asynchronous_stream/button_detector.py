@@ -30,8 +30,7 @@ from collections import deque
 from data_parser import AsyncDataParser
 
 # -- Configuration ---------------------------------------------------------
-SERIAL_PORT      = 'COM5'
-BAUD_RATE        = 115200
+from config import SERIAL_PORT, BAUD_RATE
 DATASET_FILENAME = ''           # '' = live;  'data.csv' = playback
 
 MAX_DISPLAY = 300               # rolling window width (samples)

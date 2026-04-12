@@ -71,8 +71,7 @@ class TrailSmoother:
 
 
 # -- Configuration ----------------------------------------------------------
-SERIAL_PORT      = 'COM5'
-BAUD_RATE        = 115200
+from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
 DATASET_FILENAME = 'datasets/vline.csv'   # '' = live serial;  'datasets/data.csv' = playback
 
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
@@ -93,7 +92,7 @@ CSV_PACKETS_PER_FRAME = 10
 parser      = AsyncDataParser(port=SERIAL_PORT, baud=BAUD_RATE,
                               csv_path=DATASET_FILENAME)
 engine      = AsyncEKFFusionEngine()
-uwb_cleaner = UWBPreprocessor(offsets=(-0.1700, -0.0492, -0.2651, -0.1664))
+uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
 imu_cleaner = IMUPreprocessor()
 smoother    = TrailSmoother()
 

@@ -27,10 +27,6 @@ import numpy as np
 from scipy.optimize import least_squares
 
 
-# -- Physical constant ------------------------------------------------------
-MARKER_LENGTH = 0.21   # metres — distance from tip to UWB tag antenna
-
-
 # -------------------------------------------------------------------------
 #  IRLS TRILATERATION
 # -------------------------------------------------------------------------

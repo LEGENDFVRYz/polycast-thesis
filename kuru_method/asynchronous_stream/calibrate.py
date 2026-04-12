@@ -80,24 +80,13 @@ from scipy.optimize import minimize
 import serial
 
 # -------------------------------------------------------------------------
-#  CONFIG — edit to match your setup
+#  CONFIG — shared constants from config.py
 # -------------------------------------------------------------------------
-SERIAL_PORT   = 'COM5'
-BAUD_RATE     = 115200
-MARKER_LENGTH = 0.21   # metres — tip to UWB tag antenna
-
-# Anchor positions — ANTENNA positions, measured antenna-to-antenna.
-# Must match ekf_fusion.py AsyncEKFFusionEngine.anchors
-ANCHORS = np.array([
-    [0.00, 0.00, 0.07],   # A0 — bottom-left (origin)
-    [1.28, 0.00, 0.07],   # A1 — bottom-right
-    [1.23, 1.26, 0.07],   # A2 — top-right
-    [0.00, 1.27, 0.07],   # A3 — top-left
-], dtype=float)
+from config import SERIAL_PORT, BAUD_RATE, MARKER_LENGTH, ANCHORS
 
 # Number of UWB packets to average at each calibration position
 # ~3 seconds at 10 Hz UWB rate = ~30 packets
-SAMPLES_PER_POINT = 30
+SAMPLES_PER_POINT = 50
 
 
 # -------------------------------------------------------------------------
@@ -109,15 +98,27 @@ SAMPLES_PER_POINT = 30
 #  Tip: anchor corners are the most geometrically informative since
 #  the expected distances are well-separated and unambiguous.
 # -------------------------------------------------------------------------
+# Board extents derived from ANCHORS — keeps calibration points in sync
+# with config.py if anchors are ever remeasured.
+_X_MAX = float(ANCHORS[1, 0])   # A1 x
+_Y_MAX = float(ANCHORS[2, 1])   # A2 y
+
 CALIBRATION_POINTS = [
-    # label          tip_x   tip_y
-    ("Bottom-left",   0.00,   0.00),
-    ("Bottom-right",  1.28,   0.00),
-    ("Top-right",     1.23,   1.26),
-    ("Top-left",      0.00,   1.27),
-    ("Centre",        0.64,   0.63),
-    ("Mid-bottom",    0.64,   0.00),
-    ("Mid-top",       0.62,   1.27),
+    # Interior grid — all points >0.30m from every anchor to avoid
+    # near-field UWB effects (DW3000 minimum reliable range ~0.15-0.30m).
+    # Corner points REMOVED: at 0.14m from nearest anchor they produce
+    # unreliable ranging data that corrupts the constant-offset model.
+    #
+    # label          tip_x            tip_y
+    ("Centre",        _X_MAX * 0.50,  _Y_MAX * 0.50),
+    ("Mid-left",      0.00,           _Y_MAX * 0.50),
+    ("Mid-right",     _X_MAX,         _Y_MAX * 0.50),
+    ("Mid-bottom",    _X_MAX * 0.50,  0.00),
+    ("Mid-top",       _X_MAX * 0.50,  _Y_MAX),
+    ("Quarter-BL",    _X_MAX * 0.25,  _Y_MAX * 0.25),
+    ("Quarter-BR",    _X_MAX * 0.75,  _Y_MAX * 0.25),
+    ("Quarter-TL",    _X_MAX * 0.25,  _Y_MAX * 0.75),
+    ("Quarter-TR",    _X_MAX * 0.75,  _Y_MAX * 0.75),
 ]
 
 
@@ -299,11 +300,10 @@ def main():
 
     print()
     print("-" * 60)
-    print("  Paste this into main_ekf.py, uwb_validator.py,")
-    print("  and imu_validator.py UWBPreprocessor init:")
+    print("  Update UWB_OFFSETS in config.py:")
     print("-" * 60)
     offsets_str = ", ".join(f"{o:.4f}" for o in offsets)
-    print(f"  uwb_cleaner = UWBPreprocessor(offsets=({offsets_str}))")
+    print(f"  UWB_OFFSETS = ({offsets_str})")
     print()
 
     if overall_rms > 0.03:

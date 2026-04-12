@@ -16,8 +16,7 @@ from data_parser import AsyncDataParser
 from preprocessor import UWBPreprocessor
 
 # --- CONFIGURATION ---
-SERIAL_PORT      = 'COM5'
-BAUD_RATE        = 115200
+from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
 DATASET_FILENAME = ''   # '' = live mode, or path to async CSV dataset
 
 MAX_SAMPLES = 200  # Number of points visible on the scrolling live graph
@@ -210,7 +209,7 @@ def main():
     if not parser.connect():
         sys.exit(1)
 
-    uwb_cleaner = UWBPreprocessor(offsets=(-0.1700, -0.0492, -0.2651, -0.1664))
+    uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
 
     dashboard = UWBFilterDashboard(parser, uwb_cleaner)
 

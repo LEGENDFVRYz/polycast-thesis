@@ -511,6 +511,28 @@
    ==========================================
 #}
 {% block modals %}
+    {# GALLERY DELETED MODAL #}
+    {% if is_gallery_deleted %}
+        {% call modal_shell(modal_id='galleryDeletedModal', modal_title='Gallery in Trash') %}
+            <div style="text-align: center; padding: 1rem 0;">
+                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 0 auto 1rem; color: #f59e0b;">
+                    <path d="M9 9v6h6V9z M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2H3V5z M3 7v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7H3z"/>
+                </svg>
+                <h3 style="margin: 0 0 0.5rem 0; color: #1f2937;">This gallery is in the trash</h3>
+                <p style="margin: 0 0 1.5rem 0; color: #6b7280;">You need to recover this gallery before you can access its sessions.</p>
+            </div>
+            
+            <div class="modal-footer" style="gap: 1rem; justify-content: center;">
+                <a href="{{ url_for('gallery.trash') }}" class="btn btn-secondary" style="text-decoration: none;">Go to Trash</a>
+            </div>
+        {% endcall %}
+        <style>
+            #galleryDeletedModal .modal-close-btn {
+                display: none !important;
+            }
+        </style>
+    {% endif %}
+
     {# DELETE CONFIRMATION MODAL (SESSION) #}
     {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
         <p>Are you sure you want to move this session to the recycle bin?</p>
@@ -565,4 +587,25 @@
             </div>
         </form>
     {% endcall %}
+
+    <!-- AUTO-OPEN DELETED GALLERY MODAL SCRIPT -->
+    {% if is_gallery_deleted %}
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const openModal = (modal) => {
+                modal.classList.add('open');
+                modal.style.display = 'flex';
+            };
+
+            const galleryDeletedModal = document.getElementById('galleryDeletedModal');
+            if (galleryDeletedModal) {
+                // Find the parent overlay
+                const overlay = galleryDeletedModal.closest('.modal-overlay');
+                if (overlay) {
+                    openModal(overlay);
+                }
+            }
+        });
+    </script>
+    {% endif %}
 {% endblock %}

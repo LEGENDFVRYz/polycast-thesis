@@ -32,11 +32,9 @@ Update step  (UWB-driven, ~10 Hz, per anchor, scalar measurement)
 """
 
 import numpy as np
+from config import ANCHORS, MARKER_LENGTH
 from imu_integrator import IMUIntegrator, quat_to_rotmat
-from button_detector import ButtonContactDetector
-
-# -- Physical constants -----------------------------------------------------
-MARKER_LENGTH = 0.21   # m — UWB tag z-position above board surface
+from force_detector import ForceContactDetector
 
 
 # -------------------------------------------------------------------------
@@ -50,33 +48,36 @@ class TightlyCoupledEKF:
     # -- Tuning -------------------------------------------------------------
 
     # Process noise
-    SIGMA_ACC  = 1.5     # m/s^2
-    SIGMA_BIAS = 0.002   # m/s^2/sqrt(s)
+    SIGMA_ACC  = 0.3     # m/s^2  (was 1.5 — lowered to trust IMU more)
+    SIGMA_BIAS = 0.0005  # m/s^2/sqrt(s)  (was 0.002 — slower bias drift)
 
     # Measurement noise
-    SIGMA_UWB  = 0.080   # m
+    SIGMA_UWB  = 0.15    # m  (was 0.08 — raised to match observed UWB noise)
 
     # Chi-squared gate threshold (1 degree of freedom, scalar range measurement)
-    GATE_CHI2  = 6.635
+    GATE_CHI2  = 3.841   # 95% CL  (was 6.635 / 99% — tighter outlier rejection)
 
     # Prolonged UWB outage handling (all anchors rejected N consecutive packets)
     MAX_CONSEC_OUTAGE = 8
-    VELOCITY_DAMP     = 0.88  # per-predict multiplier when UWB is blacked out
+    VELOCITY_DAMP     = 0.85  # per-predict multiplier when UWB is blacked out
 
     # Lifted-pen velocity damping (applied every predict step when contact = 0)
-    LIFTED_VEL_DAMP   = 0.90
+    LIFTED_VEL_DAMP   = 0.80
 
     # Slow-motion velocity decay
-    SLOW_SPEED_THRESH = 0.06   # m/s
-    SLOW_VEL_DECAY    = 0.92
+    SLOW_SPEED_THRESH = 0.04   # m/s
+    SLOW_VEL_DECAY    = 0.85
+
+    # Hard velocity cap (pen writing never exceeds this)
+    MAX_WRITING_SPEED = 0.50   # m/s
 
     # Zero-velocity update (ZUPT)
-    ZUPT_ACCEL_THRESH = 0.15   # m/s^2
-    ZUPT_WINDOW       = 5      # consecutive low-accel samples to trigger
-    ZUPT_R_VEL        = 0.001  # (m/s)^2
+    ZUPT_ACCEL_THRESH = 0.10   # m/s^2
+    ZUPT_WINDOW       = 3      # consecutive low-accel samples to trigger
+    ZUPT_R_VEL        = 0.0005 # (m/s)^2
 
     # Speed above which bias estimation is frozen during a UWB update
-    BIAS_FREEZE_SPEED = 0.12   # m/s
+    BIAS_FREEZE_SPEED = 0.05   # m/s  (was 0.12 — freeze bias during any motion)
 
     # -- init ---------------------------------------------------------------
 
@@ -94,6 +95,10 @@ class TightlyCoupledEKF:
         self._n_imu_steps     = 0
         self._n_uwb_accepted  = 0
         self._n_uwb_rejected  = 0
+
+        # Innovation-based adaptive measurement noise (per anchor)
+        self._innov_var   = np.ones(len(anchors)) * 0.015
+        self._innov_alpha = 0.05   # EMA smoothing for innovation variance
 
         # RTS smoother history (offline CSV mode only)
         self.record_history   = False
@@ -127,6 +132,12 @@ class TightlyCoupledEKF:
         elif not is_contact:
             self._x[2] *= self.LIFTED_VEL_DAMP
             self._x[3] *= self.LIFTED_VEL_DAMP
+        else:
+            # Slow-motion decay (pen down, gentle creep suppression)
+            spd = np.sqrt(self._x[2]**2 + self._x[3]**2)
+            if spd < self.SLOW_SPEED_THRESH:
+                self._x[2] *= self.SLOW_VEL_DECAY
+                self._x[3] *= self.SLOW_VEL_DECAY
 
         # State transition (constant-acceleration model)
         dt2 = dt * dt
@@ -134,6 +145,13 @@ class TightlyCoupledEKF:
         self._x[1] += self._x[3] * dt + 0.5 * ay * dt2
         self._x[2] += ax * dt
         self._x[3] += ay * dt
+
+        # Hard velocity cap
+        spd = np.sqrt(self._x[2]**2 + self._x[3]**2)
+        if spd > self.MAX_WRITING_SPEED:
+            scale = self.MAX_WRITING_SPEED / spd
+            self._x[2] *= scale
+            self._x[3] *= scale
 
         # Jacobian F
         F = np.array([
@@ -263,8 +281,11 @@ class TightlyCoupledEKF:
             H = np.array([[dx / r2d_pred, dy / r2d_pred,
                            0.0, 0.0, 0.0, 0.0]])
 
-            # Effective measurement variance
-            R_eff = (self.SIGMA_UWB / max(qw, 0.1)) ** 2
+            # Adaptive measurement variance: use max of configured and observed
+            self._innov_var[i] = ((1 - self._innov_alpha) * self._innov_var[i]
+                                  + self._innov_alpha * innov * innov)
+            R_base = (self.SIGMA_UWB / max(qw, 0.1)) ** 2
+            R_eff  = max(R_base, self._innov_var[i])
 
             # Innovation covariance (scalar)
             S = float((H @ self._P @ H.T).item()) + R_eff
@@ -279,14 +300,19 @@ class TightlyCoupledEKF:
             # Kalman gain (6x1)
             K = (self._P @ H.T) / S
 
-            # Speed-gated bias scaling (Lorentzian soft gate)
+            # Hard bias freeze during motion
             speed = float(np.linalg.norm(self._x[2:4]))
-            bias_scale = 1.0 / (1.0 + (speed / self.BIAS_FREEZE_SPEED) ** 2)
-            K[4] *= bias_scale
-            K[5] *= bias_scale
+            if speed > self.BIAS_FREEZE_SPEED:
+                K[4] = 0.0
+                K[5] = 0.0
 
             # State update
             self._x = self._x + K.ravel() * innov
+
+            # Clamp bias to physically realistic bounds (BNO085)
+            self._x[4] = np.clip(self._x[4], -0.10, 0.10)
+            self._x[5] = np.clip(self._x[5], -0.10, 0.10)
+
             px, py = self._x[0], self._x[1]
 
             # Covariance update — Joseph form for numerical stability
@@ -313,7 +339,7 @@ class TightlyCoupledEKF:
         Velocity and bias start at zero.
         """
         self._x = np.array([px, py, 0.0, 0.0, 0.0, 0.0])
-        self._P = np.diag([0.25, 0.25, 2.0, 2.0, 0.25, 0.25])
+        self._P = np.diag([0.25, 0.25, 2.0, 2.0, 0.01, 0.01])
         print(f"[EKF] Initialised at ({px:.3f}, {py:.3f})")
 
     # -- properties ---------------------------------------------------------
@@ -412,16 +438,11 @@ class AsyncEKFFusionEngine:
     """
 
     def __init__(self):
-        self.anchors = np.array([
-            [0.00, 0.00, 0.07],   # A0 — bottom-left
-            [1.28, 0.00, 0.07],   # A1 — bottom-right
-            [1.23, 1.26, 0.07],   # A2 — top-right
-            [0.00, 1.27, 0.07],   # A3 — top-left
-        ], dtype=float)
+        self.anchors = ANCHORS.copy()
 
         self._ekf     = TightlyCoupledEKF(self.anchors, tag_z=MARKER_LENGTH)
         self._imu     = IMUIntegrator()
-        self._contact = ButtonContactDetector()
+        self._contact = ForceContactDetector()
 
         self._last_imu_ts = None
         self._is_writing  = False

@@ -9,12 +9,12 @@ struct __attribute__((packed)) ImuPacket {
     uint32_t seq;                // per-stream sequence counter (caller sets)
     float    qx, qy, qz, qw;   // rotation vector quaternion
     float    ax, ay, az;        // linear acceleration (m/s²)
-    float    force;             // 31.0 = writing, 3.0 = lifting
+    float    force;             // Raw FSR ADC value (0-4095)
     uint32_t ts;                // micros() timestamp
 };
 
 /**
- * @brief Initialises the BNO085 over I2C and the tactile button on A0.
+ * @brief Initialises the BNO085 over I2C and the FSR voltage divider on A0.
  *        Enables Rotation Vector and Linear Acceleration at 100 Hz.
  */
 void initIMU();

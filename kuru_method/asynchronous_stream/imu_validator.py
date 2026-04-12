@@ -13,41 +13,31 @@ from collections import deque
 from data_parser     import AsyncDataParser
 from preprocessor    import UWBPreprocessor, IMUPreprocessor
 from imu_integrator  import IMUIntegrator, quat_to_rotmat
-from button_detector import ButtonContactDetector
+from force_detector import ForceContactDetector
 from fusion_engine   import IRLSTrilateration
 
 # ── Configuration ──────────────────────────────────────────────────────
-SERIAL_PORT      = 'COM5'
-BAUD_RATE        = 115200
-DATASET_FILENAME = 'datasets/abc.csv'   # '' = live; 'path/to/data.csv' = playback
+from config import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
+DATASET_FILENAME = 'datasets/circle.csv'   # '' = live; 'path/to/data.csv' = playback
 
 MAX_SAMPLES      = 500  # rolling window width for time-series plots
 RESET_INTERVAL_S = 2.0  # seconds between dead-reckoning resets to UWB
-
-# Anchor positions (must match ekf_fusion.py)
-ANCHORS = np.array([
-    [0.00, 0.00, 0.07],
-    [1.28, 0.00, 0.07],
-    [1.23, 1.26, 0.07],
-    [0.00, 1.27, 0.07],
-], dtype=float)
-MARKER_Z = 0.21  # m — UWB tag height above board
 
 
 class IMUValidatorDashboard:
     def __init__(self, parser: AsyncDataParser):
         self.parser   = parser
         self._imu     = IMUIntegrator()
-        self._button  = ButtonContactDetector()
+        self._button  = ForceContactDetector()
         
         # Preprocessors
-        self.uwb_cleaner = UWBPreprocessor(offsets=(-0.1700, -0.0492, -0.2651, -0.1664))
+        self.uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
         self.imu_cleaner = IMUPreprocessor()
         
         # IRLS Solver for UWB ground-truth
         bmin = [-0.30, -0.30, -0.50]
         bmax = [ 1.55,  1.55,  1.00]
-        self._irls = IRLSTrilateration(ANCHORS, bmin, bmax, tag_z=MARKER_Z)
+        self._irls = IRLSTrilateration(ANCHORS, bmin, bmax, tag_z=MARKER_LENGTH)
         
         self.finished = False
 

@@ -237,8 +237,8 @@ if __name__ == '__main__':
             qx, qy, qz, qw = pkt['quat']
             ax, ay, az = pkt['acc']
             
-            # Using 17.0 as the threshold (based on button_detector.py MID_THRESHOLD)
-            state = "✍️  WRITING" if pkt['force'] >= 17.0 else "⬆️  LIFTING"
+            # Raw FSR ADC: 0 = no force, higher = more force
+            state = f"FSR: {pkt['force']:.0f}"
             
             print(f"🔵 IMU | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
                   f"| 🔄 Q({qx:>7.4f}, {qy:>7.4f}, {qz:>7.4f}, {qw:>7.4f}) "

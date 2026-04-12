@@ -102,7 +102,7 @@ class IMUIntegrator:
 
     # -- Tuning -------------------------------------------------------------
     HEADING_INIT_SAMPLES = 50    # samples before heading lock (500ms at 100Hz)
-    ACC_DEADBAND_MS2     = 0.02  # m/s^2 — sub-noise floor
+    ACC_DEADBAND_MS2     = 0.08  # m/s^2 — sub-noise floor (was 0.02)
     ACC_CLAMP_MS2        = 20.0  # m/s^2 — glitch hard-clamp
 
     def __init__(self):
@@ -139,6 +139,15 @@ class IMUIntegrator:
         if not self._heading_locked:
             self._accumulate_heading(R)
             return np.array([float(a[1]), float(a[2])])  # fallback: body_Y, body_Z
+
+        # Slow heading adaptation (EMA, alpha=0.002 ~ 500-sample time constant)
+        body_y_world = R[:, 1]
+        h_xy = body_y_world[:2]
+        h_norm = float(np.linalg.norm(h_xy))
+        if h_norm > 0.3:
+            new_h = h_xy / h_norm
+            self._heading_vec = 0.998 * self._heading_vec + 0.002 * new_h
+            self._heading_vec /= float(np.linalg.norm(self._heading_vec))
 
         a_world = R @ a
         wb_ay   = float(a_world[2])                              # world Z = up = wb Y

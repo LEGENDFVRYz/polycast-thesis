@@ -3,19 +3,21 @@ Module 2 — Stream Normalizer
 
 Responsibility:
     - Consume raw packet dictionaries from tv1_unpacker.py
-    - Flatten batched IMU packets (3 samples each) into individual events
     - Standardize all events into a consistent schema
+    - NOTE: Because the new async dual-stream hardware sends unbatched data, 
+      the unpacker already outputs flat events. This normalizer now acts as a 
+      schema validator, pass-through, and statistical tracker for the pipeline.
 
 Input  (from tv1_unpacker.read_new_packets):
-    IMU packet: { 'type': 'IMU', 'id': int, 'samples': [ {ts, quat, acc, force}, ... ] }
-    UWB packet: { 'type': 'UWB', 'id': int, 'pos': (x,y), 'dists': (d0,d1,d2), 'ts': int }
+    IMU event: { 'sensor': 'IMU', 'packet_id': int, 'sample_idx': 0, 'quat': (...), 'acc': (...), 'force': float, 'ts_hw': int }
+    UWB event: { 'sensor': 'UWB', 'packet_id': int, 'sample_idx': 0, 'dists': (...), 'ts_hw': int }
 
 Output (normalized event schema):
     IMU event:
     {
         'sensor':     'IMU',
         'packet_id':  int,
-        'sample_idx': int,      # 0, 1, or 2 within the batch
+        'sample_idx': int,      # always 0 (new async format)
         'ts_hw':      int,      # hardware timestamp from sensor
         'quat':       (qx, qy, qz, qw),
         'acc':        (ax, ay, az),
@@ -26,12 +28,11 @@ Output (normalized event schema):
     {
         'sensor':     'UWB',
         'packet_id':  int,
-        'sample_idx': 0,        # always 0 (UWB is not batched)
+        'sample_idx': 0,        # always 0
         'ts_hw':      int,
         'dists':      (d0, d1, d2, d3)
     }
 """
-
 
 class StreamNormalizer:
     """
@@ -44,7 +45,6 @@ class StreamNormalizer:
         self._total_uwb_events = 0
         self._total_packets_in = 0
     
-
     def normalize(self, packets: list[dict]) -> list[dict]:
         """
         Main entry point.
@@ -55,19 +55,18 @@ class StreamNormalizer:
 
         Returns:
             Flat list of normalized event dicts (preserve order).
-            One IMU packet → 3 IMU events.
-            One UWB packet → 1 UWB event.
         """
         events = []
         
         for pkt in packets:
             self._total_packets_in += 1
-            pkt_type = pkt.get('type')
+            # The new unpacker uses 'sensor' instead of 'type'
+            sensor_type = pkt.get('sensor')
 
-            if pkt_type == 'IMU':
+            if sensor_type == 'IMU':
                 events.extend(self._flatten_imu(pkt))
                 
-            elif pkt_type == 'UWB':
+            elif sensor_type == 'UWB':
                 ev = self._flatten_uwb(pkt)
                 if ev:
                     events.append(ev)
@@ -95,36 +94,29 @@ class StreamNormalizer:
     # --- private helpers ---
     def _flatten_imu(self, pkt: dict) -> list[dict]:
         """
-        Unwraps one IMU packet (3 samples) into 3 individual events.
+        Passes through the already-flat IMU event from the new unpacker.
         """
-        events = []
-        packet_id = pkt.get('id')
-        samples   = pkt.get('samples', [])
-
-        for idx, sample in enumerate(samples):
-            ev = {
-                'sensor':     'IMU',
-                'packet_id':  packet_id,
-                'sample_idx': idx,
-                'ts_hw':      sample.get('ts'),
-                'quat':       sample.get('quat'),
-                'acc':        sample.get('acc'),
-                'force':      sample.get('force'),
-            }
-            events.append(ev)
-            self._total_imu_events += 1
-
-        return events
+        # We wrap it in a list so normalize() can still use .extend()
+        self._total_imu_events += 1
+        return [{
+            'sensor':     'IMU',
+            'packet_id':  pkt.get('packet_id'),
+            'sample_idx': pkt.get('sample_idx', 0),
+            'ts_hw':      pkt.get('ts_hw'),
+            'quat':       pkt.get('quat'),
+            'acc':        pkt.get('acc'),
+            'force':      pkt.get('force'),
+        }]
 
     def _flatten_uwb(self, pkt: dict) -> dict | None:
         """
-        Unwraps one UWB packet into a single event.
+        Passes through the already-flat UWB event from the new unpacker.
         """
         return {
             'sensor':     'UWB',
-            'packet_id':  pkt.get('id'),
-            'sample_idx': 0,
-            'ts_hw':      pkt.get('ts'),
+            'packet_id':  pkt.get('packet_id'),
+            'sample_idx': pkt.get('sample_idx', 0),
+            'ts_hw':      pkt.get('ts_hw'),
             'dists':      pkt.get('dists'),
         }
 
@@ -136,11 +128,11 @@ class StreamNormalizer:
 # ==============================================================================
 if __name__ == '__main__':
     
-    from tv1_unpacker import SerialStreamer
+    from background.pipelines.cleaner.unpacker import SerialStreamer
     import time
     
     # CONFIGURATION
-    SERIAL_PORT = 'COM20'  # temporarily, virtual com
+    SERIAL_PORT = 'COM3'  
     BAUD_RATE = 115200
     
     # Initialize modules
@@ -151,7 +143,6 @@ if __name__ == '__main__':
     print(f"  --- Pipeline Testing: @{SERIAL_PORT} ----")
     print("  > Normalizing hardware packets into flat events...")
     print("=" * 60)
-    
     
     try:
         while True:

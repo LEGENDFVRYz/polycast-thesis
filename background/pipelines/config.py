@@ -28,12 +28,12 @@ class IMUConfig:
     sample_rate_hz: float = 50.0
 
     # ZUPT
-    zupt_acc_threshold: float = 0.50
-    zupt_jerk_threshold: float = 18.0
-    zupt_min_duration_s: float = 0.10
+    zupt_acc_threshold: float = 1.15
+    zupt_jerk_threshold: float = 22.5
+    zupt_min_duration_s: float = 0.05
 
     # Contact / force
-    force_contact_threshold: float = 0.05
+    force_contact_threshold: float = 1000.0
 
     # Physics
     gravity_ms2: float = 9.81
@@ -66,18 +66,18 @@ class UWBConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AnchorConfig:
-    board_size_m: float = 1.23
+    board_size_m: float = 1.25
 
     a0: tuple[float, float, float] = (0.00, 0.00, 0.07)
-    a1: tuple[float, float, float] = (1.23, 0.00, 0.07)
-    a2: tuple[float, float, float] = (1.23, 1.23, 0.07)
-    a3: tuple[float, float, float] = (0.00, 1.23, 0.07)
+    a1: tuple[float, float, float] = (1.25, 0.00, 0.07)
+    a2: tuple[float, float, float] = (1.25, 1.24, 0.07)
+    a3: tuple[float, float, float] = (0.00, 1.24, 0.07)
 
     positions: tuple[tuple[float, float, float], ...] = (
         (0.00, 0.00, 0.07),
-        (1.23, 0.00, 0.07),
-        (1.23, 1.23, 0.07),
-        (0.00, 1.23, 0.07),
+        (1.25, 0.00, 0.07),
+        (1.25, 1.24, 0.07),
+        (0.00, 1.24, 0.07),
     )
 
 

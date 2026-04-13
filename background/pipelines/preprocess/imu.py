@@ -156,8 +156,10 @@ class IMUPreprocessor:
 
         # --- ZUPT (motion detector) ---
         lin_mag = _vmag(acc_world)
-        still_now = (lin_mag  < cfg.imu.zupt_acc_threshold and
-                     jerk     < cfg.imu.zupt_jerk_threshold, 0.20)
+        still_now = (
+            lin_mag < cfg.imu.zupt_acc_threshold and
+            jerk    < cfg.imu.zupt_jerk_threshold
+        )
 
         if still_now:
             self._still_streak += 1
@@ -208,9 +210,9 @@ if __name__ == '__main__':
     from background.pipelines.cleaner.normalizer import StreamNormalizer
 
     # CONFIGURATION
-    SERIAL_PORT = 'COM20'
+    SERIAL_PORT = 'COM3'
     BAUD_RATE = 115200
-    REPORT_NAME = "imu_kinematics_moving_diagonal_testing"
+    REPORT_NAME = "imu_stationary"
 
     # LIVE PLOT CONFIGURATION
     WINDOW_SIZE = 250
@@ -311,7 +313,7 @@ if __name__ == '__main__':
                     axs[1].relim()
                     axs[1].autoscale_view(scalex=False, scaley=True)
 
-                axs[2].set_ylim(0, 1.0)
+                axs[2].set_ylim(0, 5000.0)
 
                 latest = window_data[-1]
 

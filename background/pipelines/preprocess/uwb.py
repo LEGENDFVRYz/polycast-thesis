@@ -18,17 +18,18 @@ Output (cleaned range event):
         'ts_hw':        int,
         'packet_id':    int,
         'raw_dists':    (d0, d1, d2, d3),      ← original values, unchanged
-        'clean_dists':  (d0, d1, d2, d3),      ← after median + EMA filtering
+        'clean_dists':  (d0, d1, d2, d3),      ← after offset + median + EMA filtering
         'valid_mask':   (True, True, True, True), ← per-anchor validity flag
         'outlier_flags':(False,False,False,False),← True if anchor was suspicious
     }
 
 Processing pipeline per anchor:
-    1. Sanity check: reject if d < UWB_MIN_RANGE_M or d > UWB_MAX_RANGE_M
-    2. Jump detection: if |d - prev_filtered_d| > MAX_RANGE_JUMP_M → flag outlier
+    1. Offset Calibration: Apply hardware antenna delay offsets.
+    2. Sanity check: reject if d < UWB_MIN_RANGE_M or d > UWB_MAX_RANGE_M
+    3. Jump detection: if |d - prev_filtered_d| > MAX_RANGE_JUMP_M → flag outlier
        (Use previous filtered value if available, else accept and seed history)
-    3. Median filter: window=5 over per-anchor history buffer
-    4. EMA: alpha=0.25 applied to median output
+    4. Median filter: window=5 over per-anchor history buffer
+    5. EMA: alpha=0.25 applied to median output
 
 All four anchors are processed independently.
 An anchor remains "valid" unless it fails the sanity check AND the jump test
@@ -49,8 +50,12 @@ class UWBRangePreprocessor:
     Must be called in ts_hw order (i.e. feed events from the time-aligned stream).
     """
 
-    def __init__(self):
+    def __init__(self, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
         n = cfg.uwb.num_anchors
+        
+        # Hardware calibration offsets (antenna delay)
+        self.offsets = offsets
+        
         # Rolling raw-value buffer for median filter
         self._history:     list[deque] = [
             deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
@@ -134,7 +139,7 @@ class UWBRangePreprocessor:
 
     def _process_anchor(self, idx: int, d_raw: float) -> tuple[bool, bool, float]:
         """
-        Run the three-stage pipeline for one anchor.
+        Run the multi-stage pipeline for one anchor.
 
         Returns:
             (valid, outlier, clean_value)
@@ -142,13 +147,17 @@ class UWBRangePreprocessor:
             - outlier : this specific sample was suspicious (flagged but corrected)
             - clean_value : best filtered value to use (falls back to prev if bad)
         """
+        
+        # ── Stage 0: Offset Application ───────────────────────────────────
+        raw_with_offset = d_raw + self.offsets[idx]
+
         # ── Stage 1: Sanity check ─────────────────────────────────────────
-        sane = (cfg.pipeline.uwb_min_range_m <= d_raw <= cfg.pipeline.uwb_max_range_m)
+        sane = (cfg.pipeline.uwb_min_range_m <= raw_with_offset <= cfg.pipeline.uwb_max_range_m)
 
         # ── Stage 2: Jump detection ───────────────────────────────────────
         jump = False
         if sane and self._prev_clean[idx] is not None:
-            delta = abs(d_raw - self._prev_clean[idx])
+            delta = abs(raw_with_offset - self._prev_clean[idx])
             if delta > cfg.uwb.max_range_jump_m:
                 jump = True
 
@@ -160,17 +169,17 @@ class UWBRangePreprocessor:
             if self._ema[idx] is not None:
                 clean_val = self._ema[idx]    # hold last good filtered value
             elif sane:
-                # First sample ever but jumped — still seed with raw (no history)
-                clean_val = d_raw
+                # First sample ever but jumped — still seed with raw offset (no history)
+                clean_val = raw_with_offset
                 valid = True
                 outlier = False
             else:
-                # Insane and no history → return raw as a placeholder
-                clean_val = d_raw
+                # Insane and no history → return raw offset as a placeholder
+                clean_val = raw_with_offset
             return valid, outlier, clean_val
 
         # ── Stage 3a: Median filter ───────────────────────────────────────
-        self._history[idx].append(d_raw)
+        self._history[idx].append(raw_with_offset)
         median_val = statistics.median(self._history[idx])
 
         # ── Stage 3b: EMA ─────────────────────────────────────────────────
@@ -186,9 +195,6 @@ class UWBRangePreprocessor:
         return True, False, clean_val
 
 
-# ==============================================================================
-# SELF-TEST
-# ==============================================================================
 # ==============================================================================
 # HARDWARE DATA LOGGING & REPORTING (UWB Range Preprocessor)
 #   - Collects processed UWB events in the background
@@ -206,17 +212,22 @@ if __name__ == '__main__':
     from background.pipelines.cleaner.normalizer import StreamNormalizer
 
     # CONFIGURATION
-    SERIAL_PORT = 'COM20'       # Adjust if necessary
+    SERIAL_PORT = 'COM3'       # Adjust if necessary
     BAUD_RATE = 115200
     DISPLAY_RATE = 0.2          # Console update rate (seconds)
 
     # Initialize pipeline modules
     streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
     norm = StreamNormalizer()
-    prep = UWBRangePreprocessor()
+    
+    # ── Inject Offsets from Global Config ──
+    # Defaults to zeros if not yet added to the config file
+    uwb_offsets = getattr(cfg.uwb, 'range_offsets_m', (-0.1752, -0.0466, -0.2227, -0.1220))
+    prep = UWBRangePreprocessor(offsets=uwb_offsets)
 
     print("=" * 60)
     print(f"  UWB Data Logger & Reporter: {SERIAL_PORT}")
+    print(f"  Active Calibration Offsets: {uwb_offsets}")
     print("  Collecting data silently... Press Ctrl+C to stop and generate reports.")
     print("=" * 60)
 

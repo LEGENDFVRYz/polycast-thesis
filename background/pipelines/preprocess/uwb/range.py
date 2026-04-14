@@ -9,7 +9,7 @@ Input  (from tv2_normalizer — UWB events, updated schema):
         'packet_id':  int,
         'sample_idx': 0,
         'ts_hw':      int,
-        'dists':      (d0, d1, d2, d3)    ← raw metres from 4 anchors
+        'dists':      (d0, d1, d2, d3)    - raw metres from 4 anchors
     }
 
 Output (cleaned range event):
@@ -17,23 +17,19 @@ Output (cleaned range event):
         'sensor':       'UWB',
         'ts_hw':        int,
         'packet_id':    int,
-        'raw_dists':    (d0, d1, d2, d3),      ← original values, unchanged
-        'clean_dists':  (d0, d1, d2, d3),      ← after offset + median + EMA filtering
-        'valid_mask':   (True, True, True, True), ← per-anchor validity flag
-        'outlier_flags':(False,False,False,False),← True if anchor was suspicious
+        'raw_dists':    (d0, d1, d2, d3),           - original values, unchanged
+        'clean_dists':  (d0, d1, d2, d3),           - after offset + median + EMA filtering
+        'valid_mask':   (True, True, True, True),   - flags for validity
+        'outlier_flags':(False,False,False,False),  - flags for outliers
     }
 
 Processing pipeline per anchor:
-    1. Offset Calibration: Apply hardware antenna delay offsets.
-    2. Sanity check: reject if d < UWB_MIN_RANGE_M or d > UWB_MAX_RANGE_M
-    3. Jump detection: if |d - prev_filtered_d| > MAX_RANGE_JUMP_M → flag outlier
-       (Use previous filtered value if available, else accept and seed history)
-    4. Median filter: window=5 over per-anchor history buffer
-    5. EMA: alpha=0.25 applied to median output
+    1. Offset Calibration
+    2. Sanity check and Jump detection
+    3. EMA Median filter: window=5 over per-anchor history buffer (alpha=0.25)
 
-All four anchors are processed independently.
-An anchor remains "valid" unless it fails the sanity check AND the jump test
-in the same sample, or it has never had a valid reading.
+    - All four anchors are processed independently
+    - An anchor remains "valid" unless it fails the sanity check AND the jump test
 """
 
 import math
@@ -44,10 +40,9 @@ from background.pipelines.config import cfg
 
 class UWBRangePreprocessor:
     """
-    Stateful per-anchor range cleaner.
+    Stateful per-anchor range cleaner
 
     Maintains a rolling buffer and EMA state for each of the 4 anchors.
-    Must be called in ts_hw order (i.e. feed events from the time-aligned stream).
     """
 
     def __init__(self, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
@@ -71,13 +66,6 @@ class UWBRangePreprocessor:
     def feed(self, events: list[dict]) -> list[dict]:
         """
         Process a batch of normalized UWB events.
-
-        Args:
-            events: List of normalized UWB event dicts (sensor == 'UWB').
-                    Non-UWB events are silently skipped.
-
-        Returns:
-            List of cleaned range event dicts in the same order.
         """
         out = []
         for ev in events:
@@ -126,7 +114,6 @@ class UWBRangePreprocessor:
     def reset(self):
         """
         Reset all per-anchor state.
-        Call at session start or after a long gap.
         """
         n = cfg.uwb.num_anchors
         self._history    = [deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
@@ -141,20 +128,20 @@ class UWBRangePreprocessor:
         """
         Run the multi-stage pipeline for one anchor.
 
-        Returns:
-            (valid, outlier, clean_value)
-            - valid   : anchor reading is considered trustworthy
-            - outlier : this specific sample was suspicious (flagged but corrected)
-            - clean_value : best filtered value to use (falls back to prev if bad)
+        Returns (valid, outlier, clean_value):
+            
+            - valid         : anchor reading is considered trustworthy
+            - outlier       : this specific sample was suspicious (flagged but corrected)
+            - clean_value   : best filtered value to use (falls back to prev if bad)
         """
         
-        # ── Stage 0: Offset Application ───────────────────────────────────
+        # --- Offset Application  ---
         raw_with_offset = d_raw + self.offsets[idx]
 
-        # ── Stage 1: Sanity check ─────────────────────────────────────────
+        # --- Sanity check ---
         sane = (cfg.pipeline.uwb_min_range_m <= raw_with_offset <= cfg.pipeline.uwb_max_range_m)
 
-        # ── Stage 2: Jump detection ───────────────────────────────────────
+        # --- Jump detection ---
         jump = False
         if sane and self._prev_clean[idx] is not None:
             delta = abs(raw_with_offset - self._prev_clean[idx])
@@ -167,7 +154,7 @@ class UWBRangePreprocessor:
         if outlier:
             # Use previous clean value if available, else skip seeding
             if self._ema[idx] is not None:
-                clean_val = self._ema[idx]    # hold last good filtered value
+                clean_val = self._ema[idx] 
             elif sane:
                 # First sample ever but jumped — still seed with raw offset (no history)
                 clean_val = raw_with_offset
@@ -178,14 +165,14 @@ class UWBRangePreprocessor:
                 clean_val = raw_with_offset
             return valid, outlier, clean_val
 
-        # ── Stage 3a: Median filter ───────────────────────────────────────
+        # --- Median filter --- 
         self._history[idx].append(raw_with_offset)
         median_val = statistics.median(self._history[idx])
 
-        # ── Stage 3b: EMA ─────────────────────────────────────────────────
+        # --- Stage 3b: EMA ---
         alpha = cfg.uwb.ema_alpha
         if self._ema[idx] is None:
-            self._ema[idx] = median_val        # seed EMA on first valid sample
+            self._ema[idx] = median_val
         else:
             self._ema[idx] = alpha * median_val + (1.0 - alpha) * self._ema[idx]
 

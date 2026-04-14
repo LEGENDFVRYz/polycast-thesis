@@ -1,95 +1,21 @@
-import csv
 import serial
-import struct
 import time
 import os
+import re
 
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
 VIRTUAL_COM_PORT = 'COM19'  # The port the replayer sends TO
 BAUD_RATE = 115200
-CSV_FILE = 'imu_1a.csv'  # <--- CHANGE THIS to your actual CSV filename
-
-# Scaling factors (Must match the original unpacker)
-Q_SCALE = 32767.0
-A_SCALE = 1000.0
-
-# In your latest snippet, Force wasn't divided by F_SCALE in _parse_imu, 
-# but if it was saved as a decimal, we might need to multiply it back.
-F_SCALE = 100.0 
-
-# ==============================================================================
-# PAYLOAD BUILDERS
-# ==============================================================================
-def build_imu_payload(rows):
-    """Rebuilds the IMU binary payload from 3 CSV rows"""
-    packet_id = int(rows[0]['Packet_ID'])
-    
-    # Payload starts with Type(0x01) + ID(4 bytes)
-    payload = struct.pack('<BI', 0x01, packet_id)
-    
-    for row in rows:
-        # Reverse the scaling to get back to the original short integers
-        qx = int(float(row['Q_x']) * Q_SCALE)
-        qy = int(float(row['Q_y']) * Q_SCALE)
-        qz = int(float(row['Q_z']) * Q_SCALE)
-        qw = int(float(row['Q_w']) * Q_SCALE)
-        
-        ax = int(float(row['A_x']) * A_SCALE)
-        ay = int(float(row['A_y']) * A_SCALE)
-        az = int(float(row['A_z']) * A_SCALE)
-        
-        # Safely handle force (multiply by scale if it was logged as a float)
-        force_val = float(row['Force'])
-        if abs(force_val) < 1000: # Assuming it was scaled down
-            force = int(force_val * F_SCALE)
-        else:
-            force = int(force_val)
-            
-        ts = int(float(row['HW_TS']))
-        
-        # Pack: qx,qy,qz,qw (shorts), ax,ay,az (shorts), force (short), ts (uint)
-        chunk = struct.pack('<hhhhhhhhI', qx, qy, qz, qw, ax, ay, az, force, ts)
-        payload += chunk
-        
-    return payload
-
-def build_uwb_payload(row):
-    """Rebuilds the UWB binary payload from 1 CSV row"""
-    packet_id = int(row['Packet_ID'])
-    
-    # Extract the 4 distances (Pos_x and Pos_y removed)
-    d0 = float(row['Dist_0'])
-    d1 = float(row['Dist_1'])
-    d2 = float(row['Dist_2'])
-    d3 = float(row['Dist_3'])
-    ts = int(float(row['HW_TS']))
-    
-    # Pack: Type(0x02) + ID(4) + d0..d3(16) + ts(4)
-    payload = struct.pack('<BIffffI', 0x02, packet_id, d0, d1, d2, d3, ts)
-    return payload
-
-def wrap_frame(payload):
-    """Wraps payload with Header, Length, RecvTS, and Footer"""
-    header = b'\xAA\x55'
-    
-    # The receiver's payload_len calculation includes the 4 bytes of RecvTS!
-    length_val = len(payload) + 4 
-    length_byte = struct.pack('<B', length_val)
-    
-    recv_ts = struct.pack('<I', int(time.time() * 1000) % 0xFFFFFFFF)
-    footer = b'\xFF'
-    
-    # Structure: 0xAA 0x55 | Length(1) | RecvTS(4) | Payload(var) | 0xFF
-    return header + length_byte + recv_ts + payload + footer
+LOG_FILE = '0s.csv'   # <--- CHANGE THIS to your actual logged file name
 
 # ==============================================================================
 # MAIN REPLAY LOOP
 # ==============================================================================
 if __name__ == "__main__":
-    if not os.path.exists(CSV_FILE):
-        print(f"[!] Error: Could not find {CSV_FILE}.")
+    if not os.path.exists(LOG_FILE):
+        print(f"[!] Error: Could not find {LOG_FILE}.")
         print("Please check the filename and try again.")
         exit()
 
@@ -100,46 +26,65 @@ if __name__ == "__main__":
         print(f"[!] Error opening port: {e}")
         exit()
 
-    print(f"[*] Reading '{CSV_FILE}' and streaming to {VIRTUAL_COM_PORT}...")
+    print(f"[*] Reading '{LOG_FILE}' and streaming to {VIRTUAL_COM_PORT}...")
     print("[*] Switch to your receiver window (COM20) now!\n")
     
     packets_sent = 0
+    last_hw_ts = None
     
-    with open(CSV_FILE, mode='r') as f:
-        reader = csv.DictReader(f)
-        
-        imu_batch = []
-        last_sys_time = None
-        
+    with open(LOG_FILE, mode='r', encoding='utf-8') as f:
         try:
-            for row in reader:
-                current_sys_time = float(row['System_Time'])
-                
-                # Recreate the exact original timing delays
-                if last_sys_time is not None:
-                    time_diff = current_sys_time - last_sys_time
-                    if time_diff > 0:
-                        time.sleep(time_diff)
-                
-                last_sys_time = current_sys_time
-                
-                if row['Type'] == 'IMU':
-                    imu_batch.append(row)
-                    # Once we have 3 samples, pack and send the batch
-                    if len(imu_batch) == 3:
-                        payload = build_imu_payload(imu_batch)
-                        frame = wrap_frame(payload)
-                        ser.write(frame)
-                        packets_sent += 1
-                        imu_batch = [] # Reset batch
-                        
-                elif row['Type'] == 'UWB':
-                    payload = build_uwb_payload(row)
-                    frame = wrap_frame(payload)
-                    ser.write(frame)
-                    packets_sent += 1
+            for line in f:
+                # 1. Clean the line entirely of whitespace/newlines
+                line = line.strip()
+                if not line:
+                    continue
                     
-                # Print a status update every 50 packets so you know it's working
+                # 2. Split by ANY combination of tabs, spaces, or commas
+                # Using list comprehension with "if p" removes all empty string artifacts 
+                # caused by multiple trailing tabs.
+                parts = [p for p in re.split(r'[\t, ]+', line) if p]
+                
+                if not parts:
+                    continue
+                
+                type_char = parts[0]
+                
+                # 3. Strict Pre-Flight Check (Mimic the unpacker's requirements)
+                if type_char == 'I' and len(parts) == 11:
+                    pass # Valid IMU
+                elif type_char == 'U' and len(parts) == 7:
+                    pass # Valid UWB
+                else:
+                    # Ignore headers or malformed lines entirely
+                    continue 
+                
+                # 4. Extract hardware timestamp for realistic timing replay
+                try:
+                    current_hw_ts = int(parts[-1])
+                except ValueError:
+                    continue
+                
+                if last_hw_ts is not None:
+                    # Hardware timestamps appear to be microseconds
+                    delay_us = current_hw_ts - last_hw_ts
+                    
+                    # Apply delay if it's sensible (e.g., between 0 and 1 second)
+                    if 0 < delay_us < 1_000_000:  
+                        time.sleep(delay_us / 1_000_000.0)
+                
+                last_hw_ts = current_hw_ts
+                
+                # 5. Reconstruct as a STRICT comma-separated string ending in newline
+                # Example Output: I,127894,-0.0253,-0.0126,-0.7144,0.6992,0.0703,0.0664,-0.0078,125,1282498145\n
+                csv_string = ",".join(parts) + "\n"
+                
+                # 6. Send over Virtual COM Port and flush buffer immediately
+                ser.write(csv_string.encode('utf-8'))
+                ser.flush() 
+                packets_sent += 1
+                
+                # Visual heartbeat
                 if packets_sent % 50 == 0:
                     print(f" -> Streamed {packets_sent} packets...", end='\r')
 

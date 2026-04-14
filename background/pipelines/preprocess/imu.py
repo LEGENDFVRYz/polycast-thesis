@@ -210,8 +210,8 @@ if __name__ == '__main__':
     from background.pipelines.cleaner.normalizer import StreamNormalizer
 
     # CONFIGURATION
-    SERIAL_PORT = 'COM3'
-    BAUD_RATE = 115200
+    SERIAL_PORT = cfg.serial.port
+    BAUD_RATE = cfg.serial.baud
     REPORT_NAME = "imu_stationary"
 
     # LIVE PLOT CONFIGURATION

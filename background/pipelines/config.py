@@ -51,6 +51,7 @@ class IMUConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
+    range_offsets_m = (-0.1752, -0.0466, -0.2227, -0.1220)
     rate_hz: float = 9.0
 
     ema_alpha: float = 0.25

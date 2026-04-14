@@ -19,6 +19,7 @@ Output (Flat event dictionaries ready for normalizer/preprocessor):
 import serial
 import time
 import os
+from background.pipelines.config import cfg
 
 class SerialStreamer:
     def __init__(self, port='COM3', baud=115200):
@@ -129,7 +130,9 @@ if __name__ == "__main__":
     last_draw_time = 0
     
     # --- MAIN DEBUGGER  ---
-    streamer = SerialStreamer(port='COM3', baud=115200)
+    SERIAL_PORT = cfg.serial.port
+    BAUD_RATE = cfg.serial.baud
+    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
     
     if not streamer.ser:
         exit(1)

@@ -129,11 +129,12 @@ class StreamNormalizer:
 if __name__ == '__main__':
     
     from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.config import cfg
     import time
     
     # CONFIGURATION
-    SERIAL_PORT = 'COM3'  
-    BAUD_RATE = 115200
+    SERIAL_PORT = cfg.serial.port
+    BAUD_RATE = cfg.serial.baud
     
     # Initialize modules
     streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)

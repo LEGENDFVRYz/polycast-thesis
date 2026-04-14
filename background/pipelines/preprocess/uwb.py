@@ -212,8 +212,8 @@ if __name__ == '__main__':
     from background.pipelines.cleaner.normalizer import StreamNormalizer
 
     # CONFIGURATION
-    SERIAL_PORT = 'COM3'       # Adjust if necessary
-    BAUD_RATE = 115200
+    SERIAL_PORT = cfg.serial.port
+    BAUD_RATE = cfg.serial.baud
     DISPLAY_RATE = 0.2          # Console update rate (seconds)
 
     # Initialize pipeline modules
@@ -222,7 +222,7 @@ if __name__ == '__main__':
     
     # ── Inject Offsets from Global Config ──
     # Defaults to zeros if not yet added to the config file
-    uwb_offsets = getattr(cfg.uwb, 'range_offsets_m', (-0.1752, -0.0466, -0.2227, -0.1220))
+    uwb_offsets = cfg.uwb.range_offsets_m
     prep = UWBRangePreprocessor(offsets=uwb_offsets)
 
     print("=" * 60)

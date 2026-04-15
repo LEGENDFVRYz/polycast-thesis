@@ -35,6 +35,7 @@ import os
 import sys
 import serial
 import time
+import datetime
 
 
 class AsyncDataParser:
@@ -232,24 +233,27 @@ class AsyncDataParser:
 if __name__ == '__main__':
 
     def print_pretty_packet(pkt):
-        """Formats the dictionary into a clean, aligned, single-line string."""
+        """Formats the dictionary into a clean string with a system timestamp."""
+        # Capture current system time (HH:MM:SS.ms)
+        sys_time = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
         if pkt['type'] == 'imu':
             qx, qy, qz, qw = pkt['quat']
             ax, ay, az = pkt['acc']
-            
-            # Raw FSR ADC: 0 = no force, higher = more force
             state = f"FSR: {pkt['force']:.0f}"
             
-            print(f"🔵 IMU | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
-                  f"| 🔄 Q({qx:>7.4f}, {qy:>7.4f}, {qz:>7.4f}, {qw:>7.4f}) "
-                  f"| 🚀 A({ax:>7.4f}, {ay:>7.4f}, {az:>7.4f}) "
-                  f"| {state}")
+            # Prepend [sys_time] to the output
+            print(f"[{sys_time}] 🔵 IMU | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
+                f"| 🔄 Q({qx:>7.4f}, {qy:>7.4f}, {qz:>7.4f}, {qw:>7.4f}) "
+                f"| 🚀 A({ax:>7.4f}, {ay:>7.4f}, {az:>7.4f}) "
+                f"| {state}")
 
         elif pkt['type'] == 'uwb':
             d0, d1, d2, d3 = pkt['dists']
             
-            print(f"🟢 UWB | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
-                  f"| 📏 Dists: ({d0:>7.4f}m, {d1:>7.4f}m, {d2:>7.4f}m, {d3:>7.4f}m)")
+            # Prepend [sys_time] to the output
+            print(f"[{sys_time}] 🟢 UWB | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
+                f"| 📏 Dists: ({d0:>7.4f}m, {d1:>7.4f}m, {d2:>7.4f}m, {d3:>7.4f}m)")
 
     # ---------------------------------------------------------
     # Main Execution

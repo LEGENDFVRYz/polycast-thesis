@@ -58,6 +58,10 @@ class UWBRangePreprocessor:
         self._ema:         list[float | None] = [None] * n
         # Last filtered value used for jump detection
         self._prev_clean:  list[float | None] = [None] * n
+        
+        # --- Anti-Lockout Counters ---
+        self._jump_count = [0] * n
+        self.max_jumps = 3
 
     # ------------------------------------------------------------------
     # Public API
@@ -148,9 +152,21 @@ class UWBRangePreprocessor:
             if delta > cfg.uwb.max_range_jump_m:
                 jump = True
 
+        # --- ANTI-LOCKOUT RECOVERY LOGIC ---
+        if jump:
+            self._jump_count[idx] += 1
+            if self._jump_count[idx] >= self.max_jumps:
+                # We have been locked out for too long. Force a hard reset to reality.
+                jump = False
+                self._jump_count[idx] = 0
+                self._ema[idx] = raw_with_offset  # Instantly snap EMA to current location
+                self._history[idx].clear()
+        else:
+            self._jump_count[idx] = 0  # Reset counter if normal movement
+        
         outlier = (not sane) or jump
         valid   = sane and not jump
-
+        
         if outlier:
             # Use previous clean value if available, else skip seeding
             if self._ema[idx] is not None:

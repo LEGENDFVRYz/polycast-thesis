@@ -42,7 +42,6 @@ class IMUConfig:
     # Board projection
     board_axes: tuple[str, str] = ("x", "z")
     smooth_alpha: float = 0.75
-
     acc_is_linear: bool = True
 
 
@@ -51,15 +50,17 @@ class IMUConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
-    range_offsets_m = (-0.1752, -0.0466, -0.2227, -0.1220)
+    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     rate_hz: float = 9.0
 
     ema_alpha: float = 0.25
-    max_range_jump_m: float = 0.20
+    max_range_jump_m: float = 0.40
     median_window: int = 5
 
     outlier_speed_limit_ms: float = 2.0
     num_anchors: int = 4
+    pos_ema_alpha: float = 0.15
+    trilat_max_residual: float = 0.15
 
 
 # ------------------------------------------------------------------------
@@ -67,7 +68,8 @@ class UWBConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AnchorConfig:
-    board_size_m: float = 1.25
+    board_size_x: float = 1.25
+    board_size_y: float = 1.24
 
     a0: tuple[float, float, float] = (0.00, 0.00, 0.07)
     a1: tuple[float, float, float] = (1.25, 0.00, 0.07)

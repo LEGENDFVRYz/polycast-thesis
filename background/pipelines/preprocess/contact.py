@@ -69,6 +69,7 @@ class ContactStateDetector:
 
         # History for diagnostics
         self._state_history: deque[str] = deque(maxlen=200)
+        self._transitions: list[tuple] = []
 
     def feed(self, events: list[dict]) -> list[dict]:
         out = []
@@ -162,6 +163,7 @@ class ContactStateDetector:
         self._was_drawing     = False
         self._stroke_id       = 0
         self._state_history.clear()
+        self._transitions.clear()
 
     def state_summary(self) -> dict:
         counts = {s: 0 for s in _ALL_STATES}
@@ -174,11 +176,9 @@ class ContactStateDetector:
         return {'counts': counts, 'pcts': pcts, 'total': total}
 
     def transition_log(self) -> list[tuple]:
-        return list(getattr(self, '_transitions', []))
+        return list(self._transitions)
 
     def _on_transition(self, from_state: str, to_state: str, ts: int):
-        if not hasattr(self, '_transitions'):
-            self._transitions = []
         self._transitions.append((from_state, to_state, ts))
 
 

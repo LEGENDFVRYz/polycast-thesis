@@ -43,6 +43,26 @@
 
         <!-- Footer -->
         {{ layout_footer() }}
+        
+        <script>
+        const toggles = document.querySelectorAll(".benefit-toggle");
+
+        toggles.forEach(toggle => {
+            toggle.addEventListener("click", () => {
+                const currentDropdown = toggle.parentElement;
+
+                // Close all dropdowns
+                document.querySelectorAll(".benefit-item").forEach(item => {
+                    if (item !== currentDropdown) {
+                        item.classList.remove("active");
+                    }
+                });
+
+                // Toggle clicked one
+                currentDropdown.classList.toggle("active");
+            });
+        });
+        </script>
     </body>
 
     <!-- HIDING LAYOUT HEADER -->

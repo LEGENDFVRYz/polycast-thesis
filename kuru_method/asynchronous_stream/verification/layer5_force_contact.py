@@ -119,10 +119,14 @@ def analyse(csv_path: Path) -> LayerResult:
 
 def run_all() -> list[LayerResult]:
     out = []
-    for stem in ['HELLO', 'ABC', 'CIRCLE', 'hline', '0s']:
-        p = DATASET_DIR / f'{stem}.csv'
-        if p.exists():
-            out.append(analyse(p))
+    # Prefer the dashed (contact-active) variants; fall back to hover if the
+    # contact version is missing.
+    for base in ['HELLO', 'ABC', 'CIRCLE', 'hline', '0s']:
+        for stem in (f'{base}-', base):
+            p = DATASET_DIR / f'{stem}.csv'
+            if p.exists():
+                out.append(analyse(p))
+                break
     return out
 
 

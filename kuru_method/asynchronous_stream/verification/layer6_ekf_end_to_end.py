@@ -46,10 +46,16 @@ from ground_truth   import get_truth
 LAYER = 'layer6_ekf_end_to_end'
 
 
-def analyse(csv_path: Path) -> LayerResult:
+def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
     stem = csv_path.stem
+    tag  = f'{stem}+contact' if force_contact else stem
 
     engine = AsyncEKFFusionEngine()
+    if force_contact:
+        # Diagnostic override: make ForceContactDetector always report contact=1
+        # so LIFTED_VEL_DAMP never fires. Isolates the hover-damping hypothesis.
+        _orig_contact = engine._contact.process
+        engine._contact.process = lambda f: (1, _orig_contact(f)[1])
     imu_pre = IMUPreprocessor()
     uwb_pre = UWBPreprocessor(offsets=tuple(UWB_OFFSETS))
 
@@ -152,7 +158,23 @@ def analyse(csv_path: Path) -> LayerResult:
         c_arr   = np.asarray(contact_states)
         stationary_mask = c_arr == 0
         if stationary_mask.any():
-            metrics['stationary_speed_mean'] = float(spd_arr[stationary_mask].mean())
+            metrics['stationary_speed_mean_contact'] = float(
+                spd_arr[stationary_mask].mean())
+
+    # IRLS-speed-gated stationary metric: works for both hover and contact
+    # datasets. Detect "genuinely still" windows from the IRLS trace itself.
+    if len(irls_arr) >= 3 and speeds:
+        # IRLS at ~10 Hz; speed between consecutive samples.
+        d_irls = np.linalg.norm(np.diff(irls_arr, axis=0), axis=1) * 10.0
+        if d_irls.size and (d_irls < 0.05).any():
+            # Bucket EKF speeds onto IRLS indices via uniform stretch.
+            spd_arr = np.asarray(speeds)
+            idx = np.linspace(0, len(spd_arr) - 1,
+                              num=len(d_irls)).astype(int)
+            sampled = spd_arr[idx]
+            still = sampled[d_irls < 0.05]
+            if still.size:
+                metrics['stationary_speed_mean'] = float(still.mean())
 
     if ekf_bias:
         ba = np.asarray(ekf_bias)
@@ -192,7 +214,7 @@ def analyse(csv_path: Path) -> LayerResult:
         axL.plot(truth[0], truth[1], '+', ms=18, mew=3, color='limegreen',
                  label='truth')
     axL.legend(loc='upper right', fontsize=8)
-    axL.set_title(f'Layer 6 -- EKF vs IRLS: {stem}')
+    axL.set_title(f'Layer 6 -- EKF vs IRLS: {tag}')
 
     axR = fig.add_subplot(1, 2, 2)
     if ekf_t and ekf_arr.size:
@@ -209,27 +231,45 @@ def analyse(csv_path: Path) -> LayerResult:
     axR.set_title('Tracking error + bias magnitude')
 
     fig.tight_layout()
-    plot_path = out_dir / f'{stem}.png'
+    plot_path = out_dir / f'{tag}.png'
     fig.savefig(plot_path, dpi=110)
     plt.close(fig)
 
     return LayerResult(
-        layer=LAYER, dataset=stem, passed=passed,
+        layer=LAYER, dataset=tag, passed=passed,
         metrics=metrics, notes=notes,
         plot=str(plot_path.relative_to(Path(__file__).resolve().parent)),
     )
 
 
 def run_all() -> list[LayerResult]:
-    stems = ['0s', '1s', '2s', '3s', '4s',
-             'NorthS', 'SouthS', 'EastS', 'WestS',
-             'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-             'CIRCLE', 'SQUARE', 'TRIANGLE']
+    base_stems = ['0s', '1s', '2s', '3s', '4s',
+                  'NorthS', 'SouthS', 'EastS', 'WestS',
+                  'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
+                  'CIRCLE', 'SQUARE', 'TRIANGLE']
+    # Hover + dashed contact variants (same motion, different contact state).
+    stems: list[str] = []
+    for s in base_stems:
+        stems.append(s)
+        if (DATASET_DIR / f'{s}-.csv').exists():
+            stems.append(f'{s}-')
+
     out = []
     for s in stems:
         p = DATASET_DIR / f'{s}.csv'
         if p.exists():
             out.append(analyse(p))
+
+    # Forced-contact replay on motion hover datasets to isolate
+    # LIFTED_VEL_DAMP starvation. Skip stationary holds where the metric
+    # "latency vs motion" is meaningless.
+    motion_stems = ['NorthS', 'SouthS', 'EastS', 'WestS',
+                    'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
+                    'CIRCLE', 'SQUARE', 'TRIANGLE']
+    for s in motion_stems:
+        p = DATASET_DIR / f'{s}.csv'
+        if p.exists():
+            out.append(analyse(p, force_contact=True))
     return out
 
 

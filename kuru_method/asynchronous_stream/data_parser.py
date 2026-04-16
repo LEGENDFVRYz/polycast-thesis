@@ -35,7 +35,7 @@ import os
 import sys
 import serial
 import time
-import datetime
+from datetime import datetime
 
 
 class AsyncDataParser:

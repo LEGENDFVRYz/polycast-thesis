@@ -4,26 +4,29 @@ layer4_imu_integration.py -- body->whiteboard transform, heading lock, tag_z.
 Uses the production IMUIntegrator and UWBPreprocessor + IRLSTrilateration so
 we measure the same pipeline the EKF uses.
 
-Tests per dataset
------------------
-    1. Heading lock convergence: samples-until-lock, locked vector,
-       post-lock drift (max angle from lock direction).
-    2. Heading vs IRLS-motion direction: compare locked heading vector to
-       the principal-axis direction of the IRLS trace.  A ~90 deg mismatch
-       means the body-axis mapping is wrong.
-    3. Dead-reckoning drift between UWB resets (every 2.0 s) -- max
-       distance from IRLS anchor position during the resetting window.
-    4. Tag-z correctness: for every sample, compute the assumed tag_z
-       (fixed = MARKER_LENGTH) vs the actual tag_z = MARKER_LENGTH * cos(tilt)
-       derived from the quaternion's body-X world direction.
+Dataset categories
+------------------
+    A: Stationary orientation (NorthS, SouthS, EastS, WestS)
+       All stationary at center.  Heading lock should converge; output
+       should be a tight cluster regardless of marker orientation.
+
+    B: Rotation in-place (clockwiseM, revclockwiseM)
+       Pen tip at center while body rotates.  Tests heading stability
+       under rotation -- heading should NOT track body rotation.
+
+    C: Tilt-rotation (mix-mix_method)
+       Same as B but marker is tilted.  Also checks tag_z variation.
+
+    D: Motion (hline, vline, dline_*, shapes, characters)
+       Heading vs IRLS-motion direction, dead-reckoning drift.
 
 Pass criteria
 -------------
-    samples_until_lock <= 80
-    post_lock_drift_deg < 3.0
-    heading_vs_motion_deg < 20.0  (only for cardinal datasets)
-    dr_max_drift_m < 0.10
-    tag_z_error_mean_m < 0.01
+    A: samples_until_lock <= 80, post_lock_drift_deg < 3.0,
+       position_scatter_R95 < 0.08, dr_max_drift_m < 0.10
+    B: position_scatter_R95 < 0.08, heading_range_deg < 15.0
+    C: same as B + tag_z_variation_cm bounded
+    D: heading_vs_motion_deg < 20.0 (lines), dr_max_drift_m < 0.10
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from _common        import (ensure_out, replay, LayerResult, DATASET_DIR,
-                            draw_board)
+                            draw_board, stems_matching)
 from config         import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
 from imu_integrator import IMUIntegrator, quat_to_rotmat
 from preprocessor   import UWBPreprocessor
@@ -46,6 +49,28 @@ LAYER = 'layer4_imu_integration'
 
 DR_RESET_S = 2.0   # seconds between UWB-anchored DR resets
 
+# Dataset category classification
+ORIENTATION_STEMS = {'NorthS', 'SouthS', 'EastS', 'WestS',
+                     'NorthS-', 'SouthS-', 'EastS-', 'WestS-'}
+ROTATION_STEMS    = {'clockwiseM', 'revclockwiseM',
+                     'clockwiseM-', 'revclockwiseM-'}
+TILT_ROT_STEMS    = {'mix-mix_method', 'mix-mix_method-'}
+LINE_STEMS        = {'hline', 'hline-', 'vline', 'vline-',
+                     'dline_A0_A2', 'dline_A0_A2-',
+                     'dline_A3_A1', 'dline_A3_A1-'}
+
+
+def _classify(stem: str) -> str:
+    if stem in ORIENTATION_STEMS:
+        return 'orientation'
+    if stem in ROTATION_STEMS:
+        return 'rotation'
+    if stem in TILT_ROT_STEMS:
+        return 'tilt_rotation'
+    if stem in LINE_STEMS:
+        return 'motion_line'
+    return 'motion'
+
 
 def _principal_angle_deg(xy: np.ndarray) -> float:
     c = xy.mean(axis=0)
@@ -55,8 +80,9 @@ def _principal_angle_deg(xy: np.ndarray) -> float:
     return math.degrees(math.atan2(d[1], d[0]))
 
 
-def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerResult:
+def analyse(csv_path: Path) -> LayerResult:
     stem = csv_path.stem
+    category = _classify(stem)
 
     integ    = IMUIntegrator()
     pre      = UWBPreprocessor(offsets=tuple(UWB_OFFSETS))
@@ -70,6 +96,7 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
     post_lock_drifts: list[float] = []
     tag_z_errors: list[float] = []
     heading_trace: list[np.ndarray] = []
+    heading_angles: list[float] = []
 
     # Dead-reckoning vs IRLS anchoring
     dr_pos = None
@@ -88,31 +115,11 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
             q = pkt['quat']
             a = pkt['acc']
 
-            # Tag-z from quaternion: body-X world direction (board normal).
+            # Tag-z from quaternion
             R = quat_to_rotmat(*q)
             body_x_world = R[:, 0]
-            # Component along world Z (up) -- if marker is vertical with tip
-            # on board and tag above, this would be 0.  The actual tag-height
-            # above the board depends on the marker angle from the board
-            # surface.  Here we approximate tag_z using body_x's vertical
-            # projection: tag_z = MARKER_LENGTH * |cos(tilt_from_board_normal)|.
-            # Since body-X maps to board normal in the ideal pose, the
-            # board-normal component of body-X equals the horizontal-plane
-            # projection length.
             horiz = float(np.sqrt(body_x_world[0] ** 2 + body_x_world[1] ** 2))
             assumed = MARKER_LENGTH
-            # Tag height above whiteboard (surface) when tip is on the board:
-            # If the marker axis makes angle theta with the board surface,
-            # tag_z = MARKER_LENGTH * sin(theta).  Board is vertical (wall),
-            # so "height above board" corresponds to horizontal distance from
-            # the wall in world-frame -- equal to |body_X . n_board|.
-            # With no known board-normal in the capture, we use the fact that
-            # at the neutral pose body_X points away from the board, so the
-            # magnitude of body_X's horizontal component equals the
-            # board-normal projection.  Perfect pose: horiz = 1.
-            # Tag_z assumed by the 2-D projection in ekf_fusion.update_uwb
-            # is the constant MARKER_LENGTH.  The actual equivalent is
-            # MARKER_LENGTH * horiz.
             actual = MARKER_LENGTH * horiz
             tag_z_errors.append(abs(actual - assumed))
 
@@ -121,9 +128,11 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
                 samples_until_lock = n_imu
                 locked_vec = integ.heading_vec.copy()
             if integ.heading_locked:
-                heading_trace.append(integ.heading_vec.copy())
+                h = integ.heading_vec.copy()
+                heading_trace.append(h)
+                heading_angles.append(math.degrees(math.atan2(h[1], h[0])))
 
-            # Dead-reckoning integration (only once EKF warm)
+            # Dead-reckoning integration
             ts = pkt['ts']
             if dr_pos is not None and last_imu_ts is not None:
                 dt = max(0.0, min(0.1, (ts - last_imu_ts) / 1e6))
@@ -153,12 +162,12 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
     # -- Post-processing metrics --
     metrics: dict = {
         'n_imu': n_imu,
+        'category': category,
         'samples_until_lock': samples_until_lock,
     }
     notes: list[str] = []
 
     if locked_vec is None:
-        passed = False
         notes.append('heading never locked')
         heading_angle = None
     else:
@@ -166,7 +175,7 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
         heading_angle = math.degrees(math.atan2(locked_vec[1], locked_vec[0]))
         metrics['locked_heading_deg'] = heading_angle
 
-        # Drift: max angle between any post-lock vec and the initial lock vec
+        # Post-lock drift: max angle from initial lock direction
         if heading_trace:
             h0 = heading_trace[0]
             max_drift = max(math.degrees(math.acos(
@@ -181,35 +190,87 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
         metrics['tag_z_error_mean_m'] = float(np.mean(tag_z_errors))
         metrics['tag_z_error_max_m']  = float(np.max(tag_z_errors))
 
-    # Heading vs motion direction (only if we have enough IRLS points)
-    hvsm = None
-    if len(irls_xys) > 10 and heading_angle is not None:
-        motion_angle = _principal_angle_deg(np.asarray(irls_xys))
-        diff = abs(motion_angle - heading_angle) % 180.0
-        hvsm = float(min(diff, 180.0 - diff))
-        metrics['motion_angle_deg']      = motion_angle
-        metrics['heading_vs_motion_deg'] = hvsm
-
     # DR drift stat
     if dr_errors:
         metrics['dr_drift_mean_m'] = float(np.mean(dr_errors))
         metrics['dr_drift_max_m']  = float(np.max(dr_errors))
 
-    # -- Pass criteria --
-    passed_checks = []
-    if samples_until_lock is not None:
-        passed_checks.append(samples_until_lock <= 80)
+    # -- Category-specific metrics and pass criteria --
+
+    if category == 'orientation':
+        # Stationary at center — position scatter, heading drift, NO motion angle
+        if irls_xys:
+            ir = np.asarray(irls_xys)
+            mean_xy = ir.mean(axis=0)
+            dr_from_mean = np.linalg.norm(ir - mean_xy, axis=1)
+            r95 = float(np.percentile(dr_from_mean, 95))
+            metrics['position_scatter_R95'] = r95
+        else:
+            r95 = 999.0
+
+        passed_checks = [
+            samples_until_lock is not None and samples_until_lock <= 80,
+            metrics.get('post_lock_drift_deg', 999) < 3.0,
+            r95 < 0.08,
+            metrics.get('dr_drift_max_m', 999) < 0.10,
+        ]
+        passed = all(passed_checks)
+
+    elif category in ('rotation', 'tilt_rotation'):
+        # Rotation in-place — heading range, position scatter
+        if irls_xys:
+            ir = np.asarray(irls_xys)
+            mean_xy = ir.mean(axis=0)
+            dr_from_mean = np.linalg.norm(ir - mean_xy, axis=1)
+            r95 = float(np.percentile(dr_from_mean, 95))
+            metrics['position_scatter_R95'] = r95
+        else:
+            r95 = 999.0
+
+        if heading_angles:
+            h_range = float(max(heading_angles) - min(heading_angles))
+            metrics['heading_range_deg'] = h_range
+            if len(heading_angles) > 1:
+                # Drift rate: total heading change / duration
+                duration_s = n_imu / 100.0  # ~100 Hz IMU
+                metrics['heading_drift_rate_deg_per_s'] = h_range / max(duration_s, 0.01)
+        else:
+            h_range = 999.0
+
+        if category == 'tilt_rotation' and tag_z_errors:
+            # Tag-z variation in cm
+            tz = np.asarray(tag_z_errors)
+            metrics['tag_z_variation_cm'] = float((tz.max() - tz.min()) * 100.0)
+
+        passed_checks = [
+            r95 < 0.08,
+            h_range < 15.0,
+        ]
+        passed = all(passed_checks)
+
     else:
-        passed_checks.append(False)
-    if 'post_lock_drift_deg' in metrics:
-        passed_checks.append(metrics['post_lock_drift_deg'] < 3.0)
-    if 'tag_z_error_mean_m' in metrics:
-        passed_checks.append(metrics['tag_z_error_mean_m'] < 0.01)
-    if 'dr_drift_max_m' in metrics:
-        passed_checks.append(metrics['dr_drift_max_m'] < 0.10)
-    if expected_heading_deg is not None and hvsm is not None:
-        passed_checks.append(hvsm < 20.0)
-    passed = all(passed_checks) if passed_checks else False
+        # Motion datasets (lines, shapes, characters)
+        # Heading vs motion direction (only meaningful with enough IRLS points)
+        hvsm = None
+        if len(irls_xys) > 10 and heading_angle is not None:
+            motion_angle = _principal_angle_deg(np.asarray(irls_xys))
+            diff = abs(motion_angle - heading_angle) % 180.0
+            hvsm = float(min(diff, 180.0 - diff))
+            metrics['motion_angle_deg']      = motion_angle
+            metrics['heading_vs_motion_deg'] = hvsm
+
+        passed_checks = [
+            samples_until_lock is not None and samples_until_lock <= 80,
+        ]
+        if 'post_lock_drift_deg' in metrics:
+            passed_checks.append(metrics['post_lock_drift_deg'] < 3.0)
+        if 'tag_z_error_mean_m' in metrics:
+            passed_checks.append(metrics['tag_z_error_mean_m'] < 0.01)
+        if 'dr_drift_max_m' in metrics:
+            passed_checks.append(metrics['dr_drift_max_m'] < 0.10)
+        if category == 'motion_line' and hvsm is not None:
+            passed_checks.append(hvsm < 20.0)
+        passed = all(passed_checks) if passed_checks else False
 
     # -- Plot --
     out_dir = ensure_out(LAYER)
@@ -231,16 +292,24 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
                     arrowprops=dict(arrowstyle='->', color='orange', lw=2))
         ax.text(c[0], c[1] - 0.04, f'heading {heading_angle:.1f} deg',
                 fontsize=8, color='orange')
-    ax.set_title(f'Layer 4 -- body->wb + heading: {stem}')
+    ax.set_title(f'Layer 4 -- {category}: {stem}')
     ax.legend(loc='upper right', fontsize=8)
 
     ax2 = axes[1]
-    if tag_z_errors:
+    if category in ('rotation', 'tilt_rotation') and heading_angles:
+        # Plot heading angle over time for rotation tests
+        t_h = np.arange(len(heading_angles)) / 100.0
+        ax2.plot(t_h, heading_angles, 'tab:orange', lw=1.0)
+        ax2.set_xlabel('time (s)')
+        ax2.set_ylabel('heading angle (deg)')
+        ax2.set_title(f'Heading stability  range={metrics.get("heading_range_deg", 0):.1f} deg')
+        ax2.grid(True, alpha=0.3)
+    elif tag_z_errors:
         ax2.hist(np.asarray(tag_z_errors) * 100.0, bins=40, color='slateblue')
-    ax2.set_xlabel('|tag_z - MARKER_LENGTH|  (cm)')
-    ax2.set_ylabel('count')
-    ax2.set_title('Tag-z projection error')
-    ax2.grid(True, alpha=0.3)
+        ax2.set_xlabel('|tag_z - MARKER_LENGTH|  (cm)')
+        ax2.set_ylabel('count')
+        ax2.set_title('Tag-z projection error')
+        ax2.grid(True, alpha=0.3)
 
     fig.tight_layout()
     plot_path = out_dir / f'{stem}.png'
@@ -254,24 +323,39 @@ def analyse(csv_path: Path, expected_heading_deg: float | None = None) -> LayerR
     )
 
 
-CARDINAL_HEADING = {
-    'NorthS':  90.0,
-    'SouthS': -90.0,
-    'EastS':    0.0,
-    'WestS':  180.0,
-}
-
-
 def run_all() -> list[LayerResult]:
     out = []
-    for stem, heading in CARDINAL_HEADING.items():
-        p = DATASET_DIR / f'{stem}.csv'
-        if p.exists():
-            out.append(analyse(p, expected_heading_deg=heading))
-    for stem in ['hline', 'vline']:
-        p = DATASET_DIR / f'{stem}.csv'
+
+    # Category A: Stationary orientation tests
+    for stem in ['NorthS', 'SouthS', 'EastS', 'WestS']:
+        for s in (stem, f'{stem}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                out.append(analyse(p))
+
+    # Category B: Rotation in-place tests
+    for stem in ['clockwiseM', 'revclockwiseM']:
+        for s in (stem, f'{stem}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                out.append(analyse(p))
+
+    # Category C: Tilt-rotation test
+    for s in ['mix-mix_method', 'mix-mix_method-']:
+        p = DATASET_DIR / f'{s}.csv'
         if p.exists():
             out.append(analyse(p))
+
+    # Category D: Motion tests (lines, shapes, characters)
+    for stem in ['hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
+                 'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
+                 'circleS', 'squareS', 'triangleS', 'starS',
+                 'ABC', 'HELLO', 'abcS', 'helloS', 'corners']:
+        for s in (stem, f'{stem}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                out.append(analyse(p))
+
     return out
 
 
@@ -283,10 +367,9 @@ if __name__ == '__main__':
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
              if args.datasets else
              [DATASET_DIR / f'{s}.csv'
-              for s in ['NorthS', 'EastS', 'hline', 'vline']])
+              for s in ['NorthS', 'clockwiseM', 'hline', 'vline']])
     for p in files:
-        exp = CARDINAL_HEADING.get(p.stem)
-        r = analyse(p, expected_heading_deg=exp)
+        r = analyse(p)
         print(r.summary_line())
         for k, v in r.metrics.items():
             print(f'    {k:20s} {v}')

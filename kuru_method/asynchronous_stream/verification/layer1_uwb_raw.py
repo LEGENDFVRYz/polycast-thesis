@@ -144,10 +144,22 @@ def analyse(csv_path: Path) -> LayerResult:
 
 
 def run_all() -> list[LayerResult]:
-    """Layer 1 only meaningfully runs on stationary datasets."""
+    """Layer 1 runs on all stationary datasets (known ground truth)."""
     results = []
     for stem in stems_matching('0s', '1s', '2s', '3s', '4s'):
         results.append(analyse(DATASET_DIR / f'{stem}.csv'))
+    # Orientation tests (stationary at center, different marker angles)
+    for base in ['NorthS', 'SouthS', 'EastS', 'WestS']:
+        for s in (base, f'{base}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                results.append(analyse(p))
+    # Rotation tests (stationary at center, body rotating)
+    for base in ['clockwiseM', 'revclockwiseM', 'mix-mix_method']:
+        for s in (base, f'{base}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                results.append(analyse(p))
     return results
 
 

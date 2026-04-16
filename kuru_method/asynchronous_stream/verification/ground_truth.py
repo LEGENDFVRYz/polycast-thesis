@@ -21,6 +21,22 @@ STATIC_TRUTH = {
     '3s-': (1.220, 1.240),
     '4s':  (0.030, 1.240),
     '4s-': (0.030, 1.240),
+    # Orientation tests (all stationary at center)
+    'NorthS':  (0.625, 0.620),
+    'NorthS-': (0.625, 0.620),
+    'SouthS':  (0.625, 0.620),
+    'SouthS-': (0.625, 0.620),
+    'EastS':   (0.625, 0.620),
+    'EastS-':  (0.625, 0.620),
+    'WestS':   (0.625, 0.620),
+    'WestS-':  (0.625, 0.620),
+    # Rotation tests (all stationary at center)
+    'clockwiseM':      (0.625, 0.620),
+    'clockwiseM-':     (0.625, 0.620),
+    'revclockwiseM':   (0.625, 0.620),
+    'revclockwiseM-':  (0.625, 0.620),
+    'mix-mix_method':  (0.625, 0.620),
+    'mix-mix_method-': (0.625, 0.620),
 }
 
 

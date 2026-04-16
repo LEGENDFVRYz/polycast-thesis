@@ -121,7 +121,9 @@ def run_all() -> list[LayerResult]:
     out = []
     # Prefer the dashed (contact-active) variants; fall back to hover if the
     # contact version is missing.
-    for base in ['HELLO', 'ABC', 'CIRCLE', 'hline', '0s']:
+    for base in ['HELLO', 'ABC', 'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
+                 'hline', 'vline', '0s',
+                 'helloS', 'abcS', 'circleS', 'squareS', 'triangleS', 'starS']:
         for stem in (f'{base}-', base):
             p = DATASET_DIR / f'{stem}.csv'
             if p.exists():

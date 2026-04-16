@@ -37,12 +37,17 @@ from ground_truth  import get_truth
 LAYER = 'layer2_uwb_position'
 
 
+_STATIONARY_STEMS = {'0s', '0s-', '1s', '1s-', '2s', '2s-', '3s', '3s-', '4s', '4s-',
+                     'NorthS', 'NorthS-', 'SouthS', 'SouthS-',
+                     'EastS', 'EastS-', 'WestS', 'WestS-',
+                     'clockwiseM', 'clockwiseM-', 'revclockwiseM', 'revclockwiseM-',
+                     'mix-mix_method', 'mix-mix_method-'}
+
+
 def _classify(stem: str) -> str:
+    if stem in _STATIONARY_STEMS:
+        return 'stationary'
     s = stem.lower()
-    if s.endswith('s') or s.endswith('s-'):
-        # 0s/0s- etc -- but also 'squareS'/'helloS'/... we distinguish only the short ones
-        if len(stem.rstrip('-')) <= 3 and stem[0].isdigit():
-            return 'stationary'
     if s.startswith('hline'):
         return 'line_h'
     if s.startswith('vline'):
@@ -53,10 +58,12 @@ def _classify(stem: str) -> str:
         return 'line_d31'
     if s.startswith('circle'):
         return 'shape_circle'
-    if s.startswith('square') and 's' not in s[-2:]:
+    if s.startswith('square'):
         return 'shape_square'
     if s.startswith('triangle'):
         return 'shape_triangle'
+    if s.startswith('star'):
+        return 'shape_star'
     return 'other'
 
 
@@ -170,7 +177,7 @@ def analyse(csv_path: Path) -> LayerResult:
         })
         passed = rms < 0.05 and 0.05 < r < 0.70
 
-    elif kind in ('shape_square', 'shape_triangle'):
+    elif kind in ('shape_square', 'shape_triangle', 'shape_star'):
         # Convex hull area as a rough proxy
         try:
             from scipy.spatial import ConvexHull
@@ -230,9 +237,25 @@ def analyse(csv_path: Path) -> LayerResult:
 def run_all() -> list[LayerResult]:
     interesting = (
         stems_matching('0s', '1s', '2s', '3s', '4s') +
-        ['hline', 'hline-', 'vline', 'vline-',
+        # Orientation tests (stationary at center)
+        ['NorthS', 'NorthS-', 'SouthS', 'SouthS-',
+         'EastS', 'EastS-', 'WestS', 'WestS-',
+         # Rotation tests (stationary at center)
+         'clockwiseM', 'clockwiseM-', 'revclockwiseM', 'revclockwiseM-',
+         'mix-mix_method', 'mix-mix_method-',
+         # Lines
+         'hline', 'hline-', 'vline', 'vline-',
          'dline_A0_A2', 'dline_A0_A2-', 'dline_A3_A1', 'dline_A3_A1-',
-         'CIRCLE', 'CIRCLE-', 'SQUARE', 'SQUARE-', 'TRIANGLE', 'TRIANGLE-']
+         # Shapes (large + small)
+         'CIRCLE', 'CIRCLE-', 'SQUARE', 'SQUARE-',
+         'TRIANGLE', 'TRIANGLE-', 'STAR', 'STAR-',
+         'circleS', 'circleS-', 'squareS', 'squareS-',
+         'triangleS', 'triangleS-', 'starS', 'starS-',
+         # Characters
+         'ABC', 'ABC-', 'HELLO', 'HELLO-',
+         'abcS', 'abcS-', 'helloS', 'helloS-',
+         # Corner visit
+         'corners', 'corners-']
     )
     seen = set()
     out = []

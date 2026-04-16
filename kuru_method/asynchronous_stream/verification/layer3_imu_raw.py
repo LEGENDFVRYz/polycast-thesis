@@ -142,12 +142,20 @@ def analyse(csv_path: Path, is_stationary: bool) -> LayerResult:
 
 def run_all() -> list[LayerResult]:
     out = []
+    # Stationary position tests
     for s in stems_matching('0s', '1s', '2s', '3s', '4s'):
         out.append(analyse(DATASET_DIR / f'{s}.csv', is_stationary=True))
+    # Orientation tests (stationary at center, different marker angles)
     for s in ['NorthS', 'SouthS', 'EastS', 'WestS']:
         p = DATASET_DIR / f'{s}.csv'
         if p.exists():
-            out.append(analyse(p, is_stationary=False))
+            out.append(analyse(p, is_stationary=True))
+    # Rotation tests (stationary position, body rotating — accel should be ~0)
+    for base in ['clockwiseM', 'revclockwiseM', 'mix-mix_method']:
+        for s in (base, f'{base}-'):
+            p = DATASET_DIR / f'{s}.csv'
+            if p.exists():
+                out.append(analyse(p, is_stationary=False))
     return out
 
 

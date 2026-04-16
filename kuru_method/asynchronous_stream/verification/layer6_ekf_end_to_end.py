@@ -243,10 +243,26 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
 
 
 def run_all() -> list[LayerResult]:
-    base_stems = ['0s', '1s', '2s', '3s', '4s',
-                  'NorthS', 'SouthS', 'EastS', 'WestS',
-                  'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-                  'CIRCLE', 'SQUARE', 'TRIANGLE']
+    base_stems = [
+        # Stationary position
+        '0s', '1s', '2s', '3s', '4s',
+        # Stationary orientation (all at center)
+        'NorthS', 'SouthS', 'EastS', 'WestS',
+        # Rotation in-place (all at center)
+        'clockwiseM', 'revclockwiseM',
+        # Tilt-rotation (at center)
+        'mix-mix_method',
+        # Lines
+        'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
+        # Shapes (large)
+        'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
+        # Shapes (small)
+        'circleS', 'squareS', 'triangleS', 'starS',
+        # Characters
+        'ABC', 'HELLO', 'abcS', 'helloS',
+        # Corner visit
+        'corners',
+    ]
     # Hover + dashed contact variants (same motion, different contact state).
     stems: list[str] = []
     for s in base_stems:
@@ -261,11 +277,14 @@ def run_all() -> list[LayerResult]:
             out.append(analyse(p))
 
     # Forced-contact replay on motion hover datasets to isolate
-    # LIFTED_VEL_DAMP starvation. Skip stationary holds where the metric
-    # "latency vs motion" is meaningless.
-    motion_stems = ['NorthS', 'SouthS', 'EastS', 'WestS',
-                    'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-                    'CIRCLE', 'SQUARE', 'TRIANGLE']
+    # LIFTED_VEL_DAMP starvation.  Skip stationary/orientation/rotation
+    # datasets where forced contact doesn't change behavior.
+    motion_stems = [
+        'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
+        'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
+        'circleS', 'squareS', 'triangleS', 'starS',
+        'ABC', 'HELLO', 'abcS', 'helloS', 'corners',
+    ]
     for s in motion_stems:
         p = DATASET_DIR / f'{s}.csv'
         if p.exists():

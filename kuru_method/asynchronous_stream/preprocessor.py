@@ -37,9 +37,9 @@ class AnchorQualityTracker:
     """
 
     # Tuning constants
-    _VAR_SCALE    = 80.0   # sigma^2 penalty slope (80 -> weight ~ 0.56 at sigma^2=0.01 m^2)
-    _INNOV_SIGMA  = 0.12   # Innovation sigma (m); 12 cm -> half-weight at innovation = 12 cm
-    _MIN_WEIGHT   = 0.10   # Floor — never zero-out an anchor completely
+    _VAR_SCALE    = 120.0  # sigma^2 penalty slope (120 -> weight ~ 0.45 at sigma^2=0.01 m^2)
+    _INNOV_SIGMA  = 0.08   # Innovation sigma (m); 8 cm -> half-weight at innovation = 8 cm
+    _MIN_WEIGHT   = 0.05   # Floor — near-zero gain for chronically bad anchors
 
     def __init__(self, window: int = 15):
         self._window    = deque(maxlen=window)

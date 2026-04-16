@@ -140,13 +140,13 @@ class IMUIntegrator:
             self._accumulate_heading(R)
             return np.array([float(a[1]), float(a[2])])  # fallback: body_Y, body_Z
 
-        # Slow heading adaptation (EMA, alpha=0.002 ~ 500-sample time constant)
+        # Heading adaptation (EMA, alpha=0.01 ~ 100-sample time constant)
         body_y_world = R[:, 1]
         h_xy = body_y_world[:2]
         h_norm = float(np.linalg.norm(h_xy))
         if h_norm > 0.3:
             new_h = h_xy / h_norm
-            self._heading_vec = 0.998 * self._heading_vec + 0.002 * new_h
+            self._heading_vec = 0.99 * self._heading_vec + 0.01 * new_h
             self._heading_vec /= float(np.linalg.norm(self._heading_vec))
 
         a_world = R @ a

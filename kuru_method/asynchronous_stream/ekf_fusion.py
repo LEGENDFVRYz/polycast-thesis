@@ -48,14 +48,23 @@ class TightlyCoupledEKF:
     # -- Tuning -------------------------------------------------------------
 
     # Process noise
-    SIGMA_ACC  = 0.3     # m/s^2  (was 1.5 — lowered to trust IMU more)
+    SIGMA_ACC  = 0.5     # m/s^2  (raised to balance reduced SIGMA_UWB)
     SIGMA_BIAS = 0.0005  # m/s^2/sqrt(s)  (was 0.002 — slower bias drift)
 
     # Measurement noise
-    SIGMA_UWB  = 0.15    # m  (was 0.08 — raised to match observed UWB noise)
+    SIGMA_UWB      = 0.08   # m — Kalman-update R (quality-weighted, was 0.15)
+    GATE_SIGMA_UWB = 0.12   # m — gate-only R (tight, fixed, not quality-weighted)
 
     # Chi-squared gate threshold (1 degree of freedom, scalar range measurement)
     GATE_CHI2  = 3.841   # 95% CL  (was 6.635 / 99% — tighter outlier rejection)
+
+    # Hard absolute innovation clamp (state-independent safety net)
+    MAX_INNOV_M = 0.30   # m — reject any |innov| > 30 cm regardless of P
+
+    # Per-anchor NLOS muting
+    NLOS_MUTE_THRESH = 5    # consecutive rejections before muting
+    NLOS_MUTE_CYCLES = 10   # UWB cycles to skip while muted
+    NLOS_MAX_MUTED   = 2    # never mute more than this many anchors at once
 
     # Prolonged UWB outage handling (all anchors rejected N consecutive packets)
     MAX_CONSEC_OUTAGE = 8
@@ -77,7 +86,7 @@ class TightlyCoupledEKF:
     ZUPT_R_VEL        = 0.0005 # (m/s)^2
 
     # Speed above which bias estimation is frozen during a UWB update
-    BIAS_FREEZE_SPEED = 0.05   # m/s  (was 0.12 — freeze bias during any motion)
+    BIAS_FREEZE_SPEED = 0.20   # m/s  (was 0.05 — allow bias learning during writing)
 
     # -- init ---------------------------------------------------------------
 
@@ -96,9 +105,16 @@ class TightlyCoupledEKF:
         self._n_uwb_accepted  = 0
         self._n_uwb_rejected  = 0
 
+        # IRLS speed for velocity damping gating (fed from AsyncEKFFusionEngine)
+        self._irls_speed = 0.0
+
         # Innovation-based adaptive measurement noise (per anchor)
-        self._innov_var   = np.ones(len(anchors)) * 0.015
-        self._innov_alpha = 0.05   # EMA smoothing for innovation variance
+        self._innov_var   = np.ones(len(anchors)) * 0.005
+        self._innov_alpha = 0.10   # EMA smoothing for innovation variance
+
+        # Per-anchor NLOS muting state
+        self._consec_reject = np.zeros(len(anchors), dtype=int)
+        self._mute_remain   = np.zeros(len(anchors), dtype=int)
 
         # RTS smoother history (offline CSV mode only)
         self.record_history   = False
@@ -129,7 +145,7 @@ class TightlyCoupledEKF:
         if self._consec_outage > self.MAX_CONSEC_OUTAGE:
             self._x[2] *= self.VELOCITY_DAMP
             self._x[3] *= self.VELOCITY_DAMP
-        elif not is_contact:
+        elif not is_contact and self._irls_speed < 0.03:
             self._x[2] *= self.LIFTED_VEL_DAMP
             self._x[3] *= self.LIFTED_VEL_DAMP
         else:
@@ -250,8 +266,15 @@ class TightlyCoupledEKF:
 
         accepted, rejected = [], []
         px, py = self._x[0], self._x[1]
+        n_currently_muted = int(np.sum(self._mute_remain > 0))
 
         for i in range(min(n_anchors, len(raw_dists))):
+            # -- NLOS muting: skip anchors in mute cooldown ----------------
+            if self._mute_remain[i] > 0:
+                self._mute_remain[i] -= 1
+                rejected.append(i)
+                continue
+
             d_raw = float(raw_dists[i])
             qw    = float(quality_weights[i])
 
@@ -277,25 +300,50 @@ class TightlyCoupledEKF:
             # Innovation (scalar)
             innov = d2d_meas - r2d_pred
 
+            # -- Hard innovation clamp (state-independent safety net) ------
+            if abs(innov) > self.MAX_INNOV_M:
+                self._n_uwb_rejected += 1
+                self._consec_reject[i] += 1
+                if (self._consec_reject[i] >= self.NLOS_MUTE_THRESH
+                        and n_currently_muted < self.NLOS_MAX_MUTED):
+                    self._mute_remain[i] = self.NLOS_MUTE_CYCLES
+                    self._consec_reject[i] = 0
+                    n_currently_muted += 1
+                self._innov_var[i] *= 0.98
+                rejected.append(i)
+                continue
+
             # Measurement Jacobian H (1x6)
             H = np.array([[dx / r2d_pred, dy / r2d_pred,
                            0.0, 0.0, 0.0, 0.0]])
 
-            # Adaptive measurement variance: use max of configured and observed
+            # -- Chi-squared gate: use TIGHT fixed R (not quality-weighted) -
+            HPHT = float((H @ self._P @ H.T).item())
+            R_gate = self.GATE_SIGMA_UWB ** 2
+            S_gate = HPHT + R_gate
+            mahal_sq = (innov * innov) / S_gate
+
+            if mahal_sq > self.GATE_CHI2:
+                self._n_uwb_rejected += 1
+                self._consec_reject[i] += 1
+                if (self._consec_reject[i] >= self.NLOS_MUTE_THRESH
+                        and n_currently_muted < self.NLOS_MAX_MUTED):
+                    self._mute_remain[i] = self.NLOS_MUTE_CYCLES
+                    self._consec_reject[i] = 0
+                    n_currently_muted += 1
+                self._innov_var[i] *= 0.98
+                rejected.append(i)
+                continue
+
+            # -- Accepted: update adaptive noise from clean innovation -----
             self._innov_var[i] = ((1 - self._innov_alpha) * self._innov_var[i]
                                   + self._innov_alpha * innov * innov)
+            self._consec_reject[i] = 0
+
+            # -- Kalman update uses quality-weighted R ---------------------
             R_base = (self.SIGMA_UWB / max(qw, 0.1)) ** 2
             R_eff  = max(R_base, self._innov_var[i])
-
-            # Innovation covariance (scalar)
-            S = float((H @ self._P @ H.T).item()) + R_eff
-
-            # Chi-squared gate (1 DOF)
-            mahal_sq = (innov * innov) / S
-            if mahal_sq > self.GATE_CHI2:
-                rejected.append(i)
-                self._n_uwb_rejected += 1
-                continue
+            S = HPHT + R_eff
 
             # Kalman gain (6x1)
             K = (self._P @ H.T) / S
@@ -339,7 +387,7 @@ class TightlyCoupledEKF:
         Velocity and bias start at zero.
         """
         self._x = np.array([px, py, 0.0, 0.0, 0.0, 0.0])
-        self._P = np.diag([0.25, 0.25, 2.0, 2.0, 0.01, 0.01])
+        self._P = np.diag([0.25, 0.25, 2.0, 2.0, 0.04, 0.04])
         print(f"[EKF] Initialised at ({px:.3f}, {py:.3f})")
 
     # -- properties ---------------------------------------------------------
@@ -461,6 +509,10 @@ class AsyncEKFFusionEngine:
         self._COLD_N         = 5     # packets to median-average
         self._COLD_MARGIN    = 0.25  # m — reject IRLS fixes outside board+margin
 
+        # IRLS speed tracking (for LIFTED_VEL_DAMP gating)
+        self._prev_irls_pos  = None
+        self._prev_uwb_ts    = None
+
     # -- IMU predict --------------------------------------------------------
 
     def process_imu(self, imu_pkt: dict):
@@ -554,6 +606,15 @@ class AsyncEKFFusionEngine:
 
         # -- Warm: EKF update -----------------------------------------------
         accepted, rejected = self._ekf.update_uwb(filtered_dists, quality_weights)
+
+        # Update IRLS speed for LIFTED_VEL_DAMP gating
+        pos = self._ekf.position
+        if pos is not None and self._prev_irls_pos is not None:
+            dt_uwb = 0.10  # default ~10 Hz
+            disp = float(np.linalg.norm(pos - self._prev_irls_pos))
+            self._ekf._irls_speed = disp / dt_uwb
+        if pos is not None:
+            self._prev_irls_pos = pos.copy()
 
         # Warn on prolonged outage
         n_out = self._ekf.consecutive_outage

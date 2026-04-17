@@ -29,50 +29,18 @@ Configuration
 import sys
 import time
 import numpy as np
-from collections import deque
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from data_parser    import AsyncDataParser
 from preprocessor   import UWBPreprocessor, IMUPreprocessor
 from ekf_fusion     import AsyncEKFFusionEngine
-
-
-# -- Causal output smoother ------------------------------------------------
-class TrailSmoother:
-    """Weighted moving average over the last N positions (causal, no lookahead)."""
-
-    _WEIGHTS = np.array([0.05, 0.10, 0.20, 0.30, 0.35])
-
-    def __init__(self):
-        n = len(self._WEIGHTS)
-        self._buf_x = deque(maxlen=n)
-        self._buf_y = deque(maxlen=n)
-
-    def push(self, x: float, y: float):
-        self._buf_x.append(x)
-        self._buf_y.append(y)
-
-    def get(self):
-        n = len(self._buf_x)
-        if n == 0:
-            return 0.0, 0.0
-        if n == 1:
-            return self._buf_x[0], self._buf_y[0]
-        w = self._WEIGHTS[-n:]
-        w = w / w.sum()
-        sx = sum(w[i] * self._buf_x[i] for i in range(n))
-        sy = sum(w[i] * self._buf_y[i] for i in range(n))
-        return float(sx), float(sy)
-
-    def reset(self):
-        self._buf_x.clear()
-        self._buf_y.clear()
+from trail_smoother import TrailSmoother
 
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
-DATASET_FILENAME = 'datasets/vline.csv'   # '' = live serial;  'datasets/data.csv' = playback
+DATASET_FILENAME = 'datasets_a3_ls/SQUARE-.csv'   # '' = live serial;  'datasets/data.csv' = playback
 
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key

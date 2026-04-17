@@ -41,9 +41,16 @@ from preprocessor   import UWBPreprocessor, IMUPreprocessor
 from ekf_fusion     import AsyncEKFFusionEngine
 from fusion_engine  import IRLSTrilateration
 from ground_truth   import get_truth
+from trail_smoother import TrailSmoother
 
 
 LAYER = 'layer6_ekf_end_to_end'
+
+# Mirror main_ekf.py display semantics: record an EKF waypoint every Nth
+# IMU predict (~100 Hz / 3 ≈ 33 Hz), gate by is_writing, smooth the writing
+# trail with a causal WMA, and insert a NaN break on every pen lift so
+# matplotlib does not connect separate strokes with a diagonal.
+_TRAIL_SUBSAMPLE = 3
 
 
 def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
@@ -51,6 +58,7 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
     tag  = f'{stem}+contact' if force_contact else stem
 
     engine = AsyncEKFFusionEngine()
+    engine.ekf.record_history = True   # enable RTS smoother at end of replay
     if force_contact:
         # Diagnostic override: make ForceContactDetector always report contact=1
         # so LIFTED_VEL_DAMP never fires. Isolates the hover-damping hypothesis.
@@ -82,6 +90,15 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
     contact_states: list[int] = []
     speeds: list[float] = []
 
+    # Per-IMU-step display buffers — mirror main_ekf.py (see trail_smoother.py)
+    draw_x: list[float] = []   # writing trail, NaN-separated across lifts
+    draw_y: list[float] = []
+    lift_x: list[float] = []
+    lift_y: list[float] = []
+    smoother = TrailSmoother()
+    prev_writing = False
+    imu_subsample = 0
+
     for pkt in replay(csv_path):
         if t0_us is None:
             t0_us = pkt['ts']
@@ -94,6 +111,26 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
             if pos is not None:
                 contact_states.append(int(writing))
                 speeds.append(float(np.linalg.norm(vel)))
+
+                # Display capture (writing/lifted) — mirrors main_ekf.py
+                if engine.ekf.initialized:
+                    imu_subsample += 1
+                    if imu_subsample >= _TRAIL_SUBSAMPLE:
+                        imu_subsample = 0
+                        if writing:
+                            smoother.push(float(pos[0]), float(pos[1]))
+                            sx, sy = smoother.get()
+                            draw_x.append(sx)
+                            draw_y.append(sy)
+                        else:
+                            if prev_writing:
+                                # Pen just lifted — break the drawn line
+                                draw_x.append(float('nan'))
+                                draw_y.append(float('nan'))
+                                smoother.reset()
+                            lift_x.append(float(pos[0]))
+                            lift_y.append(float(pos[1]))
+                        prev_writing = bool(writing)
 
         elif pkt['type'] == 'uwb':
             if first_uwb_us is None:
@@ -184,6 +221,14 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
             metrics['bias_delta_last_2s'] = float(
                 np.linalg.norm(last[-1] - last[0]))
 
+    # RTS backward smoother — offline-only post-pass for cleanest trajectory
+    rts_xy = None
+    if len(engine.ekf._history) >= 10:
+        try:
+            rts_xy = engine.ekf.rts_smooth()
+        except Exception as exc:
+            notes.append(f'rts_smooth failed: {exc!r}')
+
     # Pass criteria
     def _ok(key, limit, lt=True):
         v = metrics.get(key)
@@ -198,17 +243,23 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
         _ok('cold_start_s', 0.5),
     ])
 
-    # ---- Plot ----
+    # ---- Plot (mirrors main_ekf.py display semantics) ----
     out_dir = ensure_out(LAYER)
     fig = plt.figure(figsize=(13, 6))
     axL = fig.add_subplot(1, 2, 1)
     draw_board(axL)
     if len(irls_arr):
-        axL.plot(irls_arr[:, 0], irls_arr[:, 1], '.', ms=3, color='royalblue',
-                 alpha=0.55, label='IRLS')
-    if len(ekf_arr):
-        axL.plot(ekf_arr[:, 0], ekf_arr[:, 1], '-', lw=1.2, color='tab:orange',
-                 alpha=0.9, label='EKF')
+        axL.plot(irls_arr[:, 0], irls_arr[:, 1], '.', ms=2,
+                 color='tab:orange', alpha=0.35, label='IRLS')
+    if lift_x:
+        axL.plot(lift_x, lift_y, '.', ms=3, color='#888888', alpha=0.4,
+                 label='lifted (tracked)')
+    if draw_x:
+        axL.plot(draw_x, draw_y, '-', lw=1.3, color='royalblue',
+                 label='EKF (writing)')
+    if rts_xy is not None and len(rts_xy) > 1:
+        axL.plot(rts_xy[:, 0], rts_xy[:, 1], '-', lw=1.2,
+                 color='limegreen', alpha=0.75, label='RTS smoothed')
     truth = get_truth(stem)
     if truth is not None:
         axL.plot(truth[0], truth[1], '+', ms=18, mew=3, color='limegreen',

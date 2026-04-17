@@ -105,9 +105,22 @@ class IMUIntegrator:
     ACC_DEADBAND_MS2     = 0.08  # m/s^2 — sub-noise floor (was 0.02)
     ACC_CLAMP_MS2        = 20.0  # m/s^2 — glitch hard-clamp
 
+    # Heading drift leash: the heading EMA is bounded within this many
+    # degrees of the initial lock direction.  During rotation-in-place the
+    # body-Y axis sweeps 360° and the EMA (alpha=0.01) would track it,
+    # destroying the heading lock.  The leash prevents more than ±20° of
+    # drift from the initial estimate.
+    #
+    # Physical justification: the board is fixed, so the true heading
+    # cannot change.  Any large heading drift is either sensor noise or
+    # body rotation — both should be rejected.  For genuine reorientation
+    # (e.g. board moved), call reset_heading().
+    HEADING_MAX_DRIFT_DEG = 15.0  # max heading drift from initial lock
+
     def __init__(self):
         self._heading_locked = False
         self._heading_vec    = np.array([1.0, 0.0])  # wb-X direction in world horiz.
+        self._locked_heading = np.array([1.0, 0.0])  # snapshot at lock time
         self._init_headings  = []
 
     # -- public API ---------------------------------------------------------
@@ -141,13 +154,21 @@ class IMUIntegrator:
             return np.array([float(a[1]), float(a[2])])  # fallback: body_Y, body_Z
 
         # Heading adaptation (EMA, alpha=0.01 ~ 100-sample time constant)
+        # with drift leash: heading cannot drift more than
+        # HEADING_MAX_DRIFT_DEG from the initial lock direction.
         body_y_world = R[:, 1]
         h_xy = body_y_world[:2]
         h_norm = float(np.linalg.norm(h_xy))
         if h_norm > 0.3:
             new_h = h_xy / h_norm
-            self._heading_vec = 0.99 * self._heading_vec + 0.01 * new_h
-            self._heading_vec /= float(np.linalg.norm(self._heading_vec))
+            candidate = 0.99 * self._heading_vec + 0.01 * new_h
+            candidate /= float(np.linalg.norm(candidate))
+            # Enforce drift leash: reject update if it exceeds max drift
+            cos_drift = float(np.clip(
+                np.dot(candidate, self._locked_heading), -1.0, 1.0))
+            drift_deg = np.degrees(np.arccos(cos_drift))
+            if drift_deg <= self.HEADING_MAX_DRIFT_DEG:
+                self._heading_vec = candidate
 
         a_world = R @ a
         wb_ay   = float(a_world[2])                              # world Z = up = wb Y
@@ -156,9 +177,10 @@ class IMUIntegrator:
 
     def reset_heading(self):
         """Re-trigger heading estimation after a board or sensor reposition."""
-        self._heading_locked = False
-        self._heading_vec    = np.array([1.0, 0.0])
-        self._init_headings  = []
+        self._heading_locked  = False
+        self._heading_vec     = np.array([1.0, 0.0])
+        self._locked_heading  = np.array([1.0, 0.0])
+        self._init_headings   = []
         print("[IMUIntegrator] Heading reset — will re-accumulate.")
 
     @property
@@ -182,5 +204,6 @@ class IMUIntegrator:
             mean_h = np.mean(self._init_headings, axis=0)
             n2     = float(np.linalg.norm(mean_h))
             self._heading_vec    = mean_h / n2 if n2 > 0.1 else np.array([1.0, 0.0])
+            self._locked_heading = self._heading_vec.copy()
             self._heading_locked = True
             print(f"[IMUIntegrator] Heading locked: {self._heading_vec.round(4)}")

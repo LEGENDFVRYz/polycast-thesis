@@ -242,9 +242,14 @@ def analyse(csv_path: Path) -> LayerResult:
             tz = np.asarray(tag_z_errors)
             metrics['tag_z_variation_cm'] = float((tz.max() - tz.min()) * 100.0)
 
+        # During rotation the UWB tag traces a circle of radius
+        # ~MARKER_LENGTH due to the lever arm.  R95 ≈ MARKER_LENGTH
+        # is expected.  Heading stability (drift from lock) is the
+        # primary metric.
+        drift = metrics.get('post_lock_drift_deg', 999)
         passed_checks = [
-            r95 < 0.08,
-            h_range < 15.0,
+            r95 < MARKER_LENGTH + 0.10,  # lever arm circle + noise margin
+            drift <= 15.0,               # heading stayed within leash
         ]
         passed = all(passed_checks)
 

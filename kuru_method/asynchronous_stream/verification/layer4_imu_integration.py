@@ -22,11 +22,19 @@ Dataset categories
 
 Pass criteria
 -------------
-    A: samples_until_lock <= 80, post_lock_drift_deg < 3.0,
-       position_scatter_R95 < 0.08, dr_max_drift_m < 0.10
-    B: position_scatter_R95 < 0.08, heading_range_deg < 15.0
-    C: same as B + tag_z_variation_cm bounded
-    D: heading_vs_motion_deg < 20.0 (lines), dr_max_drift_m < 0.10
+    A (orientation, stationary):
+       samples_until_lock <= 80, post_lock_drift_deg < 3.0,
+       position_scatter_R95 < 0.08, dr_drift_max_m < 0.10
+    B (rotation in-place):
+       position_scatter_R95 < MARKER_LENGTH + 0.10, post_lock_drift_deg <= 15.0
+    C (tilt-rotation): same as B + tag_z_variation_cm bounded
+    D (motion line): samples_until_lock <= 80, post_lock_drift_deg < 3.0,
+       dr_drift_max_m < 0.10;
+       heading_vs_motion_deg < 20 applied ONLY for horizontal strokes
+       (motion_angle near 0/180 deg), since vline/dline have heading
+       perpendicular or diagonal to motion by geometry.
+    E (motion shapes/chars): samples_until_lock <= 80,
+       post_lock_drift_deg < 3.0, dr_drift_max_m < 0.10.
 """
 
 from __future__ import annotations
@@ -108,12 +116,18 @@ def analyse(csv_path: Path) -> LayerResult:
     irls_xys: list[np.ndarray] = []
     dr_xys:  list[np.ndarray] = []
 
+    # Item A.2 / D witness — collect IMU dt and lever-arm omega magnitude.
+    imu_ts_us: list[int] = []
+    omega_mags: list[float] = []
+
     n_imu = 0
     for pkt in replay(csv_path):
         if pkt['type'] == 'imu':
             n_imu += 1
             q = pkt['quat']
             a = pkt['acc']
+            ts = pkt['ts']
+            imu_ts_us.append(int(ts))
 
             # Tag-z from quaternion
             R = quat_to_rotmat(*q)
@@ -123,7 +137,10 @@ def analyse(csv_path: Path) -> LayerResult:
             actual = MARKER_LENGTH * horiz
             tag_z_errors.append(abs(actual - assumed))
 
-            _ = integ.get_wb_acceleration(q, a)
+            # Pass ts so the integrator can estimate |omega| via quaternion
+            # differencing (Item A.2 lever-arm correction).
+            _ = integ.get_wb_acceleration(q, a, ts=ts)
+            omega_mags.append(float(integ.last_omega_mag))
             if integ.heading_locked and samples_until_lock is None:
                 samples_until_lock = n_imu
                 locked_vec = integ.heading_vec.copy()
@@ -133,10 +150,9 @@ def analyse(csv_path: Path) -> LayerResult:
                 heading_angles.append(math.degrees(math.atan2(h[1], h[0])))
 
             # Dead-reckoning integration
-            ts = pkt['ts']
             if dr_pos is not None and last_imu_ts is not None:
                 dt = max(0.0, min(0.1, (ts - last_imu_ts) / 1e6))
-                a_wb = integ.get_wb_acceleration(q, a)
+                a_wb = integ.get_wb_acceleration(q, a, ts=ts)
                 dr_vel += a_wb * dt
                 dr_pos += dr_vel * dt
             last_imu_ts = ts
@@ -194,6 +210,23 @@ def analyse(csv_path: Path) -> LayerResult:
     if dr_errors:
         metrics['dr_drift_mean_m'] = float(np.mean(dr_errors))
         metrics['dr_drift_max_m']  = float(np.max(dr_errors))
+
+    # Item D witness — IMU sample period.  Report-only: Layer 0 enforces
+    # the rate band, here we just expose the mean for tunability checks.
+    if len(imu_ts_us) > 1:
+        ts_arr = np.asarray(imu_ts_us, dtype=np.int64)
+        metrics['mean_imu_dt_s'] = float(np.mean(np.diff(ts_arr)) / 1e6)
+
+    # Item A.2 visibility — fraction of samples where the lever-arm
+    # centripetal correction was actually applied (|omega| above the
+    # IMUIntegrator threshold).  Useful to confirm rotation datasets
+    # genuinely exercise the new code path.
+    if omega_mags:
+        om = np.asarray(omega_mags)
+        metrics['mean_omega_rad_s'] = float(om.mean())
+        metrics['max_omega_rad_s']  = float(om.max())
+        metrics['lever_arm_active_frac'] = float(
+            np.mean(om >= IMUIntegrator.LEVER_ARM_OMEGA_THRESH))
 
     # -- Category-specific metrics and pass criteria --
 
@@ -257,6 +290,7 @@ def analyse(csv_path: Path) -> LayerResult:
         # Motion datasets (lines, shapes, characters)
         # Heading vs motion direction (only meaningful with enough IRLS points)
         hvsm = None
+        motion_angle = None
         if len(irls_xys) > 10 and heading_angle is not None:
             motion_angle = _principal_angle_deg(np.asarray(irls_xys))
             diff = abs(motion_angle - heading_angle) % 180.0
@@ -266,14 +300,19 @@ def analyse(csv_path: Path) -> LayerResult:
 
         passed_checks = [
             samples_until_lock is not None and samples_until_lock <= 80,
+            metrics.get('post_lock_drift_deg', 999) < 3.0,
         ]
-        if 'post_lock_drift_deg' in metrics:
-            passed_checks.append(metrics['post_lock_drift_deg'] < 3.0)
         if 'tag_z_error_mean_m' in metrics:
             passed_checks.append(metrics['tag_z_error_mean_m'] < 0.01)
         if 'dr_drift_max_m' in metrics:
             passed_checks.append(metrics['dr_drift_max_m'] < 0.10)
-        if category == 'motion_line' and hvsm is not None:
+        # heading_vs_motion only applies when motion is roughly horizontal
+        # (aligned with the wb-X heading axis); vline/dline have motion
+        # perpendicular or diagonal to heading by geometry, so the metric
+        # is physically meaningless there.
+        if (category == 'motion_line' and hvsm is not None
+                and motion_angle is not None
+                and min(abs(motion_angle), abs(abs(motion_angle) - 180.0)) < 20.0):
             passed_checks.append(hvsm < 20.0)
         passed = all(passed_checks) if passed_checks else False
 

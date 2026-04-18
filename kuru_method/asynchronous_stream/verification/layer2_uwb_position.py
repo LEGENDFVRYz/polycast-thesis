@@ -32,21 +32,28 @@ from config        import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
 from preprocessor  import UWBPreprocessor
 from fusion_engine import IRLSTrilateration
 from ground_truth  import get_truth
+from range_kf      import PerAnchorRangeKFBank
+from ekf_fusion    import TightlyCoupledEKF
 
 
 LAYER = 'layer2_uwb_position'
 
 
-_STATIONARY_STEMS = {'0s', '0s-', '1s', '1s-', '2s', '2s-', '3s', '3s-', '4s', '4s-',
-                     'NorthS', 'NorthS-', 'SouthS', 'SouthS-',
-                     'EastS', 'EastS-', 'WestS', 'WestS-',
-                     'clockwiseM', 'clockwiseM-', 'revclockwiseM', 'revclockwiseM-',
-                     'mix-mix_method', 'mix-mix_method-'}
+_POSITION_STEMS    = {'0s', '0s-', '1s', '1s-', '2s', '2s-',
+                      '3s', '3s-', '4s', '4s-'}
+_ORIENTATION_STEMS = {'NorthS', 'NorthS-', 'SouthS', 'SouthS-',
+                      'EastS', 'EastS-', 'WestS', 'WestS-'}
+_ROTATION_STEMS    = {'clockwiseM', 'clockwiseM-', 'revclockwiseM',
+                      'revclockwiseM-', 'mix-mix_method', 'mix-mix_method-'}
 
 
 def _classify(stem: str) -> str:
-    if stem in _STATIONARY_STEMS:
+    if stem in _POSITION_STEMS:
         return 'stationary'
+    if stem in _ORIENTATION_STEMS:
+        return 'orientation'
+    if stem in _ROTATION_STEMS:
+        return 'rotation'
     s = stem.lower()
     if s.startswith('hline'):
         return 'line_h'
@@ -78,6 +85,41 @@ def _solve_all(uwb_pkts) -> np.ndarray:
     out = []
     for pkt in uwb_pkts:
         _, w, des = pre.process(*pkt['dists'])
+        pos, _    = irls.solve(des, w)
+        out.append([float(pos[0]), float(pos[1])])
+    return np.asarray(out, dtype=float)
+
+
+def _solve_all_kf(uwb_pkts) -> np.ndarray:
+    """Item-B witness: route raw ranges through PerAnchorRangeKFBank
+    BEFORE the despike/preprocessor stage, then trilaterate.  The
+    despiker still runs (mirrors what the EKF sees through Item B)."""
+    pre  = UWBPreprocessor(offsets=tuple(UWB_OFFSETS))
+    bmin = [-0.30, -0.30, -0.50]
+    bmax = [float(np.max(ANCHORS[:, 0])) + 0.30,
+            float(np.max(ANCHORS[:, 1])) + 0.30,
+            1.00]
+    irls = IRLSTrilateration(ANCHORS, bmin, bmax, tag_z=MARKER_LENGTH)
+    bank = PerAnchorRangeKFBank(
+        n_anchors=4,
+        sigma_meas=TightlyCoupledEKF.SIGMA_UWB,
+    )
+
+    out = []
+    prev_ts_us = None
+    for pkt in uwb_pkts:
+        ts = pkt.get('ts')
+        if prev_ts_us is None or ts is None:
+            dt = 0.1
+        else:
+            dt_us = ts - prev_ts_us
+            dt = (dt_us / 1e6) if 0 < dt_us < 2_000_000 else 0.1
+        if ts is not None:
+            prev_ts_us = ts
+        # Pre-filter raw ranges with the per-anchor 1D KF.
+        kf_ranges = bank.step_all(dt, np.asarray(pkt['dists'], dtype=float))
+        d0, d1, d2, d3 = (float(x) for x in kf_ranges)
+        _, w, des = pre.process(d0, d1, d2, d3)
         pos, _    = irls.solve(des, w)
         out.append([float(pos[0]), float(pos[1])])
     return np.asarray(out, dtype=float)
@@ -121,12 +163,16 @@ def analyse(csv_path: Path) -> LayerResult:
     xy = _solve_all(uwb_pkts)
     xs, ys = xy[:, 0], xy[:, 1]
 
+    # Item B witness — same UWB packets, but raw ranges go through the
+    # per-anchor KF bank first.  Report-only RMS-vs-truth and bias.
+    xy_kf = _solve_all_kf(uwb_pkts)
+
     kind = _classify(stem)
     metrics: dict = {'n_points': int(len(xy)), 'kind': kind}
     notes: list[str] = []
     passed = True
 
-    if kind == 'stationary':
+    if kind in ('stationary', 'orientation', 'rotation'):
         truth = get_truth(stem)
         mean_xy = xy.mean(axis=0)
         std_xy  = xy.std(axis=0)
@@ -137,14 +183,28 @@ def analyse(csv_path: Path) -> LayerResult:
             'std':   [float(std_xy[0]),  float(std_xy[1])],
             'r95_m': r95,
         })
+
+        # KF-routed companion stats (report-only).
+        mean_xy_kf = xy_kf.mean(axis=0)
+        dr_kf      = np.linalg.norm(xy_kf - mean_xy_kf, axis=1)
+        r95_kf     = float(np.percentile(dr_kf, 95)) if len(dr_kf) > 5 else 0.0
+        metrics['kf_r95_m'] = r95_kf
+
+        bias_lim, r95_lim = 0.05, 0.08
         if truth is not None:
             bias = float(np.linalg.norm(mean_xy - np.array(truth)))
             metrics['truth'] = truth
             metrics['bias_m'] = bias
-            passed = bias < 0.05 and r95 < 0.08
+            metrics['kf_irls_rms_m'] = float(
+                np.sqrt(np.mean(np.sum(
+                    (xy_kf - np.asarray(truth)) ** 2, axis=1))))
+            metrics['irls_rms_m'] = float(
+                np.sqrt(np.mean(np.sum(
+                    (xy - np.asarray(truth)) ** 2, axis=1))))
+            passed = bias < bias_lim and r95 < r95_lim
         else:
             notes.append('no ground truth -- passed-criterion uses R95 only')
-            passed = r95 < 0.08
+            passed = r95 < r95_lim
 
     elif kind.startswith('line'):
         direction, centroid, rms_perp = _fit_line(xs, ys)

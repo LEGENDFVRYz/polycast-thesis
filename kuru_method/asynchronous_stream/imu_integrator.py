@@ -19,11 +19,16 @@ Body-frame axis mapping to whiteboard frame
     body Y  ->  X_wb  (horizontal across whiteboard, positive right)
     body Z  ->  Y_wb  (vertical on whiteboard, positive up)
 
-Lever arm note
---------------
-    The 8 cm offset (UWB tag -> IMU) is entirely along the marker's long
-    axis = Z_wb (board normal).  For 2D (X, Y) tracking this contributes
-    zero XY error — no lever arm correction is required.
+Lever arm note (Item A.2)
+-------------------------
+    The 8 cm offset (UWB tag -> IMU) lies along the marker's long axis.
+    In neutral pose this is exactly Z_wb (board normal) and contributes
+    zero XY error.  For a tilted marker the offset rotates into the
+    whiteboard XY plane, so a centripetal correction
+        a_tag = a_imu + omega x (omega x r_tag/imu)
+    (Groves Eq 14.59) is applied when |omega| exceeds
+    LEVER_ARM_OMEGA_THRESH (default 1 rad/s).  Below that threshold the
+    correction is sub-noise and the legacy a_imu is returned unchanged.
 
 BNO085 reports used
 -------------------
@@ -52,7 +57,10 @@ import numpy as np
 
 
 # -- Physical constants -----------------------------------------------------
-LEVER_ARM_M = 0.09   # m — UWB tag to IMU offset. Zero XY effect.
+# Tag (s=0.21 m) -> IMU (s=0.13 m) along marker axis = 0.08 m magnitude.
+# (See LEVER_ARM_R_M on the class for the value actually used by the
+# centripetal correction.)
+LEVER_ARM_M = 0.08   # m — |UWB tag - IMU| along the marker long axis.
 
 
 def quat_to_rotmat(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
@@ -71,6 +79,23 @@ def quat_to_rotmat(qx: float, qy: float, qz: float, qw: float) -> np.ndarray:
     ], dtype=float)
 
 
+def _quat_mul(qa, qb):
+    """Hamilton quaternion product: returns qa * qb in [x, y, z, w] order."""
+    ax, ay, az, aw = qa[0], qa[1], qa[2], qa[3]
+    bx, by, bz, bw = qb[0], qb[1], qb[2], qb[3]
+    return np.array([
+        aw*bx + ax*bw + ay*bz - az*by,
+        aw*by - ax*bz + ay*bw + az*bx,
+        aw*bz + ax*by - ay*bx + az*bw,
+        aw*bw - ax*bx - ay*by - az*bz,
+    ])
+
+
+def _quat_conj(q):
+    """Conjugate of a unit quaternion in [x, y, z, w] order."""
+    return np.array([-q[0], -q[1], -q[2], q[3]])
+
+
 class IMUIntegrator:
     """
     Converts BNO085 (quaternion + linear accel) -> whiteboard 2D acceleration.
@@ -85,7 +110,7 @@ class IMUIntegrator:
     ------------
     HEADING_INIT_SAMPLES (default 50):
         Samples averaged before locking the board heading.
-        50 samples @ 100 Hz = 500 ms.  Increase to 80 if the first
+        50 samples @ 200 Hz = 250 ms.  Increase to 80 if the first
         packets have erratic marker orientation.
         Call reset_heading() to re-estimate (e.g. after a board move).
 
@@ -101,9 +126,18 @@ class IMUIntegrator:
     """
 
     # -- Tuning -------------------------------------------------------------
-    HEADING_INIT_SAMPLES = 50    # samples before heading lock (500ms at 100Hz)
+    HEADING_INIT_SAMPLES = 50    # samples before heading lock (250ms at 200Hz)
     ACC_DEADBAND_MS2     = 0.08  # m/s^2 — sub-noise floor (was 0.02)
     ACC_CLAMP_MS2        = 20.0  # m/s^2 — glitch hard-clamp
+
+    # Lever-arm correction (Item A.2, Groves Eq 14.59)
+    # a_tag = a_imu + omega x (omega x r_tag/imu)   [centripetal, 1st order]
+    # Only applied when |omega| exceeds this threshold; for writing motion
+    # omega is small and the correction is sub-noise.  Toggling by threshold
+    # keeps the data path identical to pre-upgrade behaviour during normal
+    # writing, while still catching aggressive twists/rotations.
+    LEVER_ARM_OMEGA_THRESH = 1.0   # rad/s — below this, correction is skipped
+    LEVER_ARM_R_M          = 0.08  # m — |r_tag/imu| along marker axis (tag > IMU)
 
     # Heading drift leash: the heading EMA is bounded within this many
     # degrees of the initial lock direction.  During rotation-in-place the
@@ -123,14 +157,25 @@ class IMUIntegrator:
         self._locked_heading = np.array([1.0, 0.0])  # snapshot at lock time
         self._init_headings  = []
 
+        # Lever-arm / angular-rate tracking.  ω is estimated from quaternion
+        # differentiation.  When the user does not call with a timestamp, the
+        # correction is skipped.
+        self._prev_q          = None   # quaternion from the last call
+        self._prev_ts         = None   # micros() timestamp from the last call
+        self._last_omega_mag  = 0.0    # |ω| in rad/s, exposed for verification
+
     # -- public API ---------------------------------------------------------
 
-    def get_wb_acceleration(self, q, a_body_raw):
+    def get_wb_acceleration(self, q, a_body_raw, ts=None):
         """
         Parameters
         ----------
         q          : array-like (4,) [qx, qy, qz, qw]
         a_body_raw : array-like (3,) [ax, ay, az]  body-frame linear accel (m/s^2)
+        ts         : int or None  micros() timestamp (Item A.2 lever-arm).
+                     Required to estimate ω and apply the centripetal
+                     correction.  When None, the lever arm is ignored
+                     (legacy pre-Item-A behaviour).
 
         Returns
         -------
@@ -145,12 +190,14 @@ class IMUIntegrator:
 
         a = np.clip(a, -self.ACC_CLAMP_MS2, self.ACC_CLAMP_MS2)
         if np.linalg.norm(a) < self.ACC_DEADBAND_MS2:
+            self._update_omega_history(q, ts)
             return np.zeros(2)
 
         R = quat_to_rotmat(*q)
 
         if not self._heading_locked:
             self._accumulate_heading(R)
+            self._update_omega_history(q, ts)
             return np.array([float(a[1]), float(a[2])])  # fallback: body_Y, body_Z
 
         # Heading adaptation (EMA, alpha=0.01 ~ 100-sample time constant)
@@ -173,7 +220,56 @@ class IMUIntegrator:
         a_world = R @ a
         wb_ay   = float(a_world[2])                              # world Z = up = wb Y
         wb_ax   = float(np.dot(a_world[:2], self._heading_vec))  # horizontal board axis
+
+        # -- Lever-arm centripetal correction (Item A.2, Groves Eq 14.59) ---
+        # a_tag = a_imu + omega x (omega x r_tag/imu).  The first-order
+        # angular-acceleration term (alpha x r) is omitted: alpha is even
+        # smaller than omega for writing motion and would just add noise.
+        omega_world = self._estimate_omega_world(q, ts)
+        if omega_world is not None and self._last_omega_mag >= self.LEVER_ARM_OMEGA_THRESH:
+            r_world = self.LEVER_ARM_R_M * R[:, 0]   # IMU -> tag in world
+            a_centrip_world = np.cross(omega_world, np.cross(omega_world, r_world))
+            wb_ax += float(np.dot(a_centrip_world[:2], self._heading_vec))
+            wb_ay += float(a_centrip_world[2])
+
         return np.array([wb_ax, wb_ay])
+
+    def get_marker_axis_wb(self, q) -> np.ndarray:
+        """
+        Return the marker long-axis unit vector (tip -> rear) in WHITEBOARD
+        frame, computed from the current quaternion and the locked heading.
+
+        Body-frame convention (see module docstring): body-X maps to Z_wb
+        (board normal). So the marker long axis in body frame is e_b = (1,0,0).
+
+        The vector in world frame is the first column of R(q).  We then
+        project it onto the whiteboard axes:
+            wb-X direction in world horiz. plane = self._heading_vec
+            wb-Y direction in world frame        = (0, 0, 1)  (up)
+            wb-Z direction (board normal)        = heading rotated 90 deg
+
+        Before heading is locked, we return the neutral-pose value (0, 0, 1)
+        (board normal).  This matches the pre-Item-A legacy assumption that
+        tag_z = MARKER_LENGTH and keeps cold-start behaviour unchanged.
+        """
+        if not self._heading_locked:
+            return np.array([0.0, 0.0, 1.0])
+
+        q = np.asarray(q, dtype=float)
+        if abs(q[3] - 1.0) < 0.01 and np.linalg.norm(q[:3]) < 0.01:
+            return np.array([0.0, 0.0, 1.0])
+
+        R        = quat_to_rotmat(*q)
+        e_world  = R[:, 0]            # body-X in world frame
+        h        = self._heading_vec  # wb-X in world horizontal plane
+        perp     = np.array([-h[1], h[0]])  # wb-Z in world horizontal plane
+
+        e_wb_x = e_world[0] * h[0]    + e_world[1] * h[1]
+        e_wb_y = e_world[2]
+        e_wb_z = e_world[0] * perp[0] + e_world[1] * perp[1]
+        v      = np.array([e_wb_x, e_wb_y, e_wb_z])
+        n      = float(np.linalg.norm(v))
+        return v / n if n > 1e-9 else np.array([0.0, 0.0, 1.0])
 
     def reset_heading(self):
         """Re-trigger heading estimation after a board or sensor reposition."""
@@ -191,7 +287,48 @@ class IMUIntegrator:
     def heading_vec(self) -> np.ndarray:
         return self._heading_vec.copy()
 
+    @property
+    def last_omega_mag(self) -> float:
+        """|ω| in rad/s from the most recent quaternion pair (Item A.2)."""
+        return float(self._last_omega_mag)
+
     # -- internal -----------------------------------------------------------
+
+    def _update_omega_history(self, q: np.ndarray, ts):
+        """Refresh the previous-quaternion / -timestamp baseline only."""
+        if ts is None:
+            return
+        self._prev_q  = q.copy()
+        self._prev_ts = ts
+
+    def _estimate_omega_world(self, q: np.ndarray, ts):
+        """
+        Estimate angular velocity in WORLD frame (rad/s) from the quaternion
+        delta over the last sample interval, then update the baseline.
+
+        Returns
+        -------
+        omega_world : np.ndarray (3,) or None  (None if no valid baseline)
+        """
+        if ts is None or self._prev_q is None or self._prev_ts is None:
+            self._update_omega_history(q, ts)
+            return None
+
+        dt_us = ts - self._prev_ts
+        if not (0 < dt_us < 200_000):   # > 200 ms gap = treat as restart
+            self._update_omega_history(q, ts)
+            return None
+
+        dt = dt_us / 1_000_000.0
+        # World-frame relative rotation: dq_w = q * conj(q_prev)
+        dq = _quat_mul(q, _quat_conj(self._prev_q))
+        # Choose the shortest path (avoid the antipodal flip)
+        if dq[3] < 0.0:
+            dq = -dq
+        omega_world = 2.0 * dq[:3] / dt
+        self._last_omega_mag = float(np.linalg.norm(omega_world))
+        self._update_omega_history(q, ts)
+        return omega_world
 
     def _accumulate_heading(self, R: np.ndarray):
         body_y_world = R[:, 1]         # body-Y direction in world frame

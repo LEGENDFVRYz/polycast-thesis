@@ -7,13 +7,27 @@ Metrics per dataset
     imu_rate_hz, uwb_rate_hz            (median dt -> rate)
     imu_loss_pct, uwb_loss_pct          (sequence-number gaps)
     imu_dt_spike_ms, uwb_dt_spike_ms    (worst dt gap)
+    imu_rate_at_200hz_target            (Item D witness, report-only)
 
-Pass criteria (from plan)
--------------------------
+Pass criteria
+-------------
     loss < 2 % per stream
-    80 Hz <= IMU rate <= 120 Hz
+    IMU rate in [80, 120] Hz (legacy capture) OR [190, 210] Hz (post Item D)
     8 Hz  <= UWB rate <= 12 Hz
     no dt spike > 200 ms
+
+Note on paired-loss / CAL round-trip
+------------------------------------
+The receiver flattens BNO085 ROTATION_VECTOR and LINEAR_ACCELERATION
+into a single CSV row (`I,seq,qx,qy,qz,qw,ax,ay,az,force,ts`), so
+paired-arrival loss is implicit -- the sender only emits a CSV row
+when both reports were available within the pairing window.  The
+`imu_loss_pct` metric (sequence-gap based) is therefore the right
+proxy for paired-packet loss in the CSV pipeline.
+
+The `CAL:OK` round-trip check from the original plan requires live
+hardware and is intentionally NOT performed here.  Run it manually via
+`python imu_calibrate.py` against the connected receiver.
 
 Plot: two histograms of dt (IMU and UWB) for the dataset.
 """
@@ -81,6 +95,11 @@ def analyse(csv_path: Path) -> LayerResult:
         t1 = max(imu_ts[-1], uwb_ts[-1])
         duration_s = (t1 - t0) / 1e6
 
+    # Item D target: ROTATION_VECTOR + LINEAR_ACCELERATION at 200 Hz paired
+    # gives ~200 Hz combined CSV rate.  Tolerated 5% per the plan.
+    imu_rate = imu_stats['rate_hz']
+    in_legacy_band = 80.0 <= imu_rate <= 120.0
+    in_200hz_band  = 190.0 <= imu_rate <= 210.0
     metrics.update({
         'duration_s':       duration_s,
         'imu_rate_hz':      imu_stats['rate_hz'],
@@ -89,13 +108,20 @@ def analyse(csv_path: Path) -> LayerResult:
         'uwb_loss_pct':     uwb_stats['loss_pct'],
         'imu_dt_spike_ms':  imu_stats['dt_spike_ms'],
         'uwb_dt_spike_ms':  uwb_stats['dt_spike_ms'],
+        'imu_rate_at_200hz_target': bool(in_200hz_band),
     })
+    if in_legacy_band and not in_200hz_band:
+        notes.append('IMU stream at legacy 100 Hz -- pre-Item-D capture. '
+                     'Re-record with sender/imu_module.cpp at 5000us interval '
+                     'to exercise the 200 Hz path.')
 
-    # Pass criteria
+    # Pass criteria.  IMU rate accepted in either the legacy 100 Hz band
+    # or the post-Item-D 200 Hz band -- bar is unchanged for legacy data,
+    # tightened to ±5% for 200 Hz captures.
     passed = (
         imu_stats['loss_pct']    < 2.0  and
         uwb_stats['loss_pct']    < 2.0  and
-        80.0 <= imu_stats['rate_hz'] <= 120.0 and
+        (in_legacy_band or in_200hz_band) and
         8.0  <= uwb_stats['rate_hz'] <= 12.0  and
         imu_stats['dt_spike_ms'] < 200.0 and
         uwb_stats['dt_spike_ms'] < 500.0

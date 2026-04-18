@@ -3,7 +3,7 @@ main_ekf.py  —  PolyCast EKF Live Visualiser (Async Stream)
 ============================================================
 Event-driven sensor fusion visualiser for the decoupled async stream.
 
-    IMU packet -> EKF predict  (~100 Hz)
+    IMU packet -> EKF predict  (~200 Hz)
     UWB packet -> EKF update   (~10 Hz)
 
 Display:
@@ -26,6 +26,7 @@ Configuration
     All tuning constants live in ekf_fusion.py and imu_integrator.py.
 """
 
+import argparse
 import sys
 import time
 import numpy as np
@@ -36,24 +37,29 @@ from data_parser    import AsyncDataParser
 from preprocessor   import UWBPreprocessor, IMUPreprocessor
 from ekf_fusion     import AsyncEKFFusionEngine
 from trail_smoother import TrailSmoother
+from imu_calibrate  import trigger_dcd_save
 
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
-DATASET_FILENAME = 'datasets_a3_ls/SQUARE-.csv'   # '' = live serial;  'datasets/data.csv' = playback
+DATASET_FILENAME = ''   # '' = live serial;  'datasets/data.csv' = playback
 
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier
 DIAG_INTERVAL_S  = 1.0   # console diagnostic print interval
 
-# Trail subsampling: at 100 Hz IMU, record every Nth predict to avoid
-# overwhelming matplotlib.  3 = ~33 Hz display rate.
+# Nominal IMU rate — used for display-rate reporting only; dt in the EKF
+# comes from packet timestamps, not from this constant.
+IMU_RATE_HZ      = 200
+
+# Trail subsampling: at 200 Hz IMU, record every Nth predict to avoid
+# overwhelming matplotlib.  3 = ~67 Hz display rate.
 TRAIL_SUBSAMPLE  = 3
 
 # CSV playback: packets to process per animation frame.
-# 10 packets at ~10ms each = ~100ms real data per 20ms frame = ~5x speed.
-CSV_PACKETS_PER_FRAME = 10
+# At 200 Hz IMU (~5 ms cadence), 20 packets per 20 ms frame = ~5x speed.
+CSV_PACKETS_PER_FRAME = 20
 
 
 # -- Global state -----------------------------------------------------------
@@ -149,7 +155,13 @@ def update(frame):
             if pos is None:
                 continue
 
-            _last_pos = pos
+            # Pen-tip position (Item A): subtract the tip-to-tag offset
+            # projected onto the whiteboard plane.  Falls back to the tag
+            # position before heading lock.
+            tip = engine.tip_position
+            draw_pt = tip if tip is not None else pos
+
+            _last_pos = draw_pt
             _last_vel = vel
 
             # Trail management (subsampled)
@@ -158,7 +170,7 @@ def update(frame):
                 _imu_subsample = 0
 
                 if is_writing:
-                    smoother.push(pos[0], pos[1])
+                    smoother.push(draw_pt[0], draw_pt[1])
                     sx, sy = smoother.get()
                     draw_x.append(sx)
                     draw_y.append(sy)
@@ -170,8 +182,8 @@ def update(frame):
                         draw_x.append(float('nan'))
                         draw_y.append(float('nan'))
                         smoother.reset()
-                    lift_x.append(pos[0])
-                    lift_y.append(pos[1])
+                    lift_x.append(draw_pt[0])
+                    lift_y.append(draw_pt[1])
                     _trim(lift_x, 100)
                     _trim(lift_y, 100)
 
@@ -183,15 +195,18 @@ def update(frame):
             filtered, weights, despiked = uwb_cleaner.process(*raw)
 
             pos, vel, accepted, rejected = engine.process_uwb(
-                despiked, weights)
+                despiked, weights, ts=pkt.get('ts'))
 
             if pos is not None:
-                _last_pos = pos
+                # Tip-aware drawing point (Item A) — see IMU branch above.
+                tip = engine.tip_position
+                _last_pos = tip if tip is not None else pos
                 _last_vel = vel
 
-                # Feed back predictions for NLOS tracking
+                # Feed back predictions for NLOS tracking using the tilt-
+                # aware tag z (engine.tag_z_wb), not the static MARKER_LENGTH.
                 uwb_cleaner.update_predictions(
-                    np.append(pos, engine.ekf._tag_z), engine.anchors)
+                    np.append(pos, engine.tag_z_wb), engine.anchors)
 
             # Mark rejected anchors by their known positions
             for i in rejected:
@@ -263,8 +278,22 @@ def on_key(event):
 
 
 # -- Entry point ------------------------------------------------------------
+def _parse_cli():
+    p = argparse.ArgumentParser(description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--calibrate", action="store_true",
+                   help="Send CAL command to persist BNO085 DCD, then exit "
+                        "(Item D — sh2_saveDcdNow on the marker).")
+    return p.parse_args()
+
+
 def main():
     global artists, line_draw, scat_lift, scat_rej, dot_cur, vel_arrow
+
+    args = _parse_cli()
+    if args.calibrate:
+        rc = trigger_dcd_save()
+        sys.exit(0 if rc == 0 else 1)
 
     if not parser.connect():
         sys.exit(1)
@@ -315,7 +344,7 @@ def main():
     mode = 'CSV Playback' if parser.mode == 'csv' else 'Live Serial'
     print(f'[EKF] Running in {mode} mode — Async Stream')
     print(f'[EKF] Trail subsample: every {TRAIL_SUBSAMPLE} IMU predicts '
-          f'(~{100/TRAIL_SUBSAMPLE:.0f} Hz display)')
+          f'(~{IMU_RATE_HZ/TRAIL_SUBSAMPLE:.0f} Hz display)')
     print(f'[EKF] Keys: V/C/R, Q to quit')
 
     plt.show()

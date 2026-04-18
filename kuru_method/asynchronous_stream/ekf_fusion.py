@@ -13,13 +13,13 @@ State vector
 
 Event-driven processing (replaces batched update)
 ---------------------------------------------------
-    IMU packet arrives (~100 Hz)  ->  EKF predict step
+    IMU packet arrives (~200 Hz)  ->  EKF predict step
     UWB packet arrives (~10 Hz)   ->  EKF measurement update
 
     Each packet carries its own micros() timestamp for exact dt computation.
     No stale UWB detection needed — each UWB packet is inherently fresh.
 
-Predict step  (IMU-driven, ~100 Hz, dt from timestamps)
+Predict step  (IMU-driven, ~200 Hz, dt from timestamps)
 -------------------------------------------------------
     Input: a_wb = [ax_wb, ay_wb]  from IMUIntegrator
     Same constant-acceleration model as batched version.
@@ -32,9 +32,15 @@ Update step  (UWB-driven, ~10 Hz, per anchor, scalar measurement)
 """
 
 import numpy as np
-from config import ANCHORS, MARKER_LENGTH
+from config import ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M
 from imu_integrator import IMUIntegrator, quat_to_rotmat
 from force_detector import ForceContactDetector
+from range_kf       import PerAnchorRangeKFBank
+
+
+# Neutral-pose marker axis in whiteboard frame: board normal (wb-Z = +1).
+# Used as a fallback when no quaternion-derived axis is supplied.
+_NEUTRAL_MARKER_AXIS_WB = np.array([0.0, 0.0, 1.0])
 
 
 # -------------------------------------------------------------------------
@@ -82,7 +88,7 @@ class TightlyCoupledEKF:
 
     # Zero-velocity update (ZUPT)
     ZUPT_ACCEL_THRESH = 0.10   # m/s^2
-    ZUPT_WINDOW       = 3      # consecutive low-accel samples to trigger
+    ZUPT_WINDOW       = 6      # 6 samples @ 200 Hz = 30 ms of stillness
     ZUPT_R_VEL        = 0.0005 # (m/s)^2
 
     # Speed above which bias estimation is frozen during a UWB update
@@ -92,8 +98,10 @@ class TightlyCoupledEKF:
 
     def __init__(self, anchors: np.ndarray, tag_z: float = MARKER_LENGTH):
         self.anchors  = np.asarray(anchors, dtype=float)  # (N, 3)
+        # _tag_z is kept only as a legacy fallback (pre-quaternion cold-start,
+        # IRLS, NLOS prediction). The real tag Z is computed per-update from
+        # the marker-axis unit vector in whiteboard frame.
         self._tag_z   = tag_z
-        self._dz_sq   = (tag_z - self.anchors[:, 2]) ** 2  # pre-computed
 
         self._x    = None   # state vector [px, py, vx, vy, bax, bay]
         self._P    = None   # 6x6 covariance
@@ -119,6 +127,18 @@ class TightlyCoupledEKF:
         # RTS smoother history (offline CSV mode only)
         self.record_history   = False
         self._history         = []
+
+        # Item B: per-anchor 1D range Kalman pre-filter (Zou §3.1).
+        # Item C: same bank also accepts EKF posterior range as feedback.
+        self._range_bank      = PerAnchorRangeKFBank(
+            n_anchors      = len(self.anchors),
+            sigma_meas     = self.SIGMA_UWB,
+            sigma_feedback = 2.0 * self.SIGMA_UWB,
+        )
+        self._last_uwb_ts     = None   # micros() of previous UWB packet
+        # Latest (raw, filtered) ranges for verification logging.
+        self._last_raw_ranges      = np.full(len(self.anchors), np.nan)
+        self._last_filtered_ranges = np.full(len(self.anchors), np.nan)
 
     # -- predict step (IMU) -------------------------------------------------
 
@@ -243,7 +263,8 @@ class TightlyCoupledEKF:
 
     # -- update step (UWB) --------------------------------------------------
 
-    def update_uwb(self, raw_dists, quality_weights=None):
+    def update_uwb(self, raw_dists, quality_weights=None, marker_axis_wb=None,
+                   ts=None):
         """
         UWB range measurement update (tightly coupled, one anchor at a time).
 
@@ -251,6 +272,13 @@ class TightlyCoupledEKF:
         ----------
         raw_dists       : array-like (4,)  UWB distances after offset correction (m)
         quality_weights : array-like (4,)  per-anchor quality [0.1, 1.0] or None
+        marker_axis_wb  : array-like (3,)  unit vector of the marker long axis
+                                           in WHITEBOARD frame (tip -> rear).
+                                           If None, assumes neutral pose
+                                           (perpendicular to board).  The
+                                           tag's wb-Z is derived from this
+                                           so tilted markers no longer bias
+                                           the projected range (Item A).
 
         Returns
         -------
@@ -264,6 +292,30 @@ class TightlyCoupledEKF:
         if quality_weights is None:
             quality_weights = [1.0] * n_anchors
 
+        # Marker axis in whiteboard frame -> current tag z (on-board tip).
+        if marker_axis_wb is None:
+            e_wb = _NEUTRAL_MARKER_AXIS_WB
+        else:
+            e_wb = np.asarray(marker_axis_wb, dtype=float)
+        tag_z_wb = TIP_OFFSET_FROM_TAG_M * float(e_wb[2])
+
+        # -- Item B: per-anchor 1D Kalman pre-filter on the raw ranges ----
+        # Compute dt between successive UWB packets; default to 0.1 s on
+        # the first packet (~10 Hz nominal cycle).
+        if ts is not None and self._last_uwb_ts is not None:
+            dt_us = ts - self._last_uwb_ts
+            dt = dt_us / 1_000_000.0 if 0 < dt_us < 2_000_000 else 0.1
+        else:
+            dt = 0.1
+        if ts is not None:
+            self._last_uwb_ts = ts
+
+        raw_arr = np.asarray(raw_dists, dtype=float)
+        filtered_ranges = self._range_bank.step_all(dt, raw_arr)
+        # Cache for verification / logging consumers.
+        self._last_raw_ranges      = raw_arr.copy()
+        self._last_filtered_ranges = filtered_ranges.copy()
+
         accepted, rejected = [], []
         px, py = self._x[0], self._x[1]
         n_currently_muted = int(np.sum(self._mute_remain > 0))
@@ -275,30 +327,30 @@ class TightlyCoupledEKF:
                 rejected.append(i)
                 continue
 
-            d_raw = float(raw_dists[i])
+            # Use the Item-B-filtered range for the EKF measurement.  Raw
+            # is preserved in self._last_raw_ranges for verification logs.
+            d_raw = float(filtered_ranges[i])
             qw    = float(quality_weights[i])
 
             if not np.isfinite(d_raw) or d_raw < 0.05:
                 continue
 
-            ax_i, ay_i = self.anchors[i, 0], self.anchors[i, 1]
-            dz_sq_i    = float(self._dz_sq[i])
+            ax_i, ay_i, az_i = (self.anchors[i, 0],
+                                self.anchors[i, 1],
+                                self.anchors[i, 2])
 
-            # 2D-projected measurement (eliminates z ambiguity)
-            d2d_sq = d_raw**2 - dz_sq_i
-            if d2d_sq <= 0:
-                continue
-            d2d_meas = np.sqrt(d2d_sq)
-
-            # Predicted 2D distance from current state
+            # Predicted 3D range from current state (tilt-aware):
+            #   p_tag_wb = [px, py, 0.21 * e_wb_z]
+            #   r3d      = || p_tag_wb - a_i ||
             dx = px - ax_i
             dy = py - ay_i
-            r2d_pred = np.sqrt(dx*dx + dy*dy)
-            if r2d_pred < 1e-6:
+            dz = tag_z_wb - az_i
+            r3d_pred = np.sqrt(dx*dx + dy*dy + dz*dz)
+            if r3d_pred < 1e-6:
                 continue
 
-            # Innovation (scalar)
-            innov = d2d_meas - r2d_pred
+            # Innovation against the raw 3D range (no more 2D projection).
+            innov = d_raw - r3d_pred
 
             # -- Hard innovation clamp (state-independent safety net) ------
             if abs(innov) > self.MAX_INNOV_M:
@@ -314,7 +366,8 @@ class TightlyCoupledEKF:
                 continue
 
             # Measurement Jacobian H (1x6)
-            H = np.array([[dx / r2d_pred, dy / r2d_pred,
+            # h(x) = sqrt(dx^2 + dy^2 + dz^2); dz is a known input per update.
+            H = np.array([[dx / r3d_pred, dy / r3d_pred,
                            0.0, 0.0, 0.0, 0.0]])
 
             # -- Chi-squared gate: use TIGHT fixed R (not quality-weighted) -
@@ -371,6 +424,30 @@ class TightlyCoupledEKF:
             accepted.append(i)
             self._n_uwb_accepted += 1
 
+        # -- Item C: feedback correction (Zou §3.3) -----------------------
+        # Push the EKF posterior 3D range back into each accepted anchor's
+        # 1D Kalman as a soft prior.  Guardrails: no anchor in active mute,
+        # no current outage, speed below the writing limit.  When any
+        # check fails we skip — feedback only when the EKF is healthy.
+        speed = float(np.linalg.norm(self._x[2:4]))
+        feedback_ok = (
+            accepted
+            and int(np.sum(self._mute_remain > 0)) == 0
+            and self._consec_outage == 0
+            and speed < self.MAX_WRITING_SPEED
+        )
+        if feedback_ok:
+            px_post, py_post = self._x[0], self._x[1]
+            for i in accepted:
+                ax_i, ay_i, az_i = (self.anchors[i, 0],
+                                    self.anchors[i, 1],
+                                    self.anchors[i, 2])
+                dx = px_post - ax_i
+                dy = py_post - ay_i
+                dz = tag_z_wb - az_i
+                r_post = float(np.sqrt(dx*dx + dy*dy + dz*dz))
+                self._range_bank[i].update_feedback(r_post)
+
         # Update outage counter
         if accepted:
             self._consec_outage = 0
@@ -394,7 +471,40 @@ class TightlyCoupledEKF:
 
     @property
     def position(self) -> np.ndarray:
+        """2D UWB tag position on the whiteboard (m). See get_tip_position()
+        for the pen-tip position, which is what matters for reconstruction."""
         return self._x[:2].copy() if self._x is not None else None
+
+    def get_tip_position(self, marker_axis_wb=None) -> np.ndarray:
+        """
+        Pen-tip 2D position on the whiteboard.
+
+        Geometry: p_tip = p_tag - TIP_OFFSET_FROM_TAG_M * e_w (tip-to-rear unit
+        vector), so subtract the 2D component of the marker axis projected
+        onto the whiteboard face.
+
+        Parameters
+        ----------
+        marker_axis_wb : array-like (3,) or None
+            Marker long-axis unit vector in whiteboard frame (from
+            IMUIntegrator.get_marker_axis_wb).  If None, uses neutral pose
+            (tip directly beneath tag on the board face).
+
+        Returns
+        -------
+        np.ndarray (2,) tip position, or None if EKF not initialised.
+        """
+        if self._x is None:
+            return None
+        e_wb = (_NEUTRAL_MARKER_AXIS_WB if marker_axis_wb is None
+                else np.asarray(marker_axis_wb, dtype=float))
+        return self._x[:2] - TIP_OFFSET_FROM_TAG_M * e_wb[:2]
+
+    def get_tag_z_wb(self, marker_axis_wb=None) -> float:
+        """Whiteboard-frame z of the UWB tag, assuming the tip is on the board."""
+        e_wb = (_NEUTRAL_MARKER_AXIS_WB if marker_axis_wb is None
+                else np.asarray(marker_axis_wb, dtype=float))
+        return TIP_OFFSET_FROM_TAG_M * float(e_wb[2])
 
     @property
     def velocity(self) -> np.ndarray:
@@ -496,6 +606,12 @@ class AsyncEKFFusionEngine:
         self._is_writing  = False
         self._prev_writing = False
 
+        # Latest marker-axis unit vector in whiteboard frame (tip -> rear).
+        # Updated every IMU packet; consumed by UWB update and tip-position
+        # readout so the 3D measurement residual stays tilt-correct.
+        self._latest_marker_axis_wb = _NEUTRAL_MARKER_AXIS_WB.copy()
+        self._latest_quat           = None
+
         # Cold-start IRLS (reuses existing solver)
         from fusion_engine import IRLSTrilateration
         _bmin = [-0.30, -0.30, -0.50]
@@ -506,7 +622,7 @@ class AsyncEKFFusionEngine:
         # Robust cold-start: collect several IRLS solutions and use their
         # median.  A single IRLS packet can land way outside the board.
         self._cold_buf       = []
-        self._COLD_N         = 5     # packets to median-average
+        self._COLD_N         = 3     # packets to median-average (was 5)
         self._COLD_MARGIN    = 0.25  # m — reject IRLS fixes outside board+margin
 
         # IRLS speed tracking (for LIFTED_VEL_DAMP gating)
@@ -536,7 +652,7 @@ class AsyncEKFFusionEngine:
             return None, None, self._is_writing
 
         # Compute dt from per-packet microsecond timestamps
-        dt = 0.010   # default 10ms (100 Hz)
+        dt = 0.005   # default 5ms (200 Hz) — only used if ts is absent
         ts = imu_pkt.get('ts')
         if ts is not None and self._last_imu_ts is not None:
             dt_us = ts - self._last_imu_ts
@@ -545,8 +661,16 @@ class AsyncEKFFusionEngine:
         if ts is not None:
             self._last_imu_ts = ts
 
-        # Body -> whiteboard acceleration
-        a_wb = self._imu.get_wb_acceleration(imu_pkt['quat'], imu_pkt['acc'])
+        # Body -> whiteboard acceleration (with lever-arm correction when
+        # |omega| crosses the threshold; ts enables omega estimation).
+        a_wb = self._imu.get_wb_acceleration(
+            imu_pkt['quat'], imu_pkt['acc'], ts=imu_pkt.get('ts'))
+
+        # Cache latest quaternion and marker-axis direction so the UWB update
+        # (arriving asynchronously, ~10x slower) can reuse the freshest attitude.
+        self._latest_quat           = np.asarray(imu_pkt['quat'], dtype=float)
+        self._latest_marker_axis_wb = self._imu.get_marker_axis_wb(
+            self._latest_quat)
 
         # Contact detection
         state, _ = self._contact.process(imu_pkt['force'])
@@ -566,7 +690,7 @@ class AsyncEKFFusionEngine:
 
     # -- UWB update ---------------------------------------------------------
 
-    def process_uwb(self, filtered_dists, quality_weights=None):
+    def process_uwb(self, filtered_dists, quality_weights=None, ts=None):
         """
         UWB measurement update.
 
@@ -574,6 +698,9 @@ class AsyncEKFFusionEngine:
         ----------
         filtered_dists  : tuple (d0, d1, d2, d3) — preprocessed (despiked) distances
         quality_weights : tuple (w0, w1, w2, w3) — per-anchor quality or None
+        ts              : int or None — micros() timestamp from the UWB
+                          packet.  Used by the Item-B per-anchor 1D range
+                          Kalman to compute dt between UWB cycles.
 
         Returns
         -------
@@ -605,7 +732,12 @@ class AsyncEKFFusionEngine:
                 return (np.array([px, py]), np.zeros(2), [], [])
 
         # -- Warm: EKF update -----------------------------------------------
-        accepted, rejected = self._ekf.update_uwb(filtered_dists, quality_weights)
+        accepted, rejected = self._ekf.update_uwb(
+            filtered_dists,
+            quality_weights,
+            marker_axis_wb=self._latest_marker_axis_wb,
+            ts=ts,
+        )
 
         # Update IRLS speed for LIFTED_VEL_DAMP gating
         pos = self._ekf.position
@@ -637,6 +769,31 @@ class AsyncEKFFusionEngine:
     @property
     def is_writing(self) -> bool:
         return self._is_writing
+
+    @property
+    def marker_axis_wb(self) -> np.ndarray:
+        """Latest marker long-axis unit vector in whiteboard frame (tip->rear)."""
+        return self._latest_marker_axis_wb.copy()
+
+    @property
+    def tip_position(self) -> np.ndarray:
+        """Pen-tip 2D position on the whiteboard (None until EKF initialised)."""
+        return self._ekf.get_tip_position(self._latest_marker_axis_wb)
+
+    @property
+    def tag_z_wb(self) -> float:
+        """Latest whiteboard-frame z of the UWB tag (tip-on-board assumption)."""
+        return self._ekf.get_tag_z_wb(self._latest_marker_axis_wb)
+
+    @property
+    def last_raw_ranges(self) -> np.ndarray:
+        """Latest raw UWB ranges fed into the EKF (Item B verification)."""
+        return self._ekf._last_raw_ranges.copy()
+
+    @property
+    def last_filtered_ranges(self) -> np.ndarray:
+        """Latest Item-B-filtered UWB ranges actually used in the EKF."""
+        return self._ekf._last_filtered_ranges.copy()
 
     @property
     def diagnostics(self) -> dict:

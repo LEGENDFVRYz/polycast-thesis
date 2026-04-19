@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM20"
-    baud: int = 115200
+    port: str = "COM3"
+    baud: int = 921600
 
 
 # ------------------------------------------------------------------------
@@ -97,6 +97,43 @@ class PipelineConfig:
 
 
 # ------------------------------------------------------------------------
+# MARKER (physical layout)
+#   Body frame: z_body = pen long axis, tip at origin, sensors stacked above.
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class MarkerConfig:
+    r_imu_body_m: tuple[float, float, float] = (0.0, 0.0, 0.110)   # tip → IMU
+    r_uwb_body_m: tuple[float, float, float] = (0.0, 0.0, 0.200)   # tip → UWB
+
+
+# ------------------------------------------------------------------------
+# FUSION (ESKF)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FusionESKFConfig:
+    # Process noise
+    sigma_a: float           = 0.30      # m/s²   IMU accel white-noise std
+    sigma_b_a: float         = 0.003     # m/s³   accel-bias random walk
+    sigma_zupt: float        = 0.005     # m/s    ZUPT pseudo-measurement noise
+    # Measurement noise (UWB position)
+    sigma_uwb: float         = 0.05      # m
+    sigma_trilat: float      = 0.05      # m      nominal trilat RMS residual
+    k_nlos: float            = 50.0
+    r_scale_max: float       = 100.0
+    hard_reject_mult: float  = 3.0       # × cfg.uwb.trilat_max_residual
+    # Turn (sharp-stroke) detection
+    turn_omega_threshold: float = 0.698  # rad/s (40 dps)
+    turn_k_q: float             = 4.0
+    turn_n_post: int            = 3
+    # Nominal-state ring buffer for UWB↔IMU time interpolation
+    state_buffer_size: int      = 10
+    # Initial covariance (diagonal, one value per block in m/s/m/s²)
+    p0_pos: float    = 0.20
+    p0_vel: float    = 0.10
+    p0_bias: float   = 0.05
+
+
+# ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -106,6 +143,8 @@ class Config:
     uwb: UWBConfig = field(default_factory=UWBConfig)
     anchors: AnchorConfig = field(default_factory=AnchorConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    marker: MarkerConfig = field(default_factory=MarkerConfig)
+    fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
 
 
 cfg = Config()

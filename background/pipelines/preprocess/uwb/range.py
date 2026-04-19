@@ -61,7 +61,7 @@ class UWBRangePreprocessor:
         
         # --- Anti-Lockout Counters ---
         self._jump_count = [0] * n
-        self.max_jumps = 3
+        self.max_jumps = 5
 
     # ------------------------------------------------------------------
     # Public API
@@ -139,20 +139,28 @@ class UWBRangePreprocessor:
             - clean_value   : best filtered value to use (falls back to prev if bad)
         """
         
-        # --- Offset Application  ---
+        # --- 1. Hardware Blind Spot Check (The Fix) ---
+        # If the hand blocks the anchor, it might report 0.0, <= 0.05, or NaN.
+        # We reject this immediately to prevent median buffer corruption.
+        if d_raw is None or math.isnan(d_raw) or d_raw <= 0.05:
+            # Hold the last known good state. If there is no history yet, flag as -1.0
+            clean_val = self._ema[idx] if self._ema[idx] is not None else -1.0
+            return False, True, clean_val
+
+        # --- 2. Offset Application ---
         raw_with_offset = d_raw + self.offsets[idx]
 
-        # --- Sanity check ---
+        # --- 3. Sanity check ---
         sane = (cfg.pipeline.uwb_min_range_m <= raw_with_offset <= cfg.pipeline.uwb_max_range_m)
 
-        # --- Jump detection ---
+        # --- 4. Jump detection ---
         jump = False
         if sane and self._prev_clean[idx] is not None:
             delta = abs(raw_with_offset - self._prev_clean[idx])
             if delta > cfg.uwb.max_range_jump_m:
                 jump = True
 
-        # --- ANTI-LOCKOUT RECOVERY LOGIC ---
+        # --- 5. Anti-Lockout Recovery Logic ---
         if jump:
             self._jump_count[idx] += 1
             if self._jump_count[idx] >= self.max_jumps:
@@ -181,21 +189,34 @@ class UWBRangePreprocessor:
                 clean_val = raw_with_offset
             return valid, outlier, clean_val
 
-        # --- Median filter --- 
+        # --- 6. Median filter --- 
         self._history[idx].append(raw_with_offset)
         median_val = statistics.median(self._history[idx])
 
-        # --- Stage 3b: EMA ---
-        alpha = cfg.uwb.ema_alpha
+        # --- 7. Stage 3b: ADAPTIVE EMA (The Upgrade) ---
+        base_alpha = cfg.uwb.ema_alpha
+        
         if self._ema[idx] is None:
             self._ema[idx] = median_val
         else:
-            self._ema[idx] = alpha * median_val + (1.0 - alpha) * self._ema[idx]
+            # Calculate the physical distance between current state and new reading
+            delta = abs(median_val - self._ema[idx])
+            
+            # Dynamic adjustment:
+            # If moving fast (> 10cm jump), triple the alpha to catch up instantly.
+            # If resting/slow, use base alpha to aggressively smooth out the noise.
+            if delta > 0.10:
+                dynamic_alpha = min(base_alpha * 3.0, 1.0) 
+            else:
+                dynamic_alpha = base_alpha
+                
+            self._ema[idx] = dynamic_alpha * median_val + (1.0 - dynamic_alpha) * self._ema[idx]
 
         clean_val = self._ema[idx]
         self._prev_clean[idx] = clean_val
 
         return True, False, clean_val
+
 
 
 # ==============================================================================

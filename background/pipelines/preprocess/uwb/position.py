@@ -59,8 +59,18 @@ class UWBPositionFilter:
         self._prev_pos = (clean_x, clean_y)
         self._prev_ts = ts
 
-        # Inject the clean position into the same event payload
+        # --- THE FIX: Explicit Axis Definition ---
+        # We keep 'pos_clean' untouched so your hardware plotting script doesn't break
         ev['pos_clean'] = (round(clean_x, 4), round(clean_y, 4))
+        
+        # We add explicitly labeled axes for Module 7 (The Fusion Node)
+        ev['mapped_position'] = {
+            'board_width_x': round(clean_x, 4),
+            'board_height_y': round(clean_y, 4),
+            'depth_z': 0.07  # The physical offset of the anchors from the whiteboard
+        }
+        ev['coordinate_frame'] = 'UWB_BOARD_XY'
+        
         return ev
 
     def reset(self):

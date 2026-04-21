@@ -63,6 +63,9 @@ class UWBRangePreprocessor:
         self._jump_count = [0] * n
         self.max_jumps = 5
 
+        # Timestamp of last processed event (for time-aware EMA)
+        self._prev_ts: int | None = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -94,13 +97,22 @@ class UWBRangePreprocessor:
         if len(dists) != cfg.uwb.num_anchors:
             return None    # unexpected anchor count
 
+        # Compute dt for time-aware EMA; fall back to nominal rate on first sample
+        if self._prev_ts is not None:
+            dt_s = (ts - self._prev_ts) / 1_000_000.0
+            if dt_s <= 0:
+                dt_s = 1.0 / cfg.uwb.rate_hz
+        else:
+            dt_s = 1.0 / cfg.uwb.rate_hz
+        self._prev_ts = ts
+
         raw_dists    = tuple(dists)
         clean_dists  = []
         valid_mask   = []
         outlier_flags = []
 
         for i, d_raw in enumerate(raw_dists):
-            valid, outlier, d_clean = self._process_anchor(i, d_raw)
+            valid, outlier, d_clean = self._process_anchor(i, d_raw, dt_s)
             clean_dists.append(d_clean)
             valid_mask.append(valid)
             outlier_flags.append(outlier)
@@ -123,12 +135,13 @@ class UWBRangePreprocessor:
         self._history    = [deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
         self._ema        = [None] * n
         self._prev_clean = [None] * n
+        self._prev_ts    = None
 
     # ------------------------------------------------------------------
     # Per-anchor pipeline
     # ------------------------------------------------------------------
 
-    def _process_anchor(self, idx: int, d_raw: float) -> tuple[bool, bool, float]:
+    def _process_anchor(self, idx: int, d_raw: float, dt_s: float = None) -> tuple[bool, bool, float]:
         """
         Run the multi-stage pipeline for one anchor.
 
@@ -193,20 +206,23 @@ class UWBRangePreprocessor:
         self._history[idx].append(raw_with_offset)
         median_val = statistics.median(self._history[idx])
 
-        # --- 7. Stage 3b: ADAPTIVE EMA (The Upgrade) ---
-        base_alpha = cfg.uwb.ema_alpha
-        
+        # --- 7. Stage 3b: ADAPTIVE TIME-AWARE EMA ---
+        # Base alpha derived from actual inter-sample dt so smoothing is consistent
+        # regardless of serial/UWB jitter (α = 1 - exp(-dt/τ)).
+        _dt = dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
+        base_alpha = 1.0 - math.exp(-_dt / cfg.uwb.range_tau_s)
+
         if self._ema[idx] is None:
             self._ema[idx] = median_val
         else:
             # Calculate the physical distance between current state and new reading
             delta = abs(median_val - self._ema[idx])
-            
+
             # Dynamic adjustment:
             # If moving fast (> 10cm jump), triple the alpha to catch up instantly.
             # If resting/slow, use base alpha to aggressively smooth out the noise.
             if delta > 0.10:
-                dynamic_alpha = min(base_alpha * 3.0, 1.0) 
+                dynamic_alpha = min(base_alpha * 3.0, 1.0)
             else:
                 dynamic_alpha = base_alpha
                 

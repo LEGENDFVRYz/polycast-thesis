@@ -18,16 +18,20 @@ class UWBSolver:
         # Anchor configurations
         self.anchors = np.array(cfg.anchors.positions)
         self.board_width = cfg.anchors.board_size_x
-        self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24) 
-        
-        # Issue 5: Z-plane assumption. Pen is at Z=0.0. 
+        self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24)
+
+        # Issue 5: Z-plane assumption. Pen is at Z=0.0.
         # The anchors are at Z=0.07. The 3D distance math inherently handles this offset!
-        self.pen_z = 0.0  
-        
+        self.pen_z = 0.0
+
         # Bounds and initial guess
         self.bounds_min = [-0.10, -0.10]
-        self.bounds_max = [self.board_width + 0.10, self.board_height + 0.10] 
+        self.bounds_max = [self.board_width + 0.10, self.board_height + 0.10]
         self._guess = np.array([self.board_width / 2.0, self.board_height / 2.0])
+
+        # Stale-guess recovery: track last successful solve timestamp
+        self._last_valid_ts: int | None = None
+        self._stale_timeout_us: int = cfg.uwb.stale_guess_timeout_us
 
     def _residuals(self, guess_xy, distances, valid_anchors):
         """Calculate the error between the guess and the actual measured ranges."""
@@ -49,7 +53,13 @@ class UWBSolver:
         # Trilateration fundamentally requires at least 3 valid spheres to intersect
         if len(valid_dists) < 3:
             return None
-        
+
+        # Stale-guess recovery: if pen was lifted/relocated, re-seed from anchor centroid
+        ts = ev['ts_hw']
+        if (self._last_valid_ts is None or
+                (ts - self._last_valid_ts) > self._stale_timeout_us):
+            self._guess = np.mean(valid_anchors[:, :2], axis=0)
+
         try:
             res = least_squares(
                 self._residuals,
@@ -69,6 +79,7 @@ class UWBSolver:
                 return None  # Math converged, but to a garbage location
             
             self._guess = res.x
+            self._last_valid_ts = ts
 
             return {
                 'sensor':      'POSITION',
@@ -83,6 +94,7 @@ class UWBSolver:
 
     def reset(self):
         self._guess = np.array([self.board_width / 2.0, self.board_height / 2.0])
+        self._last_valid_ts = None
 
 
 

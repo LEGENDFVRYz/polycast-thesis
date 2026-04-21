@@ -50,20 +50,31 @@ class IMUConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
-    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
+    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
+    # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
 
     rate_hz: float = 9.0
 
     ema_alpha: float = 0.25
     max_range_jump_m: float = 0.40
-    median_window: int = 5
+    median_window: int = 10
 
     outlier_speed_limit_ms: float = 2.0
     drop_speed_outliers: bool = True
     num_anchors: int = 4
-    pos_ema_alpha: float = 0.75             # pert. how much you trust the new measurement
+    pos_ema_alpha: float = 0.75             # legacy — kept for reference, superseded by pos_alpha
     trilat_max_residual: float = 0.15
+
+    # Alpha-Beta filter (replaces scalar EMA)
+    pos_alpha: float = 0.60                 # position correction gain
+    pos_beta: float = 0.10                  # velocity correction gain
+
+    # Trilateration stale-guess recovery
+    stale_guess_timeout_us: int = 1_000_000 # 1 second gap triggers centroid re-seed
+
+    # Range filter time-aware EMA (tau = smoothing time constant)
+    range_tau_s: float = 0.30               # at 9 Hz (dt≈0.11s): α ≈ 0.31; tune up to slow down
 
 
 # ------------------------------------------------------------------------

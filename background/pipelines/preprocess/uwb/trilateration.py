@@ -96,6 +96,7 @@ if __name__ == '__main__':
     import time
     import os
     import csv
+    import math
     import matplotlib.pyplot as plt
     
     from background.pipelines.cleaner.unpacker import SerialStreamer
@@ -120,6 +121,20 @@ if __name__ == '__main__':
     print("  Press Ctrl+C to stop and generate raw mathematical reports.")
     print("=" * 60)
 
+    # --- REVISION: Ground Truth Prompt ---
+    ground_truth = None
+    print("Do you want to test accuracy against a specific known coordinate? (y/n)")
+    if input().strip().lower() == 'y':
+        try:
+            gt_x = float(input("  Enter expected X coordinate (m): "))
+            gt_y = float(input("  Enter expected Y coordinate (m): "))
+            ground_truth = (gt_x, gt_y)
+            print(f"  [SET] Target ground truth: X={gt_x:.3f}, Y={gt_y:.3f}")
+        except ValueError:
+            print("  [ERROR] Invalid input. Proceeding without ground truth.")
+    print("=" * 60)
+    # -------------------------------------
+
     event_log = []
     last_print_time = 0
 
@@ -143,6 +158,13 @@ if __name__ == '__main__':
                             print(f"  Pkt ID     : {pos_event['packet_id']}")
                             print(f"  Solve Cost : {pos_event['solve_error']:.6f} (Math Confidence)")
                             print(f"  RAW POS    : X: {pos_event['pos_raw'][0]:6.3f} m  |  Y: {pos_event['pos_raw'][1]:6.3f} m")
+                            
+                            # --- REVISION: Live Error Display ---
+                            if ground_truth:
+                                dist_err = math.hypot(pos_event['pos_raw'][0] - ground_truth[0], pos_event['pos_raw'][1] - ground_truth[1])
+                                print(f"  POS ERROR  : {dist_err:.4f} m from target")
+                            # ------------------------------------
+                            
                             print("==========================================================")
                             last_print_time = current_time
             time.sleep(0.005)
@@ -154,6 +176,18 @@ if __name__ == '__main__':
         if not event_log:
             print("No data collected. Exiting.")
             exit()
+
+        # --- REVISION: Final Average Error Calculation ---
+        if ground_truth:
+            errors_m = [math.hypot(ev['pos_raw'][0] - ground_truth[0], ev['pos_raw'][1] - ground_truth[1]) for ev in event_log]
+            avg_error = sum(errors_m) / len(errors_m)
+            print("\n" + "=" * 60)
+            print(f"  [ACCURACY REPORT]")
+            print(f"  Target Coordinate : X={ground_truth[0]:.3f}, Y={ground_truth[1]:.3f}")
+            print(f"  Samples Evaluated : {len(errors_m)}")
+            print(f"  Average Error     : {avg_error:.4f} meters ({avg_error * 100:.2f} cm)")
+            print("=" * 60 + "\n")
+        # -------------------------------------------------
 
         # --- CSV EXPORT ---
         csv_filename = "trilateration_math_report.csv"
@@ -181,6 +215,12 @@ if __name__ == '__main__':
             ax1.add_patch(plt.Rectangle((0, 0), board_w, board_h, fill=False, edgecolor='black', linestyle='--', lw=2))
             ax1.scatter([0, board_w, board_w, 0], [0, 0, board_h, board_h], c='red', s=100, marker='s', label='Anchors')
             ax1.plot(raw_x, raw_y, label='Raw Solved Coordinates', color='red', alpha=0.5, marker='.', linestyle='none')
+            
+            # --- REVISION: Plot Ground Truth if available ---
+            if ground_truth:
+                ax1.plot(ground_truth[0], ground_truth[1], marker='X', color='blue', markersize=12, label='Ground Truth Target')
+            # ------------------------------------------------
+            
             ax1.set_xlim(-0.2, board_w + 0.2)
             ax1.set_ylim(-0.2, board_h + 0.2)
             ax1.set_aspect('equal')

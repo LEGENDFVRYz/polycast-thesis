@@ -62,7 +62,7 @@ class UWBConfig:
     outlier_speed_limit_ms: float = 2.0
     drop_speed_outliers: bool = True
     num_anchors: int = 4
-    pos_ema_alpha: float = 0.05
+    pos_ema_alpha: float = 0.75             # pert. how much you trust the new measurement
     trilat_max_residual: float = 0.15
 
 

@@ -76,6 +76,10 @@ class UWBConfig:
     # Range filter time-aware EMA (tau = smoothing time constant)
     range_tau_s: float = 0.30               # at 9 Hz (dt≈0.11s): α ≈ 0.31; tune up to slow down
 
+    # Weighted least squares (inverse distance weighting in trilateration)
+    wls_power: float   = 2.0                # exponent: 2.0 = inverse-square, 1.0 = inverse-linear
+    wls_epsilon: float = 0.01               # numerical guard prevents ÷0 at very-close anchors
+
 
 # ------------------------------------------------------------------------
 # ANCHOR GEOMETRY (Target Whiteboard)

@@ -33,11 +33,11 @@ class UWBSolver:
         self._last_valid_ts: int | None = None
         self._stale_timeout_us: int = cfg.uwb.stale_guess_timeout_us
 
-    def _residuals(self, guess_xy, distances, valid_anchors):
-        """Calculate the error between the guess and the actual measured ranges."""
+    def _residuals(self, guess_xy, distances, valid_anchors, weights):
+        """Weighted residuals for WLS: multiplying by sqrt(w) makes least_squares minimize Σ w·r²."""
         guess_xyz = np.array([guess_xy[0], guess_xy[1], self.pen_z])
         calc_dists = np.linalg.norm(valid_anchors - guess_xyz, axis=1)
-        return calc_dists - distances
+        return (calc_dists - distances) * np.sqrt(weights)
 
     def process_one(self, ev: dict) -> dict | None:
         if ev.get('sensor') != 'UWB' or 'clean_dists' not in ev:
@@ -61,20 +61,27 @@ class UWBSolver:
             self._guess = np.mean(valid_anchors[:, :2], axis=0)
 
         try:
+            # IDW weights: closer anchors trusted more (shorter range = less multipath opportunity)
+            raw_w = 1.0 / (valid_dists ** cfg.uwb.wls_power + cfg.uwb.wls_epsilon)
+            weights = raw_w * (len(raw_w) / raw_w.sum())  # normalize so mean weight = 1
+
             res = least_squares(
                 self._residuals,
                 self._guess,
                 bounds=(self.bounds_min, self.bounds_max),
-                args=(valid_dists, valid_anchors),
+                args=(valid_dists, valid_anchors, weights),
                 loss='soft_l1',
                 f_scale=0.1
             )
-            
+
             raw_x, raw_y = res.x
-            cost = res.cost
-            
-            # Issue 2: No confidence gating (FIXED)
-            rms_error = float(np.sqrt(np.mean(res.fun ** 2)))
+
+            # Compute RMS on unweighted geometric residuals so trilat_max_residual keeps its
+            # physical meaning in metres (res.fun contains weighted residuals after WLS).
+            unweighted = np.linalg.norm(
+                valid_anchors - np.array([raw_x, raw_y, self.pen_z]), axis=1
+            ) - valid_dists
+            rms_error = float(np.sqrt(np.mean(unweighted ** 2)))
             if rms_error > cfg.uwb.trilat_max_residual:
                 return None  # Math converged, but to a garbage location
             

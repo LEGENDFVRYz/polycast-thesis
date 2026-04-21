@@ -2,13 +2,19 @@
 preprocessor.py  —  PolyCast Signal Preprocessor (Async Stream)
 ===============================================================
 UWBPreprocessor:
-    Per-anchor 3-stage pipeline: validity gate -> median despike -> variable-rate EMA.
-    Returns filtered distances AND quality weights [0.1 -> 1.0]
-    so the EKF can perform weighted measurement updates.
+    Per-anchor pipeline with TWO output paths:
 
-    Two output paths:
-        filtered (EMA-smoothed)  — for visualisation
-        despiked (median only)   — for EKF (avoids EMA lag / temporal correlation)
+    EKF path (Fix A — kill pre-filter lag):
+        offset + validity gate  ->  "ekf_dists" (fed to EKF innovation)
+        NO median, NO EMA. The EKF already runs a chi^2 gate, adaptive R,
+        NLOS muting, and a per-anchor 1-D range Kalman (Item B) — stacking
+        a 3-sample median on top only added ~100 ms of lag that smeared the
+        tight-coupling innovation.
+
+    Visualisation path:
+        offset + gate -> 7-sample median -> variable-rate EMA -> "filtered"
+
+    Both paths share the per-anchor AnchorQualityTracker (NLOS weights).
 
 AnchorQualityTracker:
     Per-anchor NLOS detection via rolling variance + innovation scoring.
@@ -110,48 +116,46 @@ class UWBPreprocessor:
         self._last     = [0.0]  * self.n
         self._trackers = [AnchorQualityTracker() for _ in range(self.n)]
 
-        # Smaller window for EKF path (offset + despike, NO EMA — avoids lag
-        # and temporal correlation that violate the EKF's white-noise assumption)
-        self._med_bufs_ekf = [deque(maxlen=3) for _ in range(self.n)]
-        self._last_ekf     = [0.0] * self.n
+        # Last valid gated value (per-anchor) — replayed when a raw sample
+        # fails the validity check. No median buffer on the EKF path anymore.
+        self._last_ekf = [0.0] * self.n
 
     # -- main entry point --------------------------------------------------
 
     def process(self, d0: float, d1: float, d2: float, d3: float):
         """
         Returns:
-            filtered  : tuple(float x 4)  — offset + median + EMA  (low-noise, for visualisation)
+            filtered  : tuple(float x 4)  — offset + median + EMA  (for VIS only)
             weights   : tuple(float x 4)  — per-anchor quality [0.1, 1.0]
-            despiked  : tuple(float x 4)  — offset + small median, NO EMA  (for EKF measurement update)
+            ekf_dists : tuple(float x 4)  — offset + gate only, NO median, NO EMA
+                                            (fed to EKF; innovation stays lag-free)
 
-        The 'despiked' output avoids the EMA's lag (~40 ms) and temporal
-        correlation, satisfying the EKF's white-measurement-noise assumption.
+        The third returned tuple is what the EKF should consume. The EKF has
+        its own Mahalanobis gate, adaptive R, NLOS muting, and per-anchor
+        1-D range Kalman (Item B) — pre-smoothing here only added lag that
+        smeared the tight-coupling innovation across ~100 ms of sensor history.
         """
-        filtered = []
-        weights  = []
-        despiked = []
+        filtered  = []
+        weights   = []
+        ekf_dists = []
 
         for i, raw in enumerate([d0, d1, d2, d3]):
             # -- Stage 1: validity gate (shared) ---------------------------
             raw_with_offset = raw + self.offsets[i]
             if (raw_with_offset <= 0.05 or raw_with_offset > self.max_range
                     or not np.isfinite(raw_with_offset)):
-                cooked = self._last[i]
+                cooked = self._last_ekf[i]      # replay last valid
             else:
                 cooked = raw_with_offset
+                self._last_ekf[i] = cooked
 
-            # -- Stage 2 (EKF path): small-window median only -------------
-            self._med_bufs_ekf[i].append(cooked)
-            ekf_val = float(np.median(self._med_bufs_ekf[i]))
-            if ekf_val > 0.05:
-                self._last_ekf[i] = ekf_val
-            despiked.append(self._last_ekf[i])
+            # -- EKF path: NO median, NO EMA (Fix A) -----------------------
+            ekf_dists.append(cooked)
 
-            # -- Stage 2 (vis path): larger-window median despike ----------
+            # -- Vis path: median despike + variable-rate EMA --------------
             self._med_bufs[i].append(cooked)
             median_val = float(np.median(self._med_bufs[i]))
 
-            # -- Stage 3 (vis path): variable-rate EMA ---------------------
             if self._ema[i] is None:
                 self._ema[i] = median_val
             else:
@@ -169,7 +173,7 @@ class UWBPreprocessor:
             filtered.append(smooth)
             weights.append(w)
 
-        return tuple(filtered), tuple(weights), tuple(despiked)
+        return tuple(filtered), tuple(weights), tuple(ekf_dists)
 
     # -- feedback from EKF -------------------------------------------------
 

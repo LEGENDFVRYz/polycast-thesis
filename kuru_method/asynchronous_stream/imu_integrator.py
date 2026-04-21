@@ -196,9 +196,16 @@ class IMUIntegrator:
         R = quat_to_rotmat(*q)
 
         if not self._heading_locked:
+            # Fix G: before the heading is locked, the body -> whiteboard
+            # mapping is only exact in the neutral pose.  The legacy
+            # fallback (body_Y, body_Z) silently injected wrong-frame
+            # acceleration for any non-neutral tilt, corrupting the bias
+            # estimate during the first ~250 ms.  Returning zero keeps the
+            # predict step well-formed (dt still advances) and matches
+            # layer 4's verification expectation of a <400 ms dead zone.
             self._accumulate_heading(R)
             self._update_omega_history(q, ts)
-            return np.array([float(a[1]), float(a[2])])  # fallback: body_Y, body_Z
+            return np.zeros(2)
 
         # Heading adaptation (EMA, alpha=0.01 ~ 100-sample time constant)
         # with drift leash: heading cannot drift more than
@@ -231,6 +238,10 @@ class IMUIntegrator:
             a_centrip_world = np.cross(omega_world, np.cross(omega_world, r_world))
             wb_ax += float(np.dot(a_centrip_world[:2], self._heading_vec))
             wb_ay += float(a_centrip_world[2])
+            
+        # TEMPORARY POLARITY TEST
+        # if np.linalg.norm([wb_ax, wb_ay]) > 0.5: # Only print distinct movements
+        #     print(f"Accel -> X: {wb_ax:+.2f} | Y: {wb_ay:+.2f}")
 
         return np.array([wb_ax, wb_ay])
 
@@ -331,16 +342,31 @@ class IMUIntegrator:
         return omega_world
 
     def _accumulate_heading(self, R: np.ndarray):
-        body_y_world = R[:, 1]         # body-Y direction in world frame
-        h_xy         = body_y_world[:2]
-        norm         = float(np.linalg.norm(h_xy))
+        # Body Y roughly points "Right-ish" in a normal human grip
+        body_y_approx = R[:2, 1]
+        
+        # Body X (R[:, 0]) is the marker barrel pointing into/out of the board
+        rx_world = R[0, 0]
+        ry_world = R[1, 0]
+        
+        # UP x Barrel generates a perfectly horizontal vector on the board surface
+        # (This is 100% immune to how you roll the pen in your fingers)
+        vec_a = np.array([-ry_world, rx_world])
+        vec_b = np.array([ry_world, -rx_world])
+        
+        # Automatically pick the vector that points in the direction of your natural grip
+        if np.dot(vec_a, body_y_approx) > 0:
+            right_vec = vec_a
+        else:
+            right_vec = vec_b
+            
+        norm = float(np.linalg.norm(right_vec))
         if norm > 0.15:
-            self._init_headings.append(h_xy / norm)
-
-        if len(self._init_headings) >= self.HEADING_INIT_SAMPLES:
-            mean_h = np.mean(self._init_headings, axis=0)
-            n2     = float(np.linalg.norm(mean_h))
-            self._heading_vec    = mean_h / n2 if n2 > 0.1 else np.array([1.0, 0.0])
-            self._locked_heading = self._heading_vec.copy()
+            self._init_headings.append(right_vec / norm)
+            
+        # ---> THE LOCK LOGIC (Fully restored so it won't freeze!) <---
+        if len(self._init_headings) >= 50:
+            avg_vec = np.mean(self._init_headings, axis=0)
+            self._heading_vec = avg_vec / np.linalg.norm(avg_vec)
             self._heading_locked = True
-            print(f"[IMUIntegrator] Heading locked: {self._heading_vec.round(4)}")
+            print(f"[IMUIntegrator] Heading locked: {self._heading_vec}")  

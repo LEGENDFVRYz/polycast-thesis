@@ -36,6 +36,7 @@ import sys
 import serial
 import time
 from datetime import datetime
+import config
 
 
 class AsyncDataParser:
@@ -49,7 +50,7 @@ class AsyncDataParser:
     Tracks per-stream packet loss via sequence number gaps.
     """
 
-    def __init__(self, port='COM5', baud=115200, csv_path=''):
+    def __init__(self, port=config.SERIAL_PORT, baud=config.BAUD_RATE, csv_path='datasets_standard/ct_squareee.csv'):
         self.port     = port
         self.baud     = baud
         self.csv_path = csv_path
@@ -258,7 +259,7 @@ if __name__ == '__main__':
     # ---------------------------------------------------------
     # Main Execution
     # ---------------------------------------------------------
-    parser = AsyncDataParser(port='COM5', baud=115200)
+    parser = AsyncDataParser()
     
     if not parser.connect():
         sys.exit(1)

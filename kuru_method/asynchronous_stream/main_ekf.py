@@ -42,8 +42,7 @@ from imu_calibrate  import trigger_dcd_save
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
-DATASET_FILENAME = ''   # '' = live serial;  'datasets/data.csv' = playback
-
+DATASET_FILENAME = 'datasets_standard/ct_squareee.csv'
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier
@@ -192,10 +191,11 @@ def update(frame):
         # -- UWB packet: preprocess + update -------------------------------
         elif pkt['type'] == 'uwb':
             raw = pkt['dists']
-            filtered, weights, despiked = uwb_cleaner.process(*raw)
+            # filtered = viz-only (median + EMA). ekf_dists = offset+gate only.
+            filtered, weights, ekf_dists = uwb_cleaner.process(*raw)
 
             pos, vel, accepted, rejected = engine.process_uwb(
-                despiked, weights, ts=pkt.get('ts'))
+                ekf_dists, weights, ts=pkt.get('ts'))
 
             if pos is not None:
                 # Tip-aware drawing point (Item A) — see IMU branch above.
@@ -352,4 +352,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+        main()

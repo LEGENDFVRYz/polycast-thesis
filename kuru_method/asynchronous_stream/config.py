@@ -11,7 +11,7 @@ import numpy as np
 
 # -- Serial defaults --------------------------------------------------------
 SERIAL_PORT = 'COM5'
-BAUD_RATE   = 115200
+BAUD_RATE   = 921600
 
 # -- Physical geometry ------------------------------------------------------
 MARKER_LENGTH = 0.21   # m -- tip to UWB tag antenna
@@ -44,4 +44,12 @@ ANCHORS = np.array([
 # Per-anchor distance correction applied to raw UWB measurements.
 # Re-run calibrate.py and paste the new tuple here after each recalibration.
 # UWB_OFFSETS = (-0.1326, -0.0332, -0.1785, -0.1318)
-UWB_OFFSETS = (-0.1752, -0.0466, -0.2227, -0.1220)
+UWB_OFFSETS = (-0.1232, -0.0146, -0.1919, -0.0965)
+
+# -- EKF feature flags ------------------------------------------------------
+# Item C (Zou 2023, §3.3): feed the EKF posterior range back into each
+# per-anchor 1-D range Kalman as a soft prior. Disabled by default — in
+# low-multipath whiteboard testing it introduces state-measurement
+# correlation that regresses closed-loop stability on curved strokes.
+# Re-enable per A/B test if a regression is observed on open shapes.
+ENABLE_ITEM_C_FEEDBACK = False

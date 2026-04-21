@@ -31,8 +31,11 @@ Update step  (UWB-driven, ~10 Hz, per anchor, scalar measurement)
     Sequential per-anchor update with chi^2 gating.
 """
 
+from collections import deque
+
 import numpy as np
-from config import ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M
+from config import (ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M,
+                    ENABLE_ITEM_C_FEEDBACK)
 from imu_integrator import IMUIntegrator, quat_to_rotmat
 from force_detector import ForceContactDetector
 from range_kf       import PerAnchorRangeKFBank
@@ -86,13 +89,38 @@ class TightlyCoupledEKF:
     # Hard velocity cap (pen writing never exceeds this)
     MAX_WRITING_SPEED = 0.50   # m/s
 
-    # Zero-velocity update (ZUPT)
-    ZUPT_ACCEL_THRESH = 0.10   # m/s^2
-    ZUPT_WINDOW       = 6      # 6 samples @ 200 Hz = 30 ms of stillness
-    ZUPT_R_VEL        = 0.0005 # (m/s)^2
+    # Zero-velocity update (ZUPT) — Fix B: bias-independent raw-accel variance
+    # ZUPT triggers when the *variance* of the raw (pre-bias-subtraction)
+    # whiteboard-frame acceleration stays below threshold across a window.
+    # Using variance rather than magnitude makes ZUPT robust to any residual
+    # DC offset (including drifting bias or tilt-induced gravity leakage).
+    ZUPT_WINDOW        = 6          # samples @ 200 Hz ≈ 30 ms of stillness
+    ZUPT_VAR_THRESH    = 0.0025     # (m/s^2)^2  — σ ≈ 0.05 m/s^2 per axis
+    ZUPT_R_VEL         = 0.0005     # (m/s)^2
 
-    # Speed above which bias estimation is frozen during a UWB update
-    BIAS_FREEZE_SPEED = 0.20   # m/s  (was 0.05 — allow bias learning during writing)
+    # Bias runaway safeguard: if ZUPT has not fired for this many consecutive
+    # IMU samples while pen is in contact, the bias state is suspect. Reset
+    # it to zero and inflate P[4:6] to let UWB re-learn it.
+    ZUPT_STALL_SAMPLES = 1000       # ≈ 5.0 s @ 200 Hz
+    BIAS_RESET_P       = 0.04       # (m/s^2)^2 — matches initial P_bias
+
+    # Fix C: observability-aware bias freeze. Freezing only on raw speed
+    # ignores that a short straight stroke still leaves bias unobservable.
+    # We freeze when the velocity direction has been persistent over the
+    # last ~0.5 s (cos of direction change > threshold) AND speed > limit.
+    # Any curved / changing-direction motion unfreezes bias learning.
+    BIAS_FREEZE_SPEED    = 0.20     # m/s — speed floor for freeze gate
+    BIAS_FREEZE_DIR_WIN  = 0.50     # s   — direction-persistence window
+    BIAS_FREEZE_DIR_COS  = 0.90     # cos(angle between old/new v) threshold
+    BIAS_FREEZE_MIN_SPD  = 0.05     # m/s — ignore noise below this for dir.
+
+    # Fix I: runaway-drift escape. If the EKF position disagrees with the
+    # fresh IRLS fix by more than this distance for RUNAWAY_HOLD UWB cycles,
+    # force a soft re-init (snap to IRLS, zero v/b, inflate P). This breaks
+    # the feedback loop where large innovations -> all rejected -> NLOS mute
+    # -> IMU-only drift -> even larger innovations.
+    RUNAWAY_DIST_M = 0.50     # m — EKF vs IRLS discrepancy
+    RUNAWAY_HOLD   = 3        # consecutive UWB cycles to confirm
 
     # -- init ---------------------------------------------------------------
 
@@ -139,6 +167,23 @@ class TightlyCoupledEKF:
         # Latest (raw, filtered) ranges for verification logging.
         self._last_raw_ranges      = np.full(len(self.anchors), np.nan)
         self._last_filtered_ranges = np.full(len(self.anchors), np.nan)
+
+        # Fix B: raw-accel ring buffer for variance-based ZUPT.  Stores
+        # whiteboard-frame acceleration *before* bias subtraction so a
+        # drifting bias cannot keep ZUPT silent (self-referential failure).
+        self._zupt_accel_buf   = deque(maxlen=self.ZUPT_WINDOW)
+        # Bias-stall safeguard: counts IMU predicts since ZUPT last fired
+        # while the pen is in contact.  If it runs too long, velocity is
+        # assumed non-trivial and bias is reset so UWB can re-learn.
+        self._zupt_stall_count = 0
+
+        # Fix C: short velocity-direction window for observability-aware
+        # bias freeze.  Unit vectors of velocity over the last ~0.5 s.
+        self._vel_dir_buf      = deque(maxlen=120)  # ≈0.6 s @ 200 Hz
+
+        # Cached bias-freeze flag — updated every predict so that both
+        # Q_bias (Fix H) and the UWB Kalman gain (Fix C) share one truth.
+        self._bias_freeze      = False
 
     # -- predict step (IMU) -------------------------------------------------
 
@@ -209,20 +254,51 @@ class TightlyCoupledEKF:
         Q[1, 3] = Q[3, 1] = sa2 * dt2 * dt / 2
         Q[2, 2] = sa2 * dt2
         Q[3, 3] = sa2 * dt2
-        Q[4, 4] = sb2
-        Q[5, 5] = sb2
+        # Fix H: don't grow P_bias when bias is frozen.  Adding Q_bias while
+        # the gain is zero just inflates covariance so that the first post-
+        # unfreeze innovation snaps bias to a noisy value.
+        if not self._bias_freeze:
+            Q[4, 4] = sb2
+            Q[5, 5] = sb2
 
         # Covariance predict
         self._P = F @ self._P @ F.T + Q
         self._P = 0.5 * (self._P + self._P.T)   # enforce symmetry
         self._n_imu_steps += 1
 
-        # ZUPT: clamp velocity when stationary (pen down, low acceleration)
+        # Fix C: maintain short velocity-direction window for observability.
+        # Only include samples above the ignore-noise floor — otherwise the
+        # direction is dominated by numerical jitter at near-zero speed.
+        spd_now = np.sqrt(self._x[2]**2 + self._x[3]**2)
+        if spd_now > self.BIAS_FREEZE_MIN_SPD:
+            self._vel_dir_buf.append(
+                (self._x[2] / spd_now, self._x[3] / spd_now))
+
+        # Refresh bias-freeze decision for the next predict / UWB update.
+        self._bias_freeze = self._compute_bias_freeze()
+
+        # Fix B: variance-based ZUPT on RAW whiteboard accel (pre-bias).
+        # This keeps ZUPT detection independent of the bias estimate, so a
+        # drifting bias cannot silence the trigger.
+        self._zupt_accel_buf.append((ax_wb, ay_wb))
         if is_contact:
-            a_wb_mag = np.sqrt(ax * ax + ay * ay)
-            self.check_zupt(a_wb_mag)
+            self.check_zupt()
+            # Runaway safeguard: if ZUPT has not fired for ZUPT_STALL_SAMPLES
+            # in a row while in contact, the bias is suspect — reset it and
+            # re-inflate the bias covariance so UWB can drive re-learning.
+            self._zupt_stall_count += 1
+            if self._zupt_stall_count >= self.ZUPT_STALL_SAMPLES:
+                self._x[4] = 0.0
+                self._x[5] = 0.0
+                self._P[4, 4] = self.BIAS_RESET_P
+                self._P[5, 5] = self.BIAS_RESET_P
+                self._P[4, 5] = 0.0
+                self._P[5, 4] = 0.0
+                self._zupt_stall_count = 0
+                print("[EKF] Bias-stall safeguard fired — reset bias to 0")
         else:
-            self._zupt_count = 0
+            self._zupt_count       = 0
+            self._zupt_stall_count = 0
 
         # RTS history: save state after each predict step
         if self.record_history:
@@ -252,14 +328,52 @@ class TightlyCoupledEKF:
         self._P = I_KH @ self._P @ I_KH.T + K @ R @ K.T
         self._P = 0.5 * (self._P + self._P.T)
 
-    def check_zupt(self, a_wb_mag: float):
-        """Trigger ZUPT if acceleration stays below threshold for ZUPT_WINDOW samples."""
-        if a_wb_mag < self.ZUPT_ACCEL_THRESH:
+    def check_zupt(self):
+        """
+        Fix B: fire ZUPT when the *variance* of the raw (pre-bias) whiteboard
+        acceleration across the last ZUPT_WINDOW samples falls below
+        ZUPT_VAR_THRESH.
+
+        Variance is bias-independent: a drifting DC offset (stale bias, tilt-
+        induced gravity leakage, sensor warm-up drift) does not raise it.
+        This is the SHOE-family detector recommended in the ZUPT literature
+        (Wahlström & Skog 2021; Ren et al. 2018) for pedestrian / hand-held
+        dead reckoning where the IMU bias is unknown at rest.
+        """
+        if len(self._zupt_accel_buf) < self.ZUPT_WINDOW:
+            return
+        arr = np.asarray(self._zupt_accel_buf, dtype=float)
+        var_total = float(np.var(arr[:, 0]) + np.var(arr[:, 1]))
+        if var_total < self.ZUPT_VAR_THRESH:
             self._zupt_count += 1
+            self._zupt_update()
+            self._zupt_stall_count = 0
         else:
             self._zupt_count = 0
-        if self._zupt_count >= self.ZUPT_WINDOW:
-            self._zupt_update()
+
+    def _compute_bias_freeze(self) -> bool:
+        """
+        Fix C: observability-aware bias freeze.  Accelerometer biases are
+        unobservable during straight constant-velocity motion — freezing is
+        right there.  For curved strokes (where observability is restored),
+        unfreeze so the bias can learn from the direction-change geometry.
+
+        Returns True iff we should zero K[4:6] on the next UWB update.
+        """
+        if self._x is None:
+            return False
+        spd = float(np.sqrt(self._x[2]**2 + self._x[3]**2))
+        if spd <= self.BIAS_FREEZE_SPEED:
+            return False
+        # Insufficient direction history — fall back to raw-speed gate.
+        if len(self._vel_dir_buf) < 10:
+            return True
+        v0 = self._vel_dir_buf[0]
+        v1 = self._vel_dir_buf[-1]
+        cos_change = float(v0[0] * v1[0] + v0[1] * v1[1])
+        # Straight motion  -> cos ≈ 1   -> freeze (bias unobservable)
+        # Curved motion    -> cos < thr -> unfreeze (bias observable)
+        return cos_change > self.BIAS_FREEZE_DIR_COS
 
     # -- update step (UWB) --------------------------------------------------
 
@@ -401,9 +515,8 @@ class TightlyCoupledEKF:
             # Kalman gain (6x1)
             K = (self._P @ H.T) / S
 
-            # Hard bias freeze during motion
-            speed = float(np.linalg.norm(self._x[2:4]))
-            if speed > self.BIAS_FREEZE_SPEED:
+            # Fix C: observability-aware bias freeze (computed once in predict)
+            if self._bias_freeze:
                 K[4] = 0.0
                 K[5] = 0.0
 
@@ -427,11 +540,14 @@ class TightlyCoupledEKF:
         # -- Item C: feedback correction (Zou §3.3) -----------------------
         # Push the EKF posterior 3D range back into each accepted anchor's
         # 1D Kalman as a soft prior.  Guardrails: no anchor in active mute,
-        # no current outage, speed below the writing limit.  When any
-        # check fails we skip — feedback only when the EKF is healthy.
+        # no current outage, speed below the writing limit.  The whole path
+        # is gated by config.ENABLE_ITEM_C_FEEDBACK so we can A/B test:
+        # the closed-loop correlation it introduces regresses curved-stroke
+        # accuracy in our low-multipath setup.
         speed = float(np.linalg.norm(self._x[2:4]))
         feedback_ok = (
-            accepted
+            ENABLE_ITEM_C_FEEDBACK
+            and accepted
             and int(np.sum(self._mute_remain > 0)) == 0
             and self._consec_outage == 0
             and speed < self.MAX_WRITING_SPEED
@@ -612,6 +728,12 @@ class AsyncEKFFusionEngine:
         self._latest_marker_axis_wb = _NEUTRAL_MARKER_AXIS_WB.copy()
         self._latest_quat           = None
 
+        # Fix D: short ring of (ts_us, quat) pairs from IMU packets so UWB
+        # updates can slerp-interpolate attitude to the UWB timestamp rather
+        # than using the freshest (future) quaternion — eliminates the ~50
+        # ms attitude/range misalignment on tilted markers.
+        self._quat_hist = deque(maxlen=40)   # ≈200 ms @ 200 Hz
+
         # Cold-start IRLS (reuses existing solver)
         from fusion_engine import IRLSTrilateration
         _bmin = [-0.30, -0.30, -0.50]
@@ -628,6 +750,13 @@ class AsyncEKFFusionEngine:
         # IRLS speed tracking (for LIFTED_VEL_DAMP gating)
         self._prev_irls_pos  = None
         self._prev_uwb_ts    = None
+
+        # Fix I: runaway-drift escape.  If the EKF disagrees with a fresh
+        # IRLS fix by > RUNAWAY_DIST_M for RUNAWAY_HOLD consecutive UWB
+        # cycles, soft-reset the filter to the IRLS position.  This breaks
+        # the loop in which every innovation exceeds MAX_INNOV_M, all
+        # anchors get muted, and IMU dead-reckoning drifts unbounded.
+        self._runaway_count = 0
 
     # -- IMU predict --------------------------------------------------------
 
@@ -646,9 +775,17 @@ class AsyncEKFFusionEngine:
         is_writing : bool
         """
         if not self._ekf.initialized:
-            # Still in cold-start — process contact but skip predict
+            # Still in cold-start — process contact but skip predict.  Keep
+            # caching attitude history so the first warm UWB update has a
+            # populated quaternion ring for slerp interpolation (Fix D).
             state, _ = self._contact.process(imu_pkt['force'])
             self._is_writing = bool(state)
+            q = np.asarray(imu_pkt['quat'], dtype=float)
+            self._latest_quat           = q
+            self._latest_marker_axis_wb = self._imu.get_marker_axis_wb(q)
+            ts_cold = imu_pkt.get('ts')
+            if ts_cold is not None:
+                self._quat_hist.append((int(ts_cold), q.copy()))
             return None, None, self._is_writing
 
         # Compute dt from per-packet microsecond timestamps
@@ -671,6 +808,11 @@ class AsyncEKFFusionEngine:
         self._latest_quat           = np.asarray(imu_pkt['quat'], dtype=float)
         self._latest_marker_axis_wb = self._imu.get_marker_axis_wb(
             self._latest_quat)
+
+        # Fix D: accumulate attitude history so UWB updates can interpolate
+        # to their own timestamp instead of using the freshest quaternion.
+        if ts is not None:
+            self._quat_hist.append((int(ts), self._latest_quat.copy()))
 
         # Contact detection
         state, _ = self._contact.process(imu_pkt['force'])
@@ -731,15 +873,26 @@ class AsyncEKFFusionEngine:
                       f"{n}/{self._COLD_N}  raw=({px:.3f},{py:.3f})")
                 return (np.array([px, py]), np.zeros(2), [], [])
 
+        # -- Fix D: time-align attitude to the UWB packet timestamp --------
+        # The freshest quaternion is ~50 ms *newer* than the UWB range
+        # measurement.  For a tilted marker, applying "now" attitude to a
+        # "50 ms ago" range biases the 3D projection.  Slerp the attitude
+        # history back to the UWB ts before computing the marker axis.
+        marker_axis_for_update = self._latest_marker_axis_wb
+        if ts is not None and len(self._quat_hist) > 0:
+            q_at_ts = self._slerp_quat_at(int(ts))
+            marker_axis_for_update = self._imu.get_marker_axis_wb(q_at_ts)
+
         # -- Warm: EKF update -----------------------------------------------
         accepted, rejected = self._ekf.update_uwb(
             filtered_dists,
             quality_weights,
-            marker_axis_wb=self._latest_marker_axis_wb,
+            marker_axis_wb=marker_axis_for_update,
             ts=ts,
         )
 
-        # Update IRLS speed for LIFTED_VEL_DAMP gating
+        # Update IRLS speed for LIFTED_VEL_DAMP gating, and run Fix I
+        # runaway-drift escape in the same pass.
         pos = self._ekf.position
         if pos is not None and self._prev_irls_pos is not None:
             dt_uwb = 0.10  # default ~10 Hz
@@ -748,6 +901,10 @@ class AsyncEKFFusionEngine:
         if pos is not None:
             self._prev_irls_pos = pos.copy()
 
+        # -- Fix I: EKF-vs-IRLS runaway detection --------------------------
+        if pos is not None:
+            self._check_runaway(pos, filtered_dists)
+
         # Warn on prolonged outage
         n_out = self._ekf.consecutive_outage
         if n_out == self._ekf.MAX_CONSEC_OUTAGE:
@@ -755,6 +912,92 @@ class AsyncEKFFusionEngine:
                   f"— velocity damping active")
 
         return self._ekf.position, self._ekf.velocity, accepted, rejected
+
+    # -- Fix D helper: attitude slerp to a specific timestamp --------------
+
+    def _slerp_quat_at(self, ts_us: int) -> np.ndarray:
+        """
+        Linear-interpolate (nlerp) the stored (ts, quat) history to ts_us.
+
+        Nlerp instead of true slerp: the angular delta between adjacent IMU
+        samples at 200 Hz is <1° in practice, so the constant-rate slerp /
+        linear-blend-renormalise distinction is sub-noise.  Shortest-path
+        correction (negate one quat if the dot product is negative) keeps
+        us on the correct hemisphere.
+        """
+        hist = self._quat_hist
+        if not hist:
+            return (self._latest_quat if self._latest_quat is not None
+                    else np.array([0.0, 0.0, 0.0, 1.0]))
+        if ts_us <= hist[0][0]:
+            return hist[0][1]
+        if ts_us >= hist[-1][0]:
+            return hist[-1][1]
+        # Linear scan is fine — maxlen is ~40.
+        prev_ts, prev_q = hist[0]
+        for t, q in list(hist)[1:]:
+            if prev_ts <= ts_us <= t:
+                span = float(t - prev_ts)
+                if span <= 0.0:
+                    return q
+                alpha = (ts_us - prev_ts) / span
+                q0 = prev_q
+                q1 = q
+                if float(np.dot(q0, q1)) < 0.0:
+                    q1 = -q1
+                blended = (1.0 - alpha) * q0 + alpha * q1
+                n = float(np.linalg.norm(blended))
+                return blended / n if n > 1e-9 else q0
+            prev_ts, prev_q = t, q
+        return self._latest_quat
+
+    # -- Fix I helper: EKF vs IRLS runaway escape --------------------------
+
+    def _check_runaway(self, pos_ekf: np.ndarray, dists) -> None:
+        """
+        Compare the EKF position against a fresh IRLS fix.  When the two
+        disagree by more than RUNAWAY_DIST_M for RUNAWAY_HOLD consecutive
+        UWB cycles AND the IRLS fix itself is on-board (so we don't re-init
+        on an IRLS outlier), soft-reset the EKF to the IRLS fix and flush
+        the per-anchor muting / range-KF state.
+        """
+        try:
+            pos_irls_xyz, _ = self._irls.solve(dists)
+        except Exception:
+            return
+        irls_2d = np.array([float(pos_irls_xyz[0]), float(pos_irls_xyz[1])])
+        if not np.all(np.isfinite(irls_2d)):
+            return
+
+        board_max = float(np.max(self.anchors[:, :2])) + self._COLD_MARGIN
+        irls_sane = (-self._COLD_MARGIN <= irls_2d[0] <= board_max and
+                     -self._COLD_MARGIN <= irls_2d[1] <= board_max)
+        if not irls_sane:
+            # IRLS itself is garbage — don't use it as a reset target.
+            self._runaway_count = 0
+            return
+
+        dist_mismatch = float(np.linalg.norm(pos_ekf - irls_2d))
+        if dist_mismatch <= self._ekf.RUNAWAY_DIST_M:
+            self._runaway_count = 0
+            return
+
+        self._runaway_count += 1
+        if self._runaway_count < self._ekf.RUNAWAY_HOLD:
+            return
+
+        print(f"[EKF] Runaway escape: EKF ({pos_ekf[0]:.2f}, {pos_ekf[1]:.2f}) "
+              f"vs IRLS ({irls_2d[0]:.2f}, {irls_2d[1]:.2f}) = "
+              f"{dist_mismatch:.2f} m — soft re-init")
+        self._ekf.initialize(irls_2d[0], irls_2d[1])
+        self._ekf._range_bank.reset()
+        self._ekf._mute_remain[:]   = 0
+        self._ekf._consec_reject[:] = 0
+        self._ekf._zupt_stall_count = 0
+        self._ekf._zupt_accel_buf.clear()
+        self._ekf._vel_dir_buf.clear()
+        self._ekf._bias_freeze      = False
+        self._runaway_count         = 0
 
     # -- properties ---------------------------------------------------------
 

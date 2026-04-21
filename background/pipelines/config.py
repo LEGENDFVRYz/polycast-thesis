@@ -28,12 +28,12 @@ class IMUConfig:
     sample_rate_hz: float = 50.0
 
     # ZUPT
-    zupt_acc_threshold: float = 1.15
-    zupt_jerk_threshold: float = 22.5
-    zupt_min_duration_s: float = 0.05
+    zupt_acc_threshold: float = 0.90
+    zupt_jerk_threshold: float = 100.5
+    zupt_min_duration_s: float = 0.15
 
     # Contact / force
-    force_contact_threshold: float = 1000.0
+    force_contact_threshold: float = 100.0
 
     # Physics
     gravity_ms2: float = 9.81
@@ -51,15 +51,18 @@ class IMUConfig:
 @dataclass(frozen=True)
 class UWBConfig:
     range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
+    # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
+
     rate_hz: float = 9.0
 
-    ema_alpha: float = 0.25
+    ema_alpha: float = 1.0
     max_range_jump_m: float = 0.40
     median_window: int = 5
 
     outlier_speed_limit_ms: float = 2.0
+    drop_speed_outliers: bool = True
     num_anchors: int = 4
-    pos_ema_alpha: float = 0.15
+    pos_ema_alpha: float = 1.0
     trilat_max_residual: float = 0.15
 
 
@@ -111,22 +114,25 @@ class MarkerConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
-    # Process noise
-    sigma_a: float           = 0.30      # m/s²   IMU accel white-noise std
-    sigma_b_a: float         = 0.003     # m/s³   accel-bias random walk
-    sigma_zupt: float        = 0.005     # m/s    ZUPT pseudo-measurement noise
-    # Measurement noise (UWB position)
-    sigma_uwb: float         = 0.05      # m
-    sigma_trilat: float      = 0.05      # m      nominal trilat RMS residual
-    k_nlos: float            = 50.0
+    # 1. DROP process noise. Tell the filter the IMU is practically perfect.
+    # This prevents the uncertainty (P) from exploding between UWB packets.
+    sigma_a: float           = 0.05      # (Down from 0.32)
+    sigma_b_a: float         = 0.001     # (Down from 0.006)
+    sigma_zupt: float        = 0.005     
+    
+    # 2. INFLATE measurement noise. Tell the filter the UWB is terrible.
+    # This mathematically prevents the Kalman Gain from snapping to the UWB.
+    sigma_uwb: float         = 0.10      # (Up from 0.08 - roughly 30cm leash)
+    sigma_trilat: float      = 0.05      
+    k_nlos: float            = 50.00 
     r_scale_max: float       = 100.0
-    hard_reject_mult: float  = 3.0       # × cfg.uwb.trilat_max_residual
-    # Turn (sharp-stroke) detection
-    turn_omega_threshold: float = 0.698  # rad/s (40 dps)
-    turn_k_q: float             = 4.0
-    turn_n_post: int            = 3
-    # Nominal-state ring buffer for UWB↔IMU time interpolation
-    state_buffer_size: int      = 10
+    hard_reject_mult: float  = 3.0       
+    
+    turn_omega_threshold: float = 1.047  
+    turn_k_q: float             = 1.0    
+    turn_n_post: int            = 2      
+    
+    state_buffer_size: int      = 20
     # Initial covariance (diagonal, one value per block in m/s/m/s²)
     p0_pos: float    = 0.20
     p0_vel: float    = 0.10

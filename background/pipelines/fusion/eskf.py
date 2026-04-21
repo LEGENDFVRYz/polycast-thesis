@@ -34,11 +34,58 @@ Output event:
     }
 """
 
+import math
 from collections import deque
 
 import numpy as np
 
 from background.pipelines.config import cfg
+
+
+def _q_to_rotation(q: np.ndarray) -> np.ndarray:
+    """Quaternion [x, y, z, w] → 3×3 rotation matrix (body → world)."""
+    x, y, z, w = q
+    return np.array([
+        [1 - 2*(y*y + z*z),   2*(x*y - w*z),       2*(x*z + w*y)    ],
+        [    2*(x*y + w*z),   1 - 2*(x*x + z*z),    2*(y*z - w*x)    ],
+        [    2*(x*z - w*y),       2*(y*z + w*x),     1 - 2*(x*x + y*y)],
+    ], dtype=float)
+
+
+def _quat_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    """q1 ⊗ q2, both stored as [x, y, z, w]."""
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return np.array([
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2,
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+    ], dtype=float)
+
+
+def _quat_conjugate(q: np.ndarray) -> np.ndarray:
+    """Conjugate == inverse for unit quaternion: negate xyz, keep w."""
+    return np.array([-q[0], -q[1], -q[2], q[3]], dtype=float)
+
+
+def _slerp(q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
+    """Spherical linear interpolation between two unit quaternions."""
+    dot = float(np.clip(np.dot(q1, q2), -1.0, 1.0))
+    if dot < 0.0:
+        q2 = -q2
+        dot = -dot
+    if dot > 0.9995:
+        result = q1 + t * (q2 - q1)
+        return result / np.linalg.norm(result)
+    theta0 = math.acos(dot)
+    theta   = theta0 * t
+    q_perp  = q2 - dot * q1
+    n = float(np.linalg.norm(q_perp))
+    if n < 1e-9:
+        return q1.copy()
+    q_perp /= n
+    return math.cos(theta) * q1 + math.sin(theta) * q_perp
 
 
 class ESKF:
@@ -67,17 +114,22 @@ class ESKF:
             deque(maxlen=ecfg.state_buffer_size)
         )
 
-        # ── Step-7 turn tracking (dormant until Step 7) ─────────────────────
+        # ── Step-7 turn tracking ────────────────────────────────────────────
         self._prev_quat: np.ndarray | None = None
         self._turn_cooldown = 0
         self._omega_in_plane_last = 0.0
         self._turn_flag_last = False
+
+        # ── Contact-edge tracking (for stroke-start soft ZUPT) ──────────────
+        self._prev_stroke_active = False
 
         # ── Book-keeping ────────────────────────────────────────────────────
         self.last_ts: int | None = None
         self.last_uwb = self.p.copy()
         self._last_innovation_norm = 0.0
         self._last_r_scale = 1.0
+        self._uwb_accepted = 0
+        self._uwb_rejected = 0
 
         self._board_w = bx
         self._board_h = by
@@ -101,33 +153,46 @@ class ESKF:
         self.__init__()
 
     # ────────────────────────────────────────────────────────────────────────
-    # IMU path — prediction + ZUPT update (Step 2)
+    # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
     # ────────────────────────────────────────────────────────────────────────
     def _on_imu(self, ev: dict, ts: int) -> dict:
         dt_s = self._advance_clock(ts)
+
+        # Step 7: Update quaternion first so omega and Q use the current sample.
+        q_raw = ev.get('quat')
+        q_new = np.asarray(q_raw, dtype=float) if q_raw is not None else self.q.copy()
+        self._update_omega_and_turn(q_new, dt_s)
+        self.q = q_new
 
         # 1. Nominal state propagation (mid-point integration).
         acc = np.asarray(ev.get('acc_board', (0.0, 0.0)), dtype=float)
         a   = acc - self.b_a
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
+        # Velocity drag — damps rotational-acc integration runaway between UWB corrections.
+        # IMU sits 200mm from tip: circular motion generates ~1000 m/s3 apparent acc.
+        # Drag prevents that from accumulating into multi-cm position error per UWB cycle.
+        _DRAG = 5.0  # s⁻¹
+        self.v *= max(0.0, 1.0 - _DRAG * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
+        #    Q is now turn-aware — σ_a is inflated during sharp-stroke windows.
         F = self._build_F(dt_s)
         Q = self._build_Q(dt_s)
         self.P = F @ self.P @ F.T + Q
 
         # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
-        #    flags the pen as still. Proper Kalman update — replaces the
-        #    hard `v := 0` assignment of the baseline filter.
+        #    flags the pen as still.
         if ev.get('is_static', False):
             self._zupt_update()
 
-        # Track quaternion for the lever-arm rotation (Step 6) and
-        # ω-derivation (Step 7).
-        q = ev.get('quat')
-        if q is not None:
-            self.q = np.asarray(q, dtype=float)
+        # 4. Contact rising-edge soft ZUPT: tip just pressed on board →
+        #    tip velocity should be near zero (pen end may still wiggle, but
+        #    the tip is constrained). Looser sigma than normal ZUPT.
+        stroke_active_now = bool(ev.get('stroke_active', False))
+        if stroke_active_now and not self._prev_stroke_active:
+            self._zupt_soft_update(sigma=0.05)
+        self._prev_stroke_active = stroke_active_now
 
         # Snapshot for UWB time interpolation (Step 4 consumes this).
         self._state_buf.append((ts, self.p.copy(), self.v.copy(), self.q.copy()))
@@ -143,23 +208,39 @@ class ESKF:
         )
 
     # ────────────────────────────────────────────────────────────────────────
-    # UWB path — Kalman correction (Step 3, static R)
-    #   Step 5 adds NLOS-adaptive R. Step 4 adds time interpolation.
+    # UWB path — Kalman correction (Steps 3+4)
+    #   Step 5 adds NLOS-adaptive R.
     #   Step 6 adds lever-arm compensation on the measurement.
     # ────────────────────────────────────────────────────────────────────────
     def _on_uwb(self, ev: dict, ts: int) -> dict:
         self._advance_clock(ts)
 
-        # pos_clean from position.py is EMA-smoothed + clamped. We'll swap
-        # to pos_raw + speed_flag once Step 5 relaxes position.py's gate.
-        uwb = ev.get('pos_clean') or ev.get('pos_raw')
+        # Use pos_raw — position.py's EMA would double-smooth what ESKF already manages.
+        # Fall back to pos_clean if raw is absent (shouldn't happen in normal flow).
+        uwb = ev.get('pos_raw') or ev.get('pos_clean')
         if uwb is None:
             return self._emit(ts, 'POSITION', 'UWB_DROPPED', 0, False)
 
         z = np.asarray(uwb, dtype=float)
         self.last_uwb = z.copy()
 
-        self._uwb_update(z)
+        # Time interpolation: innovation against state at UWB timestamp (Step 4).
+        ts_uwb = ev.get('ts_hw', ts)
+        interp = self._interpolate_at(ts_uwb)
+        p_ref  = interp[0] if interp is not None else None
+
+        # Lever-arm: per bg_rules.md the pen is held perpendicular to the board
+        # (constant offset ≈ 0) — skip rotation-based correction for this iteration.
+        z_tip = z
+
+        # Step 5: NLOS-adaptive R — consume trilateration residual.
+        solve_error = float(ev.get('solve_error', 0.0))
+
+        accepted = self._uwb_update(z_tip, p_ref, solve_error)
+        if not accepted:
+            self._uwb_rejected += 1
+            return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
+        self._uwb_accepted += 1
         self._clamp_to_board()
 
         return self._emit(
@@ -170,20 +251,43 @@ class ESKF:
             active   = False,
         )
 
-    def _uwb_update(self, z: np.ndarray):
-        """Standard Kalman update with  H = [I 0 0]  (direct position obs).
-        Static R in Step 3; Step 5 swaps R for the NLOS-adaptive form."""
+    def _uwb_update(self,
+                    z:           np.ndarray,
+                    p_ref:       np.ndarray | None = None,
+                    solve_error: float = 0.0) -> bool:
+        """Kalman update with H = [I 0 0].
+
+        p_ref        — time-interpolated tip position at UWB ts (Step 4).
+        solve_error  — trilateration RMS residual; drives adaptive R (Step 5).
+
+        Returns True if update was applied, False if hard-rejected (NLOS).
+        """
+        ecfg = cfg.fusion_eskf
+
+        # Hard reject: trilateration residual far exceeds nominal (NLOS).
+        hard_thresh = ecfg.hard_reject_mult * cfg.uwb.trilat_max_residual
+        if solve_error > hard_thresh:
+            self._last_innovation_norm = 0.0
+            self._last_r_scale = ecfg.r_scale_max
+            return False
+
+        # Adaptive R — scale measurement noise by NLOS severity.
+        ratio   = solve_error / ecfg.sigma_trilat if ecfg.sigma_trilat > 0 else 0.0
+        r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
+        r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
+        self._last_r_scale = r_scale
+
         H = np.zeros((2, 6))
         H[0, 0] = 1.0
         H[1, 1] = 1.0
 
-        sigma = cfg.fusion_eskf.sigma_uwb
-        R = (sigma * sigma) * np.eye(2)
+        sigma = ecfg.sigma_uwb
+        R = (sigma * sigma) * r_scale * np.eye(2)
 
-        # Innovation  y = z − H·x_nom = z − p
-        y = z - self.p
+        # Innovation  y = z − p_ref  (time-aligned)
+        p_nom = p_ref if p_ref is not None else self.p
+        y = z - p_nom
         self._last_innovation_norm = float(np.linalg.norm(y))
-        self._last_r_scale = 1.0
 
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
@@ -196,6 +300,38 @@ class ESKF:
         I = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        return True
+
+    def _interpolate_at(self, ts_uwb: int):
+        """Bracket-and-lerp lookup in the IMU ring buffer.
+
+        Returns (p, v, q) interpolated at ts_uwb, or None when the buffer
+        has fewer than 2 entries or ts_uwb is newer than all buffered states.
+        """
+        if len(self._state_buf) < 2:
+            return None
+
+        buf = list(self._state_buf)   # oldest → newest
+
+        # UWB timestamp predates the oldest buffered IMU state — use oldest.
+        if ts_uwb <= buf[0][0]:
+            _, p0, v0, q0 = buf[0]
+            return p0.copy(), v0.copy(), q0.copy()
+
+        # Find the bracketing pair.
+        for i in range(len(buf) - 1):
+            t1, p1, v1, q1 = buf[i]
+            t2, p2, v2, q2 = buf[i + 1]
+            if t1 <= ts_uwb <= t2:
+                alpha = (ts_uwb - t1) / (t2 - t1) if t2 != t1 else 0.0
+                return (
+                    (1.0 - alpha) * p1 + alpha * p2,
+                    (1.0 - alpha) * v1 + alpha * v2,
+                    _slerp(q1, q2, alpha),
+                )
+
+        # ts_uwb is newer than all buffered states — caller uses current p.
+        return None
 
     # ────────────────────────────────────────────────────────────────────────
     # Filter math
@@ -220,10 +356,12 @@ class ESKF:
 
         Accel white-noise (σ_a) enters via the kinematic chain — it couples
         δp and δv with cross-covariance. Bias random walk (σ_b_a) drives
-        only the δb_a block. Turn-aware inflation of σ_a lands in Step 7.
+        only the δb_a block. σ_a is inflated during sharp-stroke windows
+        (turn_flag=True) so UWB can correct shape aggressively at corners.
         """
         ecfg = cfg.fusion_eskf
-        sa2 = ecfg.sigma_a * ecfg.sigma_a
+        sa_eff = ecfg.sigma_a * (ecfg.turn_k_q if self._turn_flag_last else 1.0)
+        sa2 = sa_eff * sa_eff
         sb2 = ecfg.sigma_b_a * ecfg.sigma_b_a
 
         I2 = np.eye(2)
@@ -241,11 +379,15 @@ class ESKF:
 
     def _zupt_update(self):
         """Kalman update for the zero-velocity pseudo-measurement (z = 0)."""
+        self._zupt_soft_update(sigma=cfg.fusion_eskf.sigma_zupt)
+
+    def _zupt_soft_update(self, sigma: float):
+        """Zero-velocity pseudo-measurement with caller-supplied noise sigma."""
         H = np.zeros((2, 6))
         H[0, 2] = 1.0
         H[1, 3] = 1.0
 
-        R = (cfg.fusion_eskf.sigma_zupt ** 2) * np.eye(2)
+        R = (sigma ** 2) * np.eye(2)
 
         # Innovation y = z − H·x_nom  with z = 0  →  y = −v_nom
         y = -self.v.copy()
@@ -266,6 +408,55 @@ class ESKF:
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
     # ────────────────────────────────────────────────────────────────────────
+    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float):
+        """Derive in-plane angular velocity from Δquat; update turn flag.
+
+        ω ≈ 2·(q_k ⊗ q_{k-1}⁻¹).xyz / dt  (small-angle approximation).
+        If ω_in_plane exceeds threshold, inflate Q for turn_n_post frames.
+        """
+        ecfg = cfg.fusion_eskf
+        if self._prev_quat is not None and dt_s > 1e-6:
+            q_delta = _quat_multiply(q_new, _quat_conjugate(self._prev_quat))
+            if q_delta[3] < 0:           # choose shorter arc
+                q_delta = -q_delta
+            omega_body  = 2.0 * q_delta[0:3] / dt_s
+            omega_world = _q_to_rotation(q_new) @ omega_body
+
+            axis_map = {'x': 0, 'y': 1, 'z': 2}
+            ax0 = axis_map[cfg.imu.board_axes[0]]
+            ax1 = axis_map[cfg.imu.board_axes[1]]
+            ω_ip = math.sqrt(omega_world[ax0]**2 + omega_world[ax1]**2)
+
+            if ω_ip > ecfg.turn_omega_threshold:
+                self._turn_cooldown = ecfg.turn_n_post
+            self._omega_in_plane_last = ω_ip
+        else:
+            self._omega_in_plane_last = 0.0
+
+        if self._turn_cooldown > 0:
+            self._turn_flag_last = True
+            self._turn_cooldown -= 1
+        else:
+            self._turn_flag_last = False
+
+        self._prev_quat = q_new.copy()
+
+    def _uwb_lever_arm_board(self, q: np.ndarray) -> np.ndarray:
+        """Return the 2D board-plane offset from tip to UWB tag.
+
+        r_UWB_body (along pen z-axis) is rotated to world frame via q, then
+        projected onto the board plane defined by cfg.imu.board_axes.
+        For a perpendicular pen the offset is ~0; for a tilted pen it is real.
+        """
+        r_body = np.asarray(cfg.marker.r_uwb_body_m, dtype=float)
+        R      = _q_to_rotation(q)
+        r_world = R @ r_body
+
+        axis_map = {'x': 0, 'y': 1, 'z': 2}
+        ax0 = axis_map[cfg.imu.board_axes[0]]
+        ax1 = axis_map[cfg.imu.board_axes[1]]
+        return np.array([r_world[ax0], r_world[ax1]], dtype=float)
+
     def _advance_clock(self, ts: int) -> float:
         """Returns dt (s) since the previous event; handles gaps and init."""
         if self.last_ts is None:
@@ -301,6 +492,8 @@ class ESKF:
                 'omega_in_plane':  self._omega_in_plane_last,
                 'turn_flag':       self._turn_flag_last,
                 'b_a':             (float(self.b_a[0]), float(self.b_a[1])),
+                'uwb_accepted':    self._uwb_accepted,
+                'uwb_rejected':    self._uwb_rejected,
             },
         }
 
@@ -396,7 +589,10 @@ if __name__ == '__main__':
                 print(f"  P_pos_trace: {e['P_pos_trace']:.4f} m")
                 print(f"  Bias b_a   : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
                 print(f"  Last |y|   : {e['innovation_norm']:.4f} m  (UWB innovation)")
-                print(f"  IMU / UWB  : {imu_count} / {uwb_count}")
+                print(f"  R scale    : {e['r_scale']:.2f}  (1.0=clean, high=NLOS)")
+                turn_str = "TURN" if e['turn_flag'] else "    "
+                print(f"  ω in-plane : {e['omega_in_plane']:6.3f} rad/s  [{turn_str}]")
+                print(f"  IMU / UWB  : {imu_count} / {uwb_count}  (accepted={e['uwb_accepted']} rejected={e['uwb_rejected']})")
                 print("=" * 52)
                 last_print_time = now
 

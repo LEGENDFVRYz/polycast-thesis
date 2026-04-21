@@ -125,6 +125,36 @@ class IMUPreprocessor:
         # --- Linear Acceleration ---
         acc_ms2 = acc  # Note: Hardware outputs m/s^2 natively.
 
+
+
+        # --- Rotation ---
+        q_norm = _qnormalize(q)
+        acc_world_raw = _quat_rotate(q_norm, acc_ms2)
+
+        # ==========================================================
+        # DUAL-PATH EMA ARCHITECTURE
+        # ==========================================================
+        
+        # PATH A: Raw Data for ESKF (Trust the filter, minimal lag)
+        acc_world_eskf = acc_world_raw 
+        acc_board_eskf = _project_board_axes(acc_world_eskf)
+
+        # PATH B: Heavy Smoothing exclusively for ZUPT (Kills 110mm Tremor)
+        zupt_alpha = 0.95  # 95% old data, 5% new data (Heavy Low-Pass)
+        
+        if getattr(self, '_prev_acc_world_zupt', None) is None:
+            self._prev_acc_world_zupt = acc_world_raw
+            self._prev_acc_world_zupt_old = acc_world_raw
+
+        acc_world_zupt = (
+            zupt_alpha * self._prev_acc_world_zupt[0] + (1 - zupt_alpha) * acc_world_raw[0],
+            zupt_alpha * self._prev_acc_world_zupt[1] + (1 - zupt_alpha) * acc_world_raw[1],
+            zupt_alpha * self._prev_acc_world_zupt[2] + (1 - zupt_alpha) * acc_world_raw[2]
+        )
+        self._prev_acc_world_zupt = acc_world_zupt
+
+
+
         # --- Body-Frame Jerk ---
         if self._prev_acc_body is not None and dt_s > 0:
             delta_body = _vsub(acc_ms2, self._prev_acc_body)
@@ -154,11 +184,25 @@ class IMUPreprocessor:
         # --- Board Projection ---
         acc_board = _project_board_axes(acc_world)
 
+
+
+        # --- Smoothed ZUPT Jerk ---
+        # Compute jerk from the heavily smoothed ZUPT acceleration, NOT raw sensor acc.
+        # This prevents the 160+ m/s³ micro-tremor spikes from blocking ZUPT.
+        if dt_s > 0:
+            delta_zupt = _vsub(acc_world_zupt, self._prev_acc_world_zupt_old)
+            zupt_jerk = _vmag(delta_zupt) / dt_s
+        else:
+            zupt_jerk = 0.0
+        self._prev_acc_world_zupt_old = acc_world_zupt
+
         # --- ZUPT (motion detector) ---
-        lin_mag = _vmag(acc_world)
+        lin_mag_zupt = _vmag(acc_world_zupt)
+        
+        # Now you can keep your thresholds tight and accurate!
         still_now = (
-            lin_mag < cfg.imu.zupt_acc_threshold and
-            jerk    < cfg.imu.zupt_jerk_threshold
+            lin_mag_zupt < cfg.imu.zupt_acc_threshold and
+            zupt_jerk < cfg.imu.zupt_jerk_threshold
         )
 
         if still_now:
@@ -169,6 +213,8 @@ class IMUPreprocessor:
 
         if self._still_streak >= self._zupt_min_samples:
             self._zupt_active = True
+
+
 
         # --- Force Contact ---
         force = ev.get('force', 0.0)

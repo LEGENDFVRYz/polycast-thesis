@@ -25,11 +25,11 @@ class SerialConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class IMUConfig:
-    sample_rate_hz: float = 50.0
+    sample_rate_hz: float = 200.0
 
     # ZUPT
-    zupt_acc_threshold: float = 0.90
-    zupt_jerk_threshold: float = 47.5
+    zupt_acc_threshold: float = 0.50
+    zupt_jerk_threshold: float = 21.5
     zupt_min_duration_s: float = 0.15
 
     # Contact / force

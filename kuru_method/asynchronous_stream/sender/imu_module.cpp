@@ -12,6 +12,8 @@
 #include "imu_module.h"
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
+#include <sh2.h>           // SH-2 API: sh2_saveDcdNow, sh2_setCalConfig
+#include <sh2_SensorValue.h>
 
 // ── Hardware ──────────────────────────────────────────────────────────
 #define IMU_RESET_PIN 4
@@ -28,6 +30,8 @@ void initIMU() {
     delay(1000);
 
     Wire.begin();
+    // 400 kHz I2C — required headroom for paired 200 Hz reports (Item D).
+    Wire.setClock(400000);
 
     // The external 10k resistor acts as the hardware pulldown.
     pinMode(FSR_PIN, INPUT);
@@ -43,13 +47,27 @@ void initIMU() {
     }
 
     if (imuFound) {
-        // 10 000 µs interval = 100 Hz for both reports
-        bno08x.enableReport(SH2_ROTATION_VECTOR,     10000);
-        bno08x.enableReport(SH2_LINEAR_ACCELERATION,  10000);
-        Serial.println("[IMU] BNO085 initialised at 100 Hz. Raw FSR enabled.");
+        // 5 000 µs interval = 200 Hz paired reports (Item D).  Aggregate
+        // SHTP throughput on I2C tops out near 600 reports/sec; two paired
+        // reports at 200 Hz = 400/sec, comfortably under the limit.
+        bno08x.enableReport(SH2_ROTATION_VECTOR,     5000);
+        bno08x.enableReport(SH2_LINEAR_ACCELERATION,  5000);
+        Serial.println("[IMU] BNO085 initialised at 200 Hz paired. Raw FSR enabled.");
     } else {
         Serial.println("[IMU] BNO085 init failed — check I2C wiring and RST pin.");
     }
+}
+
+
+// ── requestDcdSave() ─────────────────────────────────────────────────
+// Called via remote command (CAL).  Enables runtime self-cal on accel,
+// gyro, and mag, then persists the current DCD to chip flash.  On the
+// next power-up the BNO085 restores DCD automatically.
+int requestDcdSave() {
+    if (!imuFound) return -1;
+    // Keep all background self-cal sources enabled.
+    sh2_setCalConfig(SH2_CAL_ACCEL | SH2_CAL_GYRO | SH2_CAL_MAG);
+    return sh2_saveDcdNow();
 }
 
 

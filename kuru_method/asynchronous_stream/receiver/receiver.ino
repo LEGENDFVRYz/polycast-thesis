@@ -41,6 +41,23 @@ struct __attribute__((packed)) UwbPacket {
     uint32_t ts;
 };
 
+// ── Control packets (Item D — DCD calibration) ───────────────────────
+struct __attribute__((packed)) CtrlCmdPacket {
+    uint8_t  type;               // 0x10  receiver -> sender
+    uint8_t  op;                 // 1 = CAL_SAVE
+};
+
+struct __attribute__((packed)) CtrlReplyPacket {
+    uint8_t  type;               // 0x11  sender -> receiver
+    uint8_t  op;
+    int8_t   status;             // 0 = SH2_OK
+};
+
+// Auto-learned sender MAC (set on first ImuPacket / UwbPacket).
+static uint8_t senderMAC[6] = {0};
+static bool    senderMACKnown = false;
+static bool    senderPeerAdded = false;
+
 // ── Ring buffer ──────────────────────────────────────────────────────
 // 16 slots ≈ 145 ms of buffering at 110 packets/sec.
 #define BUF_SLOTS 16
@@ -55,6 +72,12 @@ static volatile uint8_t  bufTail = 0;
 // ── ESP-NOW receive callback ─────────────────────────────────────────
 void OnDataRecv(const esp_now_recv_info_t* info,
                 const uint8_t* data, int len) {
+    // Auto-learn sender MAC so we can send CAL commands back.
+    if (!senderMACKnown && info != nullptr) {
+        memcpy(senderMAC, info->src_addr, 6);
+        senderMACKnown = true;
+    }
+
     uint8_t next = (bufHead + 1) % BUF_SLOTS;
     if (next == bufTail) return;       // buffer full — drop packet
 
@@ -64,9 +87,43 @@ void OnDataRecv(const esp_now_recv_info_t* info,
 }
 
 
+// ── Send CAL request to sender (Item D) ──────────────────────────────
+static void sendCalRequest() {
+    if (!senderMACKnown) {
+        Serial.println("CAL:ERR no_sender_mac");
+        return;
+    }
+
+    // Add sender as ESP-NOW peer the first time.
+    if (!senderPeerAdded) {
+        esp_now_peer_info_t peer = {};
+        memcpy(peer.peer_addr, senderMAC, 6);
+        peer.channel = WIFI_CHANNEL;
+        peer.ifidx   = WIFI_IF_STA;
+        peer.encrypt = false;
+        if (esp_now_add_peer(&peer) != ESP_OK) {
+            Serial.println("CAL:ERR add_peer");
+            return;
+        }
+        senderPeerAdded = true;
+    }
+
+    CtrlCmdPacket cmd;
+    cmd.type = 0x10;
+    cmd.op   = 1;   // CAL_SAVE
+    esp_err_t r = esp_now_send(senderMAC, (uint8_t*)&cmd, sizeof(cmd));
+    if (r != ESP_OK) {
+        Serial.print("CAL:ERR send=");
+        Serial.println((int)r);
+    } else {
+        Serial.println("CAL:SENT");
+    }
+}
+
+
 // ── Setup ────────────────────────────────────────────────────────────
 void setup() {
-    Serial.begin(115200);
+    Serial.begin(921600);
 
     WiFi.mode(WIFI_STA);
     WiFi.disconnect();
@@ -83,8 +140,33 @@ void setup() {
 }
 
 
+// ── Read serial line, return true if a complete CAL\n was received ───
+static bool serialPollCal() {
+    static char    buf[16];
+    static uint8_t pos = 0;
+    while (Serial.available()) {
+        char c = (char)Serial.read();
+        if (c == '\r') continue;
+        if (c == '\n') {
+            buf[pos] = '\0';
+            bool isCal = (pos == 3 &&
+                          buf[0] == 'C' && buf[1] == 'A' && buf[2] == 'L');
+            pos = 0;
+            if (isCal) return true;
+        } else if (pos < sizeof(buf) - 1) {
+            buf[pos++] = c;
+        } else {
+            pos = 0;   // overflow — discard
+        }
+    }
+    return false;
+}
+
+
 // ── Loop — drain ring buffer and print CSV ───────────────────────────
 void loop() {
+    if (serialPollCal()) sendCalRequest();
+
     while (bufTail != bufHead) {
         uint8_t  idx  = bufTail;
         uint8_t  type = pktBuf[idx][0];
@@ -120,6 +202,18 @@ void loop() {
             Serial.print(pkt.d2, 4);     Serial.print(',');
             Serial.print(pkt.d3, 4);     Serial.print(',');
             Serial.println(pkt.ts);
+        }
+
+        // ── Control reply (Item D) ───────────────────────────────────
+        else if (type == 0x11 && len == sizeof(CtrlReplyPacket)) {
+            CtrlReplyPacket rep;
+            memcpy(&rep, (void*)pktBuf[idx], sizeof(CtrlReplyPacket));
+            if (rep.status == 0) {
+                Serial.println("CAL:OK");
+            } else {
+                Serial.print("CAL:ERR ");
+                Serial.println((int)rep.status);
+            }
         }
 
         // Advance tail

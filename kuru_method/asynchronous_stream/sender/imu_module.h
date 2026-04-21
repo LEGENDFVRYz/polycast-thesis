@@ -14,8 +14,9 @@ struct __attribute__((packed)) ImuPacket {
 };
 
 /**
- * @brief Initialises the BNO085 over I2C and the FSR voltage divider on A0.
- *        Enables Rotation Vector and Linear Acceleration at 100 Hz.
+ * @brief Initialises the BNO085 over I2C at 400 kHz and the FSR voltage
+ *        divider on A0.  Enables Rotation Vector and Linear Acceleration at
+ *        200 Hz paired (Item D).
  */
 void initIMU();
 
@@ -28,5 +29,14 @@ void initIMU();
  * @return false  No new acceleration event yet (rotation cached internally).
  */
 bool processIMU(ImuPacket* out);
+
+/**
+ * @brief Persist the BNO085 Dynamic Calibration Data (DCD) to internal flash
+ *        so it survives power-cycles.  Triggered remotely by the PC via the
+ *        receiver (Item D).
+ *
+ * @return SH2 status code. 0 (SH2_OK) on success.
+ */
+int requestDcdSave();
 
 #endif // IMU_MODULE_H

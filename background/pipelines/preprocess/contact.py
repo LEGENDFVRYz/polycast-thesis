@@ -62,9 +62,13 @@ class ContactStateDetector:
         self._contact_active = False       
 
         # Drawing duration guard & Stroke Tracking
-        self._draw_start_ts: int | None = None  
-        self._draw_confirmed = False            
-        self._was_drawing = False
+        # A stroke is "live" from the first CONTACT_DRAWING that crosses
+        # min_draw_ms within a contact session, until contact_active drops
+        # (pen-up). Across that span the stroke_id stays stable, even when
+        # the state dips to CONTACT_STATIC — those moments only pause point
+        # logging (stroke_active=False) but do not close the stroke.
+        self._draw_start_ts: int | None = None
+        self._stroke_live = False
         self._stroke_id = 0
 
         # History for diagnostics

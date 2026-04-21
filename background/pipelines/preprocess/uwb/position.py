@@ -35,15 +35,17 @@ class UWBPositionFilter:
         ts = ev['ts_hw']
 
         # ── 1. Velocity Consistency Check (Issue 6 FIXED) ──
+        speed_flag = False
         if self._prev_pos is not None and self._prev_ts is not None:
             dt_s = (ts - self._prev_ts) / 1_000_000.0
             if dt_s > 0:
                 dist = math.hypot(raw_x - self._prev_pos[0], raw_y - self._prev_pos[1])
                 speed = dist / dt_s
-                
+
                 if speed > self.max_speed_ms:
-                    # Physically impossible jump! Drop the event entirely.
-                    return None
+                    speed_flag = True
+                    if cfg.uwb.drop_speed_outliers:
+                        return None
 
         # ── 2. Boundary Clamping ──
         clamped_x = max(0.0, min(self.board_width, raw_x))
@@ -61,7 +63,8 @@ class UWBPositionFilter:
 
         # --- THE FIX: Explicit Axis Definition ---
         # We keep 'pos_clean' untouched so your hardware plotting script doesn't break
-        ev['pos_clean'] = (round(clean_x, 4), round(clean_y, 4))
+        ev['pos_clean']  = (round(clean_x, 4), round(clean_y, 4))
+        ev['speed_flag'] = speed_flag
         
         # We add explicitly labeled axes for Module 7 (The Fusion Node)
         ev['mapped_position'] = {

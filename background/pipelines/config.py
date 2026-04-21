@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM3"
+    port: str = "COM20"
     baud: int = 921600
 
 
@@ -29,7 +29,7 @@ class IMUConfig:
 
     # ZUPT
     zupt_acc_threshold: float = 0.90
-    zupt_jerk_threshold: float = 100.5
+    zupt_jerk_threshold: float = 47.5
     zupt_min_duration_s: float = 0.15
 
     # Contact / force
@@ -55,14 +55,14 @@ class UWBConfig:
 
     rate_hz: float = 9.0
 
-    ema_alpha: float = 1.0
+    ema_alpha: float = 0.25
     max_range_jump_m: float = 0.40
     median_window: int = 5
 
     outlier_speed_limit_ms: float = 2.0
     drop_speed_outliers: bool = True
     num_anchors: int = 4
-    pos_ema_alpha: float = 1.0
+    pos_ema_alpha: float = 0.05
     trilat_max_residual: float = 0.15
 
 
@@ -114,22 +114,23 @@ class MarkerConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
-    # 1. DROP process noise. Tell the filter the IMU is practically perfect.
-    # This prevents the uncertainty (P) from exploding between UWB packets.
-    sigma_a: float           = 0.05      # (Down from 0.32)
-    sigma_b_a: float         = 0.001     # (Down from 0.006)
+    # Process noise
+    sigma_a: float           = 0.15      
+    sigma_b_a: float         = 0.005     
     sigma_zupt: float        = 0.005     
     
-    # 2. INFLATE measurement noise. Tell the filter the UWB is terrible.
-    # This mathematically prevents the Kalman Gain from snapping to the UWB.
-    sigma_uwb: float         = 0.10      # (Up from 0.08 - roughly 30cm leash)
+    # Measurement noise 
+    sigma_uwb: float         = 0.12      # Tightened for faster relocation
     sigma_trilat: float      = 0.05      
-    k_nlos: float            = 50.00 
+    k_nlos: float            = 0.00 
     r_scale_max: float       = 100.0
-    hard_reject_mult: float  = 3.0       
     
-    turn_omega_threshold: float = 1.047  
-    turn_k_q: float             = 1.0    
+    # Raised to 6.0 to stop rejecting valid macro-movements
+    hard_reject_mult: float  = 15.0       
+    
+    # Turn detection - Reactivated with high threshold
+    turn_omega_threshold: float = 1.85    # ~140 dps (Ignores friction, catches corners)
+    turn_k_q: float             = 3.0    # Forces a crisp corner
     turn_n_post: int            = 2      
     
     state_buffer_size: int      = 20

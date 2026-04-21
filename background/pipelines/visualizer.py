@@ -119,7 +119,7 @@ class _IMUTrack:
 
 
 # ── Debug text formatter ───────────────────────────────────────────────────────
-def _format_debug(latest_fused, latest_imu, latest_uwb,
+def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
                   imu_count, uwb_count, closed_count) -> str:
     L = []
     D = '─' * 28
@@ -128,7 +128,7 @@ def _format_debug(latest_fused, latest_imu, latest_uwb,
           '  POLYCAST  PIPELINE DEBUG',
           '══════════════════════════════']
 
-    # ESKF state
+    # ESKF state (general — from latest event, IMU or UWB)
     L += ['', D, '  ESKF / FUSION']
     if latest_fused:
         e  = latest_fused.get('eskf', {})
@@ -140,13 +140,30 @@ def _format_debug(latest_fused, latest_imu, latest_uwb,
             f"  Fused   X: {latest_fused['fused_x']:6.3f}  Y: {latest_fused['fused_y']:6.3f}",
             f"  UWB ref X: {ux:6.3f}  Y: {uy:6.3f}",
             f"  P trace  : {e.get('P_pos_trace', 0):.4f} m",
-            f"  |innov|  : {e.get('innovation_norm', 0):.4f} m",
-            f"  R scale  : {e.get('r_scale', 1.0):.2f}",
             f"  ω plane  : {e.get('omega_in_plane', 0):.3f} r/s{turn_tag}",
             f"  Bias b_a : ({ba[0]:+.4f}, {ba[1]:+.4f})",
         ]
     else:
         L.append('  (waiting for fusion data)')
+
+    # UWB Kalman diagnostics — only valid on POSITION events, tracked separately
+    L += ['', D, '  ESKF / UWB KALMAN']
+    if latest_uwb_fused:
+        e2 = latest_uwb_fused.get('eskf', {})
+        acc_cnt = e2.get('uwb_accepted', 0)
+        rej_cnt = e2.get('uwb_rejected', 0)
+        total   = acc_cnt + rej_cnt
+        rej_pct = 100.0 * rej_cnt / total if total else 0.0
+        L += [
+            f"  K_pos    : {e2.get('K_pos_diag', 0):.4f}  (target 0.10–0.65)",
+            f"  |innov|  : {e2.get('innovation_norm', 0):.4f} m",
+            f"  R scale  : {e2.get('r_scale', 1.0):.2f}",
+            f"  RMS err  : {e2.get('uwb_residual_rms', 0):.4f} m",
+            f"  b_a norm : {e2.get('b_a_norm', 0):.4f} m/s²",
+            f"  Accepted : {acc_cnt}  Rejected: {rej_cnt} ({rej_pct:.1f}%)",
+        ]
+    else:
+        L.append('  (no UWB correction yet)')
 
     # Stroke / IMU state
     L += ['', D, '  STROKE & IMU']
@@ -224,7 +241,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.cur_ink_x     = []
         self.cur_ink_y     = []
 
-        self.latest_fused  = None
+        self.latest_fused     = None
+        self.latest_uwb_fused = None   # last fused event produced by a UWB correction
         self.latest_imu_ev = None
         self.latest_uwb_ev = None
         self.last_uwb_p    = (BW / 2.0, BH / 2.0)
@@ -245,6 +263,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'state', 'stroke_id', 'stroke_active',
             'is_static', 'contact', 'force', 'jerk',
             'P_pos_trace', 'innovation_norm', 'r_scale',
+            'K_pos_diag', 'b_a_norm', 'uwb_residual_rms',
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
         ])
 
@@ -412,9 +431,10 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 
                     fused = self.fusion.process_event(clean)
                     if fused:
-                        self.uwb_count   += 1
-                        self.latest_fused = fused
-                        self._dirty       = True
+                        self.uwb_count        += 1
+                        self.latest_fused      = fused
+                        self.latest_uwb_fused  = fused
+                        self._dirty            = True
 
     # ── Render refresh (called every 1000/RENDER_HZ ms) ───────────────────────
     def _refresh_display(self):
@@ -436,7 +456,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 
         # Debug panel
         txt = _format_debug(
-            self.latest_fused, self.latest_imu_ev, self.latest_uwb_ev,
+            self.latest_fused, self.latest_uwb_fused,
+            self.latest_imu_ev, self.latest_uwb_ev,
             self.imu_count, self.uwb_count, self.closed_count,
         )
         self._debug_label.setText(txt)
@@ -472,6 +493,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{e.get("P_pos_trace", 0):.5f}',
             f'{e.get("innovation_norm", 0):.4f}',
             f'{e.get("r_scale", 1):.3f}',
+            f'{e.get("K_pos_diag", 0):.5f}',
+            f'{e.get("b_a_norm", 0):.5f}',
+            f'{e.get("uwb_residual_rms", 0):.5f}',
             f'{e.get("omega_in_plane", 0):.4f}',
             int(e.get('turn_flag', False)),
             f'{ba[0]:.5f}',

@@ -128,6 +128,8 @@ class ESKF:
         self.last_uwb = self.p.copy()
         self._last_innovation_norm = 0.0
         self._last_r_scale = 1.0
+        self._last_K_pos = 0.0
+        self._last_uwb_residual_rms = 0.0
         self._uwb_accepted = 0
         self._uwb_rejected = 0
 
@@ -288,9 +290,11 @@ class ESKF:
         p_nom = p_ref if p_ref is not None else self.p
         y = z - p_nom
         self._last_innovation_norm = float(np.linalg.norm(y))
+        self._last_uwb_residual_rms = solve_error
 
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
+        self._last_K_pos = float(K[0, 0])
 
         dx = K @ y
         self.p   += dx[0:2]
@@ -486,14 +490,17 @@ class ESKF:
             'stroke_id': sid,
             'stroke_active': active,
             'eskf': {
-                'P_pos_trace':     float(np.sqrt(self.P[0, 0] + self.P[1, 1])),
-                'innovation_norm': self._last_innovation_norm,
-                'r_scale':         self._last_r_scale,
-                'omega_in_plane':  self._omega_in_plane_last,
-                'turn_flag':       self._turn_flag_last,
-                'b_a':             (float(self.b_a[0]), float(self.b_a[1])),
-                'uwb_accepted':    self._uwb_accepted,
-                'uwb_rejected':    self._uwb_rejected,
+                'P_pos_trace':       float(np.sqrt(self.P[0, 0] + self.P[1, 1])),
+                'innovation_norm':   self._last_innovation_norm,
+                'r_scale':           self._last_r_scale,
+                'K_pos_diag':        self._last_K_pos,
+                'b_a_norm':          float(np.linalg.norm(self.b_a)),
+                'uwb_residual_rms':  self._last_uwb_residual_rms,
+                'omega_in_plane':    self._omega_in_plane_last,
+                'turn_flag':         self._turn_flag_last,
+                'b_a':               (float(self.b_a[0]), float(self.b_a[1])),
+                'uwb_accepted':      self._uwb_accepted,
+                'uwb_rejected':      self._uwb_rejected,
             },
         }
 
@@ -586,6 +593,8 @@ if __name__ == '__main__':
                 print("-" * 50)
                 print(f"  Fused Pos  : X: {latest['fused_x']:6.3f} m | Y: {latest['fused_y']:6.3f} m")
                 print(f"  UWB Anchor : X: {latest['uwb_x']:6.3f} m | Y: {latest['uwb_y']:6.3f} m")
+                print(f"  K_pos_diag : X: {e['K_pos_diag']}")
+                print(f"  uwb_residual_rms : X: {e['uwb_residual_rms']}")
                 print(f"  P_pos_trace: {e['P_pos_trace']:.4f} m")
                 print(f"  Bias b_a   : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
                 print(f"  Last |y|   : {e['innovation_norm']:.4f} m  (UWB innovation)")

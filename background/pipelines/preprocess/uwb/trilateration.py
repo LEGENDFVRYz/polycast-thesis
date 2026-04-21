@@ -75,7 +75,7 @@ class UWBSolver:
                 'ts_hw':       ev['ts_hw'],
                 'packet_id':   ev['packet_id'],
                 'pos_raw':     (round(raw_x, 4), round(raw_y, 4)),
-                'solve_error': round(cost, 6)
+                'solve_error': round(rms_error, 6)
             }
 
         except Exception:

@@ -45,6 +45,10 @@ class IMUConfig:
     smooth_alpha_eskf: float = 0.18     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
     acc_is_linear: bool = True
 
+    # High-pass filter (Path C) — strips DC bias drift before ESKF integration
+    hpf_enabled: bool = True
+    hpf_cutoff_hz: float = 0.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
+
 
 # ------------------------------------------------------------------------
 # CONTACT STATE DETECTOR
@@ -145,7 +149,7 @@ class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
     # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
     # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 0.9      # m/s² (was 0.15)
+    sigma_a: float           = 0.6      # m/s² (was 0.15)
     # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
     sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
     sigma_zupt: float        = 0.005     # unchanged — already aggressive
@@ -153,7 +157,7 @@ class FusionESKFConfig:
     # ── Measurement noise ─────────────────────────────────────────────────
     # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
     # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
-    sigma_uwb: float         = 0.035      # m (was 0.12)
+    sigma_uwb: float         = 0.05      # m (was 0.12)
     sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
 
     # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
@@ -191,7 +195,7 @@ class FusionESKFConfig:
 
     # 3c: sigma_uwb scale factor while pen is actively drawing.
     # Pen physically constrained to board → trust UWB more during strokes.
-    contact_sigma_scale: float = 0.70    # 30 % tighter (multiplicative)
+    contact_sigma_scale: float = 0.85    # 30 % tighter (multiplicative)
 
     # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20

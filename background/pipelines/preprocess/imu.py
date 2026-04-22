@@ -25,7 +25,8 @@ Output (processed IMU event):
         'quat':        (qx, qy, qz, qw),    - normalized unit quaternion
         'acc_sensor':  (ax, ay, az),        - raw sensor linear acc (in m/s²)
         'acc_world':   (ax, ay, az),        - rotated & EMA-smoothed (in m/s²)
-        'acc_board':   (bx, bz),            - projected to 2D board plane dynamically
+        'acc_board':   (bx, bz),            - projected to 2D board plane (Path A EMA)
+        'acc_board_hp': (bx, bz),          - HPF-filtered board acc (Path C, bias-stripped)
         'jerk':        float,               - computed in BODY frame
         'is_static':   bool,                - ZUPT decision
         'contact':     bool,                - pen touching board?
@@ -77,9 +78,15 @@ def _project_board_axes(v):
 class IMUPreprocessor:
     def __init__(self):
         # History for Body-Frame Jerk
-        self._prev_acc_body = None  
-        # History for World-Frame EMA Smoothing
-        self._prev_acc_world_clean = None 
+        self._prev_acc_body = None
+        # History for World-Frame EMA Smoothing (Path A — ESKF feed)
+        self._prev_acc_world_clean = None
+        # Path B — heavy EMA state for ZUPT only
+        self._prev_acc_world_zupt = None
+        self._prev_acc_world_zupt_old = None
+        # High-pass filter state (applied on top of Path A, for ESKF bias rejection)
+        self._acc_world_hp_prev = None   # last HPF output y[n-1]
+        self._acc_world_in_prev = None   # last HPF input  x[n-1]
         # Time and ZUPT state
         self._prev_ts = None
         self._still_streak = 0
@@ -149,7 +156,7 @@ class IMUPreprocessor:
 
         # PATH B — Heavy EMA for ZUPT only: kills micro-tremor, never exported.
         zupt_alpha = 0.95
-        if getattr(self, '_prev_acc_world_zupt', None) is None:
+        if self._prev_acc_world_zupt is None:
             self._prev_acc_world_zupt     = acc_world_raw
             self._prev_acc_world_zupt_old = acc_world_raw
 
@@ -162,6 +169,29 @@ class IMUPreprocessor:
 
         # --- Board Projection (Path A — ESKF feed) ---
         acc_board = _project_board_axes(acc_world)
+
+        # PATH C — 1st-order High-Pass Filter on acc_world (ITrackU Step 2).
+        # Strips DC / low-frequency bias drift that would double-integrate into
+        # position runaway. Cutoff f_c = cfg.imu.hpf_cutoff_hz (default 0.5 Hz).
+        # Formula: y[n] = α·(y[n-1] + x[n] − x[n-1]),  α = RC/(RC+dt)
+        if cfg.imu.hpf_enabled:
+            RC      = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
+            alpha_h = RC / (RC + dt_s)
+            if self._acc_world_in_prev is None:
+                # First sample: output initialised to zero to avoid a transient spike.
+                acc_world_hp = (0.0, 0.0, 0.0)
+                self._acc_world_hp_prev = acc_world_hp
+            else:
+                acc_world_hp = (
+                    alpha_h * (self._acc_world_hp_prev[0] + acc_world[0] - self._acc_world_in_prev[0]),
+                    alpha_h * (self._acc_world_hp_prev[1] + acc_world[1] - self._acc_world_in_prev[1]),
+                    alpha_h * (self._acc_world_hp_prev[2] + acc_world[2] - self._acc_world_in_prev[2]),
+                )
+                self._acc_world_hp_prev = acc_world_hp
+            self._acc_world_in_prev = acc_world
+            acc_board_hp = _project_board_axes(acc_world_hp)
+        else:
+            acc_board_hp = acc_board
 
         # --- Body-Frame Jerk (raw body acc for sensitivity) ---
         if self._prev_acc_body is not None and dt_s > 0:
@@ -200,24 +230,29 @@ class IMUPreprocessor:
         contact = force >= cfg.imu.force_contact_threshold
 
         return {
-            'sensor':     'IMU',
-            'ts_hw':      ts,
-            'packet_id':  ev.get('packet_id'),
-            'sample_idx': ev.get('sample_idx'),
-            'quat':       q_norm,
-            'acc_sensor': acc_ms2,
-            'acc_world':  acc_world,
-            'acc_board':  acc_board,
-            'jerk':       round(jerk, 6),
-            'is_static':  self._zupt_active,
-            'contact':    contact,
-            'force':      force,
+            'sensor':      'IMU',
+            'ts_hw':       ts,
+            'packet_id':   ev.get('packet_id'),
+            'sample_idx':  ev.get('sample_idx'),
+            'quat':        q_norm,
+            'acc_sensor':  acc_ms2,
+            'acc_world':   acc_world,
+            'acc_board':   acc_board,
+            'acc_board_hp': acc_board_hp,
+            'jerk':        round(jerk, 6),
+            'is_static':   self._zupt_active,
+            'contact':     contact,
+            'force':       force,
         }
 
     def reset(self):
         """Clear integration history on startup or buffer limit"""
         self._prev_acc_body = None
         self._prev_acc_world_clean = None
+        self._prev_acc_world_zupt = None
+        self._prev_acc_world_zupt_old = None
+        self._acc_world_hp_prev = None
+        self._acc_world_in_prev = None
         self._prev_ts = None
         self._still_streak = 0
         self._zupt_active = False

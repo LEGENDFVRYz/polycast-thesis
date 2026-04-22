@@ -46,6 +46,18 @@ class IMUConfig:
 
 
 # ------------------------------------------------------------------------
+# CONTACT STATE DETECTOR
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ContactConfig:
+    force_exit_ratio:     float = 0.70   # exit threshold = force_enter * ratio
+    pen_down_debounce_ms: float = 10.0   # reject bumps/spikes (ms of sustained force)
+    pen_up_debounce_ms:   float = 100.0   # reject tremor dips (ms below exit threshold)
+    min_draw_ms:          float = 30.0   # cumulative CONTACT_DRAWING before session opens
+    state_debounce_n:     int   = 5      # N consecutive samples to confirm substate change
+
+
+# ------------------------------------------------------------------------
 # UWB (Ai Thinker BU03)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -54,7 +66,7 @@ class UWBConfig:
     # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
 
-    rate_hz: float = 9.0
+    rate_hz: float = 50.0
 
     ema_alpha: float = 0.25
     max_range_jump_m: float = 0.40
@@ -160,9 +172,10 @@ class FusionESKFConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Config:
-    serial: SerialConfig = field(default_factory=SerialConfig)
-    imu: IMUConfig = field(default_factory=IMUConfig)
-    uwb: UWBConfig = field(default_factory=UWBConfig)
+    serial:  SerialConfig  = field(default_factory=SerialConfig)
+    imu:     IMUConfig     = field(default_factory=IMUConfig)
+    contact: ContactConfig = field(default_factory=ContactConfig)
+    uwb:     UWBConfig     = field(default_factory=UWBConfig)
     anchors: AnchorConfig = field(default_factory=AnchorConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     marker: MarkerConfig = field(default_factory=MarkerConfig)

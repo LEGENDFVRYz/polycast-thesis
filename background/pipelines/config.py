@@ -28,9 +28,9 @@ class IMUConfig:
     sample_rate_hz: float = 200.0
 
     # ZUPT
-    zupt_acc_threshold: float = 0.50
-    zupt_jerk_threshold: float = 21.5
-    zupt_min_duration_s: float = 0.15
+    zupt_acc_threshold: float = 0.15
+    zupt_jerk_threshold: float = 8.5
+    zupt_min_duration_s: float = 0.05
 
     # Contact / force
     force_contact_threshold: float = 100.0

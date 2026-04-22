@@ -251,7 +251,9 @@ class IMUPreprocessor:
 if __name__ == '__main__':
     import time
     import csv
+    import math
     import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
     from background.pipelines.cleaner.unpacker import SerialStreamer
     from background.pipelines.cleaner.normalizer import StreamNormalizer
 
@@ -261,7 +263,7 @@ if __name__ == '__main__':
     REPORT_NAME = "imu_stationary"
 
     # LIVE PLOT CONFIGURATION
-    WINDOW_SIZE = 250
+    WINDOW_SIZE = 500  # Slightly larger window to see more context
     REFRESH_RATE_S = 0.1
 
     streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
@@ -275,46 +277,58 @@ if __name__ == '__main__':
 
     event_log = []
 
+    # --- KINEMATICS STATE (For Stroke Tracking) ---
+    vel_board = [0.0, 0.0]
+    pos_board = [0.0, 0.0]
+    last_integration_ts = None
+
     # --- LIVE PLOT SETUP ---
     plt.ion()
-    fig, axs = plt.subplots(3, 1, figsize=(10, 8))
-    fig.canvas.manager.set_window_title("Live IMU Kinematics")
-    fig.suptitle('Live IMU Kinematics & State Detection', fontsize=14, fontweight='bold')
+    fig = plt.figure(figsize=(14, 8))
+    fig.canvas.manager.set_window_title("Live IMU Kinematics & Drawing")
+    fig.suptitle('Live IMU Kinematics & 2D Stroke Reconstruction', fontsize=14, fontweight='bold')
 
-    line_wx, = axs[0].plot([], [], label='World X', alpha=0.8)
-    line_wy, = axs[0].plot([], [], label='World Y', alpha=0.8)
-    line_wz, = axs[0].plot([], [], label='World Z', alpha=0.8)
-    axs[0].set_title('World Acceleration (Smoothed, Gravity Free)')
-    axs[0].set_ylabel('Accel (m/s²)')
-    axs[0].legend(loc='upper right')
-    axs[0].grid(True, linestyle='--', alpha=0.6)
+    # Create a Grid: Left column for Time Series (3 rows), Right column for 2D Drawing (1 row spanning all)
+    gs = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
+    
+    ax_acc = fig.add_subplot(gs[0, 0])
+    ax_jerk = fig.add_subplot(gs[1, 0])
+    ax_force = fig.add_subplot(gs[2, 0])
+    ax_stroke = fig.add_subplot(gs[:, 1])
 
-    line_jerk, = axs[1].plot([], [], label='Jerk (m/s³)', color='purple')
-    axs[1].set_title('Body-Frame Jerk')
-    axs[1].set_ylabel('Jerk')
-    axs[1].legend(loc='upper right')
-    axs[1].grid(True, linestyle='--', alpha=0.6)
+    # Time Series Lines
+    line_wx, = ax_acc.plot([], [], label='World X', alpha=0.8)
+    line_wy, = ax_acc.plot([], [], label='World Y', alpha=0.8)
+    line_wz, = ax_acc.plot([], [], label='World Z', alpha=0.8)
+    ax_acc.set_title('World Acceleration')
+    ax_acc.set_ylabel('Accel (m/s²)')
+    ax_acc.legend(loc='upper right')
+    ax_acc.grid(True, linestyle='--', alpha=0.6)
 
-    text_zupt = axs[1].text(
-        0.02, 0.85, 'STATE: WAITING',
-        transform=axs[1].transAxes,
-        fontsize=12, fontweight='bold',
-        bbox=dict(facecolor='white', alpha=0.8)
-    )
+    line_jerk, = ax_jerk.plot([], [], label='Jerk (m/s³)', color='purple')
+    ax_jerk.set_title('Body-Frame Jerk')
+    ax_jerk.set_ylabel('Jerk')
+    ax_jerk.legend(loc='upper right')
+    ax_jerk.grid(True, linestyle='--', alpha=0.6)
 
-    line_force, = axs[2].plot([], [], label='Raw Force', color='orange')
-    axs[2].set_title('Force Sensor')
-    axs[2].set_ylabel('Force')
-    axs[2].set_xlabel('Time (Seconds)')
-    axs[2].legend(loc='upper right')
-    axs[2].grid(True, linestyle='--', alpha=0.6)
+    text_zupt = ax_jerk.text(0.02, 0.85, 'STATE: WAITING', transform=ax_jerk.transAxes, fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
 
-    text_contact = axs[2].text(
-        0.02, 0.85, 'PEN: WAITING',
-        transform=axs[2].transAxes,
-        fontsize=12, fontweight='bold',
-        bbox=dict(facecolor='white', alpha=0.8)
-    )
+    line_force, = ax_force.plot([], [], label='Raw Force', color='orange')
+    ax_force.set_title('Force Sensor')
+    ax_force.set_ylabel('Force')
+    ax_force.set_xlabel('Time (Seconds)')
+    ax_force.legend(loc='upper right')
+    ax_force.grid(True, linestyle='--', alpha=0.6)
+
+    text_contact = ax_force.text(0.02, 0.85, 'PEN: WAITING', transform=ax_force.transAxes, fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+
+    # 2D Stroke Plot Line
+    line_stroke, = ax_stroke.plot([], [], color='black', linewidth=2)
+    ax_stroke.set_title('2D Board Strokes (Position)')
+    ax_stroke.set_xlabel('Board X (m)')
+    ax_stroke.set_ylabel('Board Z (m)')
+    ax_stroke.axis('equal')  # Critical: Keeps 1cm X equal to 1cm Z visually
+    ax_stroke.grid(True, linestyle='--', alpha=0.6)
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.92)
@@ -333,7 +347,26 @@ if __name__ == '__main__':
                 if processed_imu:
                     if start_ts is None:
                         start_ts = processed_imu[0]['ts_hw']
-                    event_log.extend(processed_imu)
+                    
+                    # --- INTEGRATE TO POSITION FOR STROKES ---
+                    for ev in processed_imu:
+                        if last_integration_ts is not None:
+                            dt_s = (ev['ts_hw'] - last_integration_ts) / 1_000_000.0
+                            if dt_s > 0 and dt_s < 0.1: # Protect against massive time jumps
+                                if ev['is_static']:
+                                    vel_board = [0.0, 0.0] # ZUPT: Kill drift
+                                else:
+                                    vel_board[0] += ev['acc_board'][0] * dt_s
+                                    vel_board[1] += ev['acc_board'][1] * dt_s
+                                
+                                pos_board[0] += vel_board[0] * dt_s
+                                pos_board[1] += vel_board[1] * dt_s
+                        
+                        last_integration_ts = ev['ts_hw']
+                        ev['pos_x'] = pos_board[0]
+                        ev['pos_z'] = pos_board[1]
+                        
+                        event_log.append(ev)
 
             # Update Live Plot
             current_time = time.time()
@@ -342,24 +375,33 @@ if __name__ == '__main__':
 
                 t_sec = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in window_data]
 
+                # Update Time Series
                 line_wx.set_data(t_sec, [ev['acc_world'][0] for ev in window_data])
                 line_wy.set_data(t_sec, [ev['acc_world'][1] for ev in window_data])
                 line_wz.set_data(t_sec, [ev['acc_world'][2] for ev in window_data])
                 line_jerk.set_data(t_sec, [ev['jerk'] for ev in window_data])
                 line_force.set_data(t_sec, [ev['force'] for ev in window_data])
 
+                # Update 2D Strokes (Plotting full history so the drawing doesn't disappear)
+                # We inject NaN when contact is False to break the line between strokes
+                stroke_x = [ev['pos_x'] if ev['contact'] else float('nan') for ev in event_log]
+                stroke_z = [ev['pos_z'] if ev['contact'] else float('nan') for ev in event_log]
+                line_stroke.set_data(stroke_x, stroke_z)
+
+                # Rescale Time Series axes
                 x_min, x_max = t_sec[0], t_sec[-1]
-                for ax in axs:
+                for ax in [ax_acc, ax_jerk, ax_force]:
                     ax.set_xlim(x_min, max(x_max, x_min + 0.1))
 
-                axs[0].set_ylim(-3, 3)
+                ax_acc.set_ylim(-3, 3)
+                ax_force.set_ylim(0, 5000.0)
 
-                # Throttled autoscale (prevents lag spikes)
+                # Rescale dynamic axes
                 if len(window_data) % 5 == 0:
-                    axs[1].relim()
-                    axs[1].autoscale_view(scalex=False, scaley=True)
-
-                axs[2].set_ylim(0, 5000.0)
+                    ax_jerk.relim()
+                    ax_jerk.autoscale_view(scalex=False, scaley=True)
+                    ax_stroke.relim()
+                    ax_stroke.autoscale_view()
 
                 latest = window_data[-1]
 
@@ -402,6 +444,7 @@ if __name__ == '__main__':
                 'ts_hw', 'packet_id', 'sample_idx',
                 'acc_world_x', 'acc_world_y', 'acc_world_z',
                 'acc_board_x', 'acc_board_z',
+                'pos_board_x', 'pos_board_z',
                 'jerk', 'is_static', 'contact', 'force'
             ])
             for ev in event_log:
@@ -409,6 +452,7 @@ if __name__ == '__main__':
                     ev['ts_hw'], ev['packet_id'], ev['sample_idx'],
                     ev['acc_world'][0], ev['acc_world'][1], ev['acc_world'][2],
                     ev['acc_board'][0], ev['acc_board'][1],
+                    ev['pos_x'], ev['pos_z'],
                     ev['jerk'], int(ev['is_static']), int(ev['contact']), ev['force']
                 ])
         print(f"[EXPORT] Data saved to {csv_filename}")
@@ -417,64 +461,69 @@ if __name__ == '__main__':
         # --- FULL SESSION PLOT EXPORT ---
         print("[EXPORT] Generating full-session plot...")
 
-        # Build full timeline
-        start_ts = event_log[0]['ts_hw']
-        t_sec = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in event_log]
+        # Create clean static figure with GridSpec
+        fig2 = plt.figure(figsize=(16, 10))
+        fig2.suptitle('IMU Full Session Report', fontsize=16, fontweight='bold')
+        gs2 = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
 
-        acc_x = [ev['acc_world'][0] for ev in event_log]
-        acc_y = [ev['acc_world'][1] for ev in event_log]
-        acc_z = [ev['acc_world'][2] for ev in event_log]
-        jerk  = [ev['jerk'] for ev in event_log]
-        force = [ev['force'] for ev in event_log]
+        ax2_acc = fig2.add_subplot(gs2[0, 0])
+        ax2_jerk = fig2.add_subplot(gs2[1, 0])
+        ax2_force = fig2.add_subplot(gs2[2, 0])
+        ax2_stroke = fig2.add_subplot(gs2[:, 1])
 
-        # Create clean static figure (NOT the live one)
-        fig2, axs2 = plt.subplots(3, 1, figsize=(12, 9))
-
-        fig2.suptitle('IMU Full Session Report', fontsize=14, fontweight='bold')
+        t_sec_full = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in event_log]
 
         # --- Acceleration ---
-        axs2[0].plot(t_sec, acc_x, label='World X')
-        axs2[0].plot(t_sec, acc_y, label='World Y')
-        axs2[0].plot(t_sec, acc_z, label='World Z')
-        axs2[0].set_title('World Acceleration')
-        axs2[0].set_ylabel('m/s²')
-        axs2[0].legend()
-        axs2[0].grid(True, linestyle='--', alpha=0.6)
+        ax2_acc.plot(t_sec_full, [ev['acc_world'][0] for ev in event_log], label='World X')
+        ax2_acc.plot(t_sec_full, [ev['acc_world'][1] for ev in event_log], label='World Y')
+        ax2_acc.plot(t_sec_full, [ev['acc_world'][2] for ev in event_log], label='World Z')
+        ax2_acc.set_title('World Acceleration')
+        ax2_acc.set_ylabel('m/s²')
+        ax2_acc.legend()
+        ax2_acc.grid(True, linestyle='--', alpha=0.6)
 
         # --- Jerk ---
-        axs2[1].plot(t_sec, jerk, label='Jerk')
-        axs2[1].set_title('Body-Frame Jerk')
-        axs2[1].set_ylabel('m/s³')
-        axs2[1].legend()
-        axs2[1].grid(True, linestyle='--', alpha=0.6)
+        ax2_jerk.plot(t_sec_full, [ev['jerk'] for ev in event_log], label='Jerk', color='purple')
+        ax2_jerk.set_title('Body-Frame Jerk')
+        ax2_jerk.set_ylabel('m/s³')
+        ax2_jerk.legend()
+        ax2_jerk.grid(True, linestyle='--', alpha=0.6)
 
         # --- Force ---
-        axs2[2].plot(t_sec, force, label='Force')
-        axs2[2].set_title('Force Sensor')
-        axs2[2].set_ylabel('Force')
-        axs2[2].set_xlabel('Time (Seconds)')
-        axs2[2].legend()
-        axs2[2].grid(True, linestyle='--', alpha=0.6)
+        ax2_force.plot(t_sec_full, [ev['force'] for ev in event_log], label='Force', color='orange')
+        ax2_force.set_title('Force Sensor')
+        ax2_force.set_ylabel('Force')
+        ax2_force.set_xlabel('Time (Seconds)')
+        ax2_force.legend()
+        ax2_force.grid(True, linestyle='--', alpha=0.6)
+
+        # --- 2D Strokes ---
+        stroke_x_full = [ev['pos_x'] if ev['contact'] else float('nan') for ev in event_log]
+        stroke_z_full = [ev['pos_z'] if ev['contact'] else float('nan') for ev in event_log]
         
-        # Build static mask
-        static_mask = [ev['is_static'] for ev in event_log]
+        ax2_stroke.plot(stroke_x_full, stroke_z_full, color='black', linewidth=1.5)
+        ax2_stroke.set_title('Final 2D Drawing Path')
+        ax2_stroke.set_xlabel('Board X (m)')
+        ax2_stroke.set_ylabel('Board Z (m)')
+        ax2_stroke.axis('equal')
+        ax2_stroke.grid(True, linestyle='--', alpha=0.6)
 
         # Shade static regions in gray
-        for ax in axs2:
+        static_mask = [ev['is_static'] for ev in event_log]
+        for ax in [ax2_acc, ax2_jerk, ax2_force]:
             in_static = False
             start_static = 0
 
             for i, is_static in enumerate(static_mask):
                 if is_static and not in_static:
-                    start_static = t_sec[i]
+                    start_static = t_sec_full[i]
                     in_static = True
                 elif not is_static and in_static:
-                    ax.axvspan(start_static, t_sec[i], color='gray', alpha=0.15)
+                    ax.axvspan(start_static, t_sec_full[i], color='gray', alpha=0.15)
                     in_static = False
 
-            # Handle if session ends while still static
             if in_static:
-                ax.axvspan(start_static, t_sec[-1], color='gray', alpha=0.15)
+                ax.axvspan(start_static, t_sec_full[-1], color='gray', alpha=0.15)
 
         plt.tight_layout()
         plt.subplots_adjust(top=0.92)

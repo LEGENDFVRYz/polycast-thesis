@@ -174,8 +174,7 @@ class ESKF:
         # Velocity drag — damps rotational-acc integration runaway between UWB corrections.
         # IMU sits 200mm from tip: circular motion generates ~1000 m/s3 apparent acc.
         # Drag prevents that from accumulating into multi-cm position error per UWB cycle.
-        _DRAG = 5.0  # s⁻¹
-        self.v *= max(0.0, 1.0 - _DRAG * dt_s)
+        self.v *= max(0.0, 1.0 - cfg.fusion_eskf.velocity_drag_inv_s * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
         #    Q is now turn-aware — σ_a is inflated during sharp-stroke windows.
@@ -274,9 +273,12 @@ class ESKF:
             return False
 
         # Adaptive R — scale measurement noise by NLOS severity.
-        ratio   = solve_error / ecfg.sigma_trilat if ecfg.sigma_trilat > 0 else 0.0
-        r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
-        r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
+        if ecfg.k_nlos > 0.0 and ecfg.sigma_trilat > 0.0:
+            ratio   = solve_error / ecfg.sigma_trilat
+            r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
+            r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
+        else:
+            r_scale = 1.0
         self._last_r_scale = r_scale
 
         H = np.zeros((2, 6))
@@ -549,9 +551,10 @@ if __name__ == '__main__':
     print("=" * 60)
 
     last_print_time = 0.0
-    latest = None
-    imu_count = 0
-    uwb_count = 0
+    latest      = None
+    latest_imu  = None   # most-recent pre-fusion IMU event (for acc_board diagnostic)
+    imu_count   = 0
+    uwb_count   = 0
 
     try:
         while True:
@@ -570,7 +573,8 @@ if __name__ == '__main__':
                             fused = eskf.process_event(s)
                             if fused:
                                 imu_count += 1
-                                latest = fused
+                                latest     = fused
+                                latest_imu = s   # keep contact-annotated IMU event for diagnostics
                     elif ev['sensor'] == 'UWB':
                         for r in range_prep.feed([ev]):
                             raw_pos = trilat.process_one(r)
@@ -586,15 +590,24 @@ if __name__ == '__main__':
             if latest and (now - last_print_time) >= DISPLAY_RATE:
                 os.system('cls' if os.name == 'nt' else 'clear')
                 e = latest['eskf']
-                print(f"========= LIVE ESKF (skeleton, {DISPLAY_RATE}s) =========")
+
+                # acc_board magnitude — sanity-check Path-A amplitude (expect ~1–3 m/s² when writing)
+                if latest_imu is not None:
+                    ab = latest_imu.get('acc_board', (0.0, 0.0))
+                    acc_board_mag = math.sqrt(ab[0]**2 + ab[1]**2)
+                else:
+                    acc_board_mag = 0.0
+
+                print(f"========= LIVE ESKF ({DISPLAY_RATE}s) =========")
                 print(f"  State      : {latest['state']}")
                 print(f"  Stroke ID  : {latest['stroke_id']} (Active: {latest['stroke_active']})")
                 print(f"  Source     : {latest['source']}")
                 print("-" * 50)
                 print(f"  Fused Pos  : X: {latest['fused_x']:6.3f} m | Y: {latest['fused_y']:6.3f} m")
                 print(f"  UWB Anchor : X: {latest['uwb_x']:6.3f} m | Y: {latest['uwb_y']:6.3f} m")
-                print(f"  K_pos_diag : X: {e['K_pos_diag']}")
-                print(f"  uwb_residual_rms : X: {e['uwb_residual_rms']}")
+                print(f"  |acc_board|: {acc_board_mag:.4f} m/s²  (Path-A; expect 1–3 when writing)")
+                print(f"  K_pos_diag : {e['K_pos_diag']:.4f}")
+                print(f"  uwb_resid  : {e['uwb_residual_rms']:.4f} m")
                 print(f"  P_pos_trace: {e['P_pos_trace']:.4f} m")
                 print(f"  Bias b_a   : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
                 print(f"  Last |y|   : {e['innovation_norm']:.4f} m  (UWB innovation)")

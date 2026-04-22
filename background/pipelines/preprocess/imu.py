@@ -112,50 +112,58 @@ class IMUPreprocessor:
             dt_us = ts - self._prev_ts
             if dt_us <= 0:
                 return None
-            
-            if dt_us > (getattr(cfg.pipeline, 'IMU_MAX_DT_MS', 100) * 1000):
+
+            if dt_us > (cfg.pipeline.imu_max_dt_ms * 1000):
                 self.reset()
-            
+
             dt_s = dt_us / 1_000_000.0
         else:
             dt_s = 1.0 / cfg.imu.sample_rate_hz
 
         self._prev_ts = ts
 
-        # --- Linear Acceleration ---
-        acc_ms2 = acc  # Note: Hardware outputs m/s^2 natively.
+        # Hardware outputs m/s² natively.
+        acc_ms2 = acc
 
-
-
-        # --- Rotation ---
-        q_norm = _qnormalize(q)
+        # --- Normalize quaternion & rotate to world frame ---
+        q_norm        = _qnormalize(q)
         acc_world_raw = _quat_rotate(q_norm, acc_ms2)
 
         # ==========================================================
         # DUAL-PATH EMA ARCHITECTURE
         # ==========================================================
-        
-        # PATH A: Raw Data for ESKF (Trust the filter, minimal lag)
-        acc_world_eskf = acc_world_raw 
-        acc_board_eskf = _project_board_axes(acc_world_eskf)
 
-        # PATH B: Heavy Smoothing exclusively for ZUPT (Kills 110mm Tremor)
-        zupt_alpha = 0.95  # 95% old data, 5% new data (Heavy Low-Pass)
-        
+        # PATH A — Light EMA for ESKF: near-raw signal, minimal lag.
+        # alpha=smooth_alpha_eskf keeps one sample of noise rejection while
+        # preserving the true acceleration magnitude the filter needs to integrate.
+        eskf_alpha = cfg.imu.smooth_alpha_eskf
+        if self._prev_acc_world_clean is None:
+            acc_world = acc_world_raw
+        else:
+            acc_world = (
+                eskf_alpha * self._prev_acc_world_clean[0] + (1 - eskf_alpha) * acc_world_raw[0],
+                eskf_alpha * self._prev_acc_world_clean[1] + (1 - eskf_alpha) * acc_world_raw[1],
+                eskf_alpha * self._prev_acc_world_clean[2] + (1 - eskf_alpha) * acc_world_raw[2],
+            )
+        self._prev_acc_world_clean = acc_world
+
+        # PATH B — Heavy EMA for ZUPT only: kills micro-tremor, never exported.
+        zupt_alpha = 0.95
         if getattr(self, '_prev_acc_world_zupt', None) is None:
-            self._prev_acc_world_zupt = acc_world_raw
+            self._prev_acc_world_zupt     = acc_world_raw
             self._prev_acc_world_zupt_old = acc_world_raw
 
         acc_world_zupt = (
             zupt_alpha * self._prev_acc_world_zupt[0] + (1 - zupt_alpha) * acc_world_raw[0],
             zupt_alpha * self._prev_acc_world_zupt[1] + (1 - zupt_alpha) * acc_world_raw[1],
-            zupt_alpha * self._prev_acc_world_zupt[2] + (1 - zupt_alpha) * acc_world_raw[2]
+            zupt_alpha * self._prev_acc_world_zupt[2] + (1 - zupt_alpha) * acc_world_raw[2],
         )
         self._prev_acc_world_zupt = acc_world_zupt
 
+        # --- Board Projection (Path A — ESKF feed) ---
+        acc_board = _project_board_axes(acc_world)
 
-
-        # --- Body-Frame Jerk ---
+        # --- Body-Frame Jerk (raw body acc for sensitivity) ---
         if self._prev_acc_body is not None and dt_s > 0:
             delta_body = _vsub(acc_ms2, self._prev_acc_body)
             jerk = _vmag(delta_body) / dt_s
@@ -163,61 +171,32 @@ class IMUPreprocessor:
             jerk = 0.0
         self._prev_acc_body = acc_ms2
 
-        # --- Rotation ---
-        q_norm = _qnormalize(q)
-        acc_world_raw = _quat_rotate(q_norm, acc_ms2)
-
-        # --- World-Frame EMA Smoothing ---
-        smooth_alpha = cfg.imu.smooth_alpha
-        
-        if self._prev_acc_world_clean is None:
-            acc_world = acc_world_raw
-        else:
-            # Formula: Clean = Alpha * Previous_Clean + (1 - Alpha) * Current_Raw
-            acc_world = (
-                smooth_alpha * self._prev_acc_world_clean[0] + (1 - smooth_alpha) * acc_world_raw[0],
-                smooth_alpha * self._prev_acc_world_clean[1] + (1 - smooth_alpha) * acc_world_raw[1],
-                smooth_alpha * self._prev_acc_world_clean[2] + (1 - smooth_alpha) * acc_world_raw[2]
-            )
-        self._prev_acc_world_clean = acc_world
-
-        # --- Board Projection ---
-        acc_board = _project_board_axes(acc_world)
-
-
-
-        # --- Smoothed ZUPT Jerk ---
-        # Compute jerk from the heavily smoothed ZUPT acceleration, NOT raw sensor acc.
-        # This prevents the 160+ m/s³ micro-tremor spikes from blocking ZUPT.
+        # --- Smoothed ZUPT Jerk (Path B — prevents tremor spikes blocking ZUPT) ---
         if dt_s > 0:
             delta_zupt = _vsub(acc_world_zupt, self._prev_acc_world_zupt_old)
-            zupt_jerk = _vmag(delta_zupt) / dt_s
+            zupt_jerk  = _vmag(delta_zupt) / dt_s
         else:
             zupt_jerk = 0.0
         self._prev_acc_world_zupt_old = acc_world_zupt
 
-        # --- ZUPT (motion detector) ---
+        # --- ZUPT (motion detector — uses Path B only) ---
         lin_mag_zupt = _vmag(acc_world_zupt)
-        
-        # Now you can keep your thresholds tight and accurate!
         still_now = (
             lin_mag_zupt < cfg.imu.zupt_acc_threshold and
-            zupt_jerk < cfg.imu.zupt_jerk_threshold
+            zupt_jerk    < cfg.imu.zupt_jerk_threshold
         )
 
         if still_now:
             self._still_streak += 1
         else:
-            self._still_streak  = 0
-            self._zupt_active   = False
+            self._still_streak = 0
+            self._zupt_active  = False
 
         if self._still_streak >= self._zupt_min_samples:
             self._zupt_active = True
 
-
-
         # --- Force Contact ---
-        force = ev.get('force', 0.0)
+        force   = ev.get('force', 0.0)
         contact = force >= cfg.imu.force_contact_threshold
 
         return {

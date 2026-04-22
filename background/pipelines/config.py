@@ -41,7 +41,8 @@ class IMUConfig:
 
     # Board projection
     board_axes: tuple[str, str] = ("x", "z")
-    smooth_alpha: float = 0.75
+    smooth_alpha: float = 0.75          # legacy heavy EMA — superseded by smooth_alpha_eskf
+    smooth_alpha_eskf: float = 0.18     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
     acc_is_linear: bool = True
 
 
@@ -161,6 +162,10 @@ class FusionESKFConfig:
     turn_n_post: int            = 2      
     
     state_buffer_size: int      = 20
+
+    # Velocity drag (s⁻¹) — damps rotational-acc integration runaway between UWB corrections
+    velocity_drag_inv_s: float  = 5.0
+
     # Initial covariance (diagonal, one value per block in m/s/m/s²)
     p0_pos: float    = 0.20
     p0_vel: float    = 0.10

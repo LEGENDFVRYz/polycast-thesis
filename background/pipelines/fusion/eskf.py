@@ -574,6 +574,7 @@ class ESKF:
 if __name__ == '__main__':
     import time
     import os
+    import csv
 
     os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
@@ -614,6 +615,7 @@ if __name__ == '__main__':
     latest_imu  = None   # most-recent pre-fusion IMU event (for acc_board diagnostic)
     imu_count   = 0
     uwb_count   = 0
+    event_log   = []     # accumulates every fused event for CSV export
 
     try:
         while True:
@@ -633,7 +635,11 @@ if __name__ == '__main__':
                             if fused:
                                 imu_count += 1
                                 latest     = fused
-                                latest_imu = s   # keep contact-annotated IMU event for diagnostics
+                                latest_imu = s
+                                # Decorate with is_static before logging so CSV
+                                # has the IMU-side flag alongside fusion state.
+                                fused['_is_static'] = bool(s.get('is_static', False))
+                                event_log.append(fused)
                     elif ev['sensor'] == 'UWB':
                         for r in range_prep.feed([ev]):
                             raw_pos = trilat.process_one(r)
@@ -644,6 +650,8 @@ if __name__ == '__main__':
                                     if fused:
                                         uwb_count += 1
                                         latest = fused
+                                        fused['_is_static'] = False
+                                        event_log.append(fused)
 
             now = time.time()
             if latest and (now - last_print_time) >= DISPLAY_RATE:
@@ -680,11 +688,72 @@ if __name__ == '__main__':
             time.sleep(0.005)
 
     except KeyboardInterrupt:
-        print("\n\n[STOP] Halting ESKF skeleton.")
+        print("\n\n[STOP] Halting ESKF.")
         streamer.close()
+
+        # ── Terse session summary ────────────────────────────────────────────
         print("-" * 60)
         print(f"  IMU events processed : {imu_count}")
         print(f"  UWB events processed : {uwb_count}")
         if latest:
+            e = latest['eskf']
             print(f"  Final fused position : ({latest['fused_x']:.3f}, {latest['fused_y']:.3f}) m")
+            print(f"  Final P_pos_trace    : {e['P_pos_trace']:.4f} m")
+            print(f"  UWB accepted/rejected: {e['uwb_accepted']} / {e['uwb_rejected']}")
+        print("=" * 60)
+
+        if not event_log:
+            print("No events logged. Exiting.")
+            exit()
+
+        # ── CSV export ───────────────────────────────────────────────────────
+        # One row per fused event (both IMU and UWB source).
+        # Columns are stable across phases so CSVs can be overlaid for comparison.
+        csv_filename = "eskf_session.csv"
+        _CSV_COLS = [
+            'ts_hw', 'source',
+            'fused_x', 'fused_y',
+            'uwb_x', 'uwb_y',
+            'stroke_id', 'stroke_active', 'is_static', 'state',
+            'P_pos_trace', 'innovation_norm', 'r_scale',
+            'K_pos_diag', 'b_a_x', 'b_a_y', 'b_a_norm',
+            'omega_in_plane', 'turn_flag',
+            'uwb_residual_rms', 'uwb_accepted', 'uwb_rejected',
+        ]
+        print(f"[EXPORT] Writing {len(event_log)} rows to {csv_filename} ...")
+        with open(csv_filename, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(_CSV_COLS)
+            for ev in event_log:
+                e = ev.get('eskf', {})
+                ba = e.get('b_a', (0.0, 0.0))
+                writer.writerow([
+                    ev.get('ts_hw'),
+                    ev.get('source'),
+                    round(ev.get('fused_x', 0.0), 6),
+                    round(ev.get('fused_y', 0.0), 6),
+                    round(ev.get('uwb_x', 0.0), 6),
+                    round(ev.get('uwb_y', 0.0), 6),
+                    ev.get('stroke_id', 0),
+                    int(ev.get('stroke_active', False)),
+                    int(ev.get('_is_static', False)),
+                    ev.get('state', ''),
+                    round(e.get('P_pos_trace', 0.0), 6),
+                    round(e.get('innovation_norm', 0.0), 6),
+                    round(e.get('r_scale', 1.0), 4),
+                    round(e.get('K_pos_diag', 0.0), 6),
+                    round(ba[0], 6),
+                    round(ba[1], 6),
+                    round(e.get('b_a_norm', 0.0), 6),
+                    round(e.get('omega_in_plane', 0.0), 4),
+                    int(e.get('turn_flag', False)),
+                    round(e.get('uwb_residual_rms', 0.0), 6),
+                    e.get('uwb_accepted', 0),
+                    e.get('uwb_rejected', 0),
+                ])
+        print(f"[EXPORT] Saved to {csv_filename}")
+        print()
+        print("  Phase comparison tip: rename each run's CSV before the next")
+        print("  session (e.g. eskf_phase2.csv, eskf_phase3.csv) and diff the")
+        print("  P_pos_trace, innovation_norm, and uwb_accepted columns.")
         print("=" * 60)

@@ -145,7 +145,7 @@ class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
     # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
     # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 0.60      # m/s² (was 0.15)
+    sigma_a: float           = 0.9      # m/s² (was 0.15)
     # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
     sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
     sigma_zupt: float        = 0.005     # unchanged — already aggressive
@@ -153,7 +153,7 @@ class FusionESKFConfig:
     # ── Measurement noise ─────────────────────────────────────────────────
     # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
     # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
-    sigma_uwb: float         = 0.04      # m (was 0.12)
+    sigma_uwb: float         = 0.035      # m (was 0.12)
     sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
 
     # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
@@ -166,19 +166,32 @@ class FusionESKFConfig:
     # ── Turn detection ────────────────────────────────────────────────────
     # Threshold lowered slightly: cleaner acc signal means real corners are
     # detectable earlier without false positives from noise.
-    turn_omega_threshold: float = 1.2    # rad/s (was 1.85 — ~86 dps)
+    turn_omega_threshold: float = 0.8    # rad/s (was 1.85 — ~86 dps)
     turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
     turn_n_post: int            = 2      # unchanged
 
     # ── Ring buffer ───────────────────────────────────────────────────────
     # Enlarged for 200 Hz IMU: covers a ~0.3 s window for robust UWB time-interpolation.
-    state_buffer_size: int      = 60     # (was 20)
+    state_buffer_size: int      = 75     # (was 20)
 
     # ── Velocity drag ─────────────────────────────────────────────────────
     # Reduced: BUG-1 lag was masking the need for heavy drag. With near-raw
     # Path-A acc, lighter drag still suppresses lever-arm runaway without
     # artificially killing real pen velocity.
     velocity_drag_inv_s: float  = 2.5   # s⁻¹ (was 5.0)
+
+    # ── ITrackU-style hybrid reset (Phase 3) ─────────────────────────────
+    # 3a: after this many consecutive static IMU samples, hard-zero velocity.
+    # At 200 Hz, 20 samples = 100 ms of confirmed stillness.
+    zupt_hard_reset_n: int     = 20
+
+    # 3b: velocity pseudo-measurement noise when UWB is pristine.
+    # Applied when solve_error < sigma_trilat (reliable trilateration).
+    sigma_uwb_vel: float       = 0.08    # m/s
+
+    # 3c: sigma_uwb scale factor while pen is actively drawing.
+    # Pen physically constrained to board → trust UWB more during strokes.
+    contact_sigma_scale: float = 0.70    # 30 % tighter (multiplicative)
 
     # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20

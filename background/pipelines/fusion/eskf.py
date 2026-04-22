@@ -120,8 +120,15 @@ class ESKF:
         self._omega_in_plane_last = 0.0
         self._turn_flag_last = False
 
-        # ── Contact-edge tracking (for stroke-start soft ZUPT) ──────────────
+        # ── Contact-edge tracking (for stroke-start soft ZUPT + 3c sigma) ────
         self._prev_stroke_active = False
+
+        # ── Phase 3a — sustained-static hard reset ───────────────────────────
+        self._zupt_hard_count = 0
+
+        # ── Phase 3b — UWB-velocity pseudo-measurement buffer ────────────────
+        # Stores (ts_hw, pos) of the last N accepted pristine UWB corrections.
+        self._uwb_vel_buf: deque[tuple[int, np.ndarray]] = deque(maxlen=5)
 
         # ── Book-keeping ────────────────────────────────────────────────────
         self.last_ts: int | None = None
@@ -186,6 +193,14 @@ class ESKF:
         #    flags the pen as still.
         if ev.get('is_static', False):
             self._zupt_update()
+            # Phase 3a: sustained static → hard-zero velocity after N samples.
+            # Prevents drift from compounding when the pen sits still between strokes.
+            # b_a is deliberately kept so bias convergence is not disrupted.
+            self._zupt_hard_count += 1
+            if self._zupt_hard_count >= cfg.fusion_eskf.zupt_hard_reset_n:
+                self.v[:] = 0.0
+        else:
+            self._zupt_hard_count = 0
 
         # 4. Contact rising-edge soft ZUPT: tip just pressed on board →
         #    tip velocity should be near zero (pen end may still wiggle, but
@@ -242,6 +257,21 @@ class ESKF:
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
         self._uwb_accepted += 1
+
+        # Phase 3b: UWB-velocity pseudo-measurement on pristine trilateration.
+        # When solve_error < sigma_trilat the geometry is well-conditioned; two
+        # consecutive clean positions give a reliable velocity estimate that
+        # prevents IMU velocity from drifting between UWB fixes.
+        self._uwb_vel_buf.append((ts_uwb, z_tip.copy()))
+        if solve_error < cfg.fusion_eskf.sigma_trilat and len(self._uwb_vel_buf) >= 2:
+            t1, p1 = self._uwb_vel_buf[-2]
+            t2, p2 = self._uwb_vel_buf[-1]
+            dt_vel = (t2 - t1) / 1_000_000.0
+            if 0.01 < dt_vel < 0.5:                       # guard against stale/duplicate ts
+                v_uwb = (p2 - p1) / dt_vel
+                if float(np.linalg.norm(v_uwb)) < 2.0:   # clamp to physical pen-speed limit
+                    self._velocity_pseudo_update(v_uwb, cfg.fusion_eskf.sigma_uwb_vel)
+
         self._clamp_to_board()
 
         return self._emit(
@@ -286,6 +316,9 @@ class ESKF:
         H[1, 1] = 1.0
 
         sigma = ecfg.sigma_uwb
+        # Phase 3c: pen physically on the board → trust UWB more during active strokes.
+        if self._prev_stroke_active:
+            sigma *= ecfg.contact_sigma_scale
         R = (sigma * sigma) * r_scale * np.eye(2)
 
         # Innovation  y = z − p_ref  (time-aligned)
@@ -408,6 +441,32 @@ class ESKF:
 
         # Joseph-form covariance update (numerically stable).
         I  = np.eye(6)
+        IKH = I - K @ H
+        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+
+    def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
+        """Kalman update for a UWB-derived velocity pseudo-measurement.
+
+        H = [0 I 0]  (velocity block at columns 2–3).
+        Innovation y = v_meas − v_nom.
+        Uses the same Joseph-form update as ZUPT for numerical stability.
+        """
+        H = np.zeros((2, 6))
+        H[0, 2] = 1.0
+        H[1, 3] = 1.0
+
+        R = (sigma ** 2) * np.eye(2)
+        y = v_meas - self.v
+
+        S   = H @ self.P @ H.T + R
+        K   = self.P @ H.T @ np.linalg.inv(S)
+
+        dx       = K @ y
+        self.p   += dx[0:2]
+        self.v   += dx[2:4]
+        self.b_a += dx[4:6]
+
+        I   = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
 

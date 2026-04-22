@@ -142,31 +142,45 @@ class MarkerConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
-    # Process noise
-    sigma_a: float           = 0.15      
-    sigma_b_a: float         = 0.005     
-    sigma_zupt: float        = 0.005     
-    
-    # Measurement noise 
-    sigma_uwb: float         = 0.12      # Tightened for faster relocation
-    sigma_trilat: float      = 0.05      
-    k_nlos: float            = 0.00 
-    r_scale_max: float       = 100.0
-    
-    # Raised to 6.0 to stop rejecting valid macro-movements
-    hard_reject_mult: float  = 15.0       
-    
-    # Turn detection - Reactivated with high threshold
-    turn_omega_threshold: float = 1.85    # ~140 dps (Ignores friction, catches corners)
-    turn_k_q: float             = 3.0    # Forces a crisp corner
-    turn_n_post: int            = 2      
-    
-    state_buffer_size: int      = 20
+    # ── Process noise ─────────────────────────────────────────────────────
+    # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
+    # are present — inflate Q so UWB retains authority between updates.
+    sigma_a: float           = 0.60      # m/s² (was 0.15)
+    # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
+    sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
+    sigma_zupt: float        = 0.005     # unchanged — already aggressive
 
-    # Velocity drag (s⁻¹) — damps rotational-acc integration runaway between UWB corrections
-    velocity_drag_inv_s: float  = 5.0
+    # ── Measurement noise ─────────────────────────────────────────────────
+    # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
+    # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
+    sigma_uwb: float         = 0.04      # m (was 0.12)
+    sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
 
-    # Initial covariance (diagonal, one value per block in m/s/m/s²)
+    # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
+    k_nlos: float            = 1.5       # (was 0.00)
+    r_scale_max: float       = 25.0      # (was 100.0 — tighter ceiling, avoids completely freezing updates)
+
+    # Hard-reject threshold tightened back to intended value.
+    hard_reject_mult: float  = 7.5       # (was 15.0 — comment said 6.0, now actually enforced)
+
+    # ── Turn detection ────────────────────────────────────────────────────
+    # Threshold lowered slightly: cleaner acc signal means real corners are
+    # detectable earlier without false positives from noise.
+    turn_omega_threshold: float = 1.2    # rad/s (was 1.85 — ~86 dps)
+    turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
+    turn_n_post: int            = 2      # unchanged
+
+    # ── Ring buffer ───────────────────────────────────────────────────────
+    # Enlarged for 200 Hz IMU: covers a ~0.3 s window for robust UWB time-interpolation.
+    state_buffer_size: int      = 60     # (was 20)
+
+    # ── Velocity drag ─────────────────────────────────────────────────────
+    # Reduced: BUG-1 lag was masking the need for heavy drag. With near-raw
+    # Path-A acc, lighter drag still suppresses lever-arm runaway without
+    # artificially killing real pen velocity.
+    velocity_drag_inv_s: float  = 2.5   # s⁻¹ (was 5.0)
+
+    # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20
     p0_vel: float    = 0.10
     p0_bias: float   = 0.05

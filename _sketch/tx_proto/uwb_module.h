@@ -8,9 +8,28 @@
 // #define PIN_IRQ 2
 // #define PIN_SS  10
 
+
+// --- PACKET STRUCTURES ---
+typedef struct __attribute__((packed)) {
+    uint8_t type = 0x02;
+    uint32_t packetId;
+    float dist0;
+    float dist1;
+    float dist2;
+    float dist3;
+    uint32_t ts;
+} PacketUWB;
+
+
+// Anchor Mapping
+const int MAP_DIST0 = 0;
+const int MAP_DIST1 = 2;
+const int MAP_DIST2 = 4;
+const int MAP_DIST3 = 6;
+
+
 // Maximum number of anchors the system can track
 #define MAX_ANCHOR_LIST_SIZE 8
-
 
 
 /*! ------------------------------------------------------------------------------------
@@ -39,4 +58,4 @@ void initUWBConfig();
 bool runUWBCycle(int* out_distances);
 
 
-#endif // UWB_MODULE_H
+#endif

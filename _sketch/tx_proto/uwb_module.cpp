@@ -14,7 +14,6 @@ extern void reselect(uint8_t ss);
 #define RX_ANT_DLY 16385
 
 
-
 // --- PACKET STRUCTURE DEFINITIONS ---
 #pragma pack(push,1)
 

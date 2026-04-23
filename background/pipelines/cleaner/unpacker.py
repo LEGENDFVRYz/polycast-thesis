@@ -44,61 +44,66 @@ class SerialStreamer:
         if self.ser and self.ser.is_open:
             self.ser.close()
 
+    @staticmethod
+    def parse_raw_line(raw_line: bytes) -> dict | None:
+        """
+        Parse a single raw bytes line into a flat event dict.
+        Used by tracker.py which receives bytes from an external serial owner.
+        Returns None for empty, corrupt, or unrecognised lines.
+        """
+        try:
+            line = raw_line.decode('utf-8', errors='replace').strip()
+            if not line:
+                return None
+            parts = line.split(',')
+            if not parts:
+                return None
+            type_char = parts[0]
+
+            if type_char == 'I' and len(parts) == 11:
+                return {
+                    'sensor':     'IMU',
+                    'packet_id':  int(parts[1]),
+                    'sample_idx': 0,
+                    'quat':       (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])),
+                    'acc':        (float(parts[6]), float(parts[7]), float(parts[8])),
+                    'force':      float(parts[9]),
+                    'ts_hw':      int(parts[10]),
+                }
+            if type_char == 'U' and len(parts) == 7:
+                return {
+                    'sensor':     'UWB',
+                    'packet_id':  int(parts[1]),
+                    'sample_idx': 0,
+                    'dists':      (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])),
+                    'ts_hw':      int(parts[6]),
+                }
+            return None
+        except (ValueError, IndexError, UnicodeDecodeError):
+            return None
+
     def read_new_packets(self):
         """
-        Reads all complete CSV lines currently in the serial buffer, 
+        Reads all complete CSV lines currently in the serial buffer,
         parses them, and returns a list of standardized event dictionaries.
         """
         packets_found = []
-        
+
         if not self.ser or not self.ser.is_open:
             return packets_found
-            
+
         try:
             # Only process if there are bytes waiting, preventing blocking
             while self.ser.in_waiting > 0:
                 # readline() guarantees we get a full line up to '\n'
                 raw_line = self.ser.readline()
-                line = raw_line.decode('utf-8', errors='replace').strip()
-                
-                if not line:
-                    continue
-                    
-                parts = line.split(',')
-                if not parts:
-                    continue
-                    
-                type_char = parts[0]
+                pkt = SerialStreamer.parse_raw_line(raw_line)
+                if pkt:
+                    packets_found.append(pkt)
 
-                try:
-                    # ── Parse IMU Event ────────────────────────────────────────
-                    if type_char == 'I' and len(parts) == 11:
-                        packets_found.append({
-                            'sensor':     'IMU',
-                            'packet_id':  int(parts[1]),
-                            'sample_idx': 0,  # Always 0
-                            'quat':       (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])),
-                            'acc':        (float(parts[6]), float(parts[7]), float(parts[8])),
-                            'force':      float(parts[9]),
-                            'ts_hw':      int(parts[10])
-                        })
-
-                    # ── Parse UWB Event ────────────────────────────────────────
-                    elif type_char == 'U' and len(parts) == 7:
-                        packets_found.append({
-                            'sensor':     'UWB',
-                            'packet_id':  int(parts[1]),
-                            'sample_idx': 0,  # Always 0
-                            'dists':      (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])),
-                            'ts_hw':      int(parts[6])
-                        })
-                except (ValueError, IndexError):
-                    # Corrupt line mid-stream — safely ignore and continue
-                    continue
-                    
         except Exception as e:
             print(f"[STREAMER] Read Error: {e}")
-            
+
         return packets_found
 
 

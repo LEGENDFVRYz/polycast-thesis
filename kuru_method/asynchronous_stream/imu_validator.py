@@ -18,7 +18,7 @@ from fusion_engine   import IRLSTrilateration
 
 # ── Configuration ──────────────────────────────────────────────────────
 from config import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
-DATASET_FILENAME = 'datasets/circle.csv'   # '' = live; 'path/to/data.csv' = playback
+DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
 
 MAX_SAMPLES      = 500  # rolling window width for time-series plots
 RESET_INTERVAL_S = 2.0  # seconds between dead-reckoning resets to UWB
@@ -55,8 +55,8 @@ class IMUValidatorDashboard:
         self._buf_spd  = deque(maxlen=MAX_SAMPLES)
         self._buf_btn  = deque(maxlen=MAX_SAMPLES)
 
-        self._dr_trail_x  = deque(maxlen=200)
-        self._dr_trail_y  = deque(maxlen=200)
+        self._dr_trail_x  = deque(maxlen=1000)
+        self._dr_trail_y  = deque(maxlen=1000)
         self._uwb_scatter_x = deque(maxlen=100)
         self._uwb_scatter_y = deque(maxlen=100)
 
@@ -69,11 +69,15 @@ class IMUValidatorDashboard:
         self.fig = plt.figure(figsize=(15, 9))
         self.fig.canvas.manager.set_window_title('PolyCast — IMU Integration Validator (Async)')
 
-        gs = self.fig.add_gridspec(2, 2, hspace=0.38, wspace=0.35)
-        self.ax_2d   = self.fig.add_subplot(gs[0, 0])
+        # Change grid to 3 rows, 2 columns.
+        gs = self.fig.add_gridspec(3, 2, hspace=0.5, wspace=0.25)
+        
+        # Left half spanning all 3 rows
+        self.ax_2d   = self.fig.add_subplot(gs[:, 0]) 
+        # Right half stacked on 3 rows
         self.ax_acc  = self.fig.add_subplot(gs[0, 1])
-        self.ax_tilt = self.fig.add_subplot(gs[1, 0])
-        self.ax_btn  = self.fig.add_subplot(gs[1, 1])
+        self.ax_tilt = self.fig.add_subplot(gs[1, 1])
+        self.ax_btn  = self.fig.add_subplot(gs[2, 1])
 
         # Panel 1 — 2D whiteboard
         ax = self.ax_2d
@@ -89,10 +93,10 @@ class IMUValidatorDashboard:
         for i, a in enumerate(ANCHORS):
             ax.text(a[0], a[1]+0.06, f'A{i}', color='red', fontsize=8, ha='center')
             
-        self._line_dr,     = ax.plot([], [], '-', color='#00FF99', lw=1.5, label='IMU dead-reckoning', zorder=4)
-        self._dot_dr,      = ax.plot([], [], 'o', color='#00FF99', ms=8, zorder=5)
-        self._scat_uwb,    = ax.plot([], [], '.', color='lightgray', ms=4, alpha=0.6, label='UWB (IRLS)', zorder=3)
-        self._reset_line,  = ax.plot([], [], '|', color='yellow', ms=10, label='DR reset to UWB', zorder=6)
+        self._line_dr,    = ax.plot([], [], '-', color='#00FF99', lw=1.5, label='IMU dead-reckoning', zorder=4)
+        self._dot_dr,     = ax.plot([], [], 'o', color='#00FF99', ms=8, zorder=5)
+        self._scat_uwb,   = ax.plot([], [], '.', color='lightgray', ms=4, alpha=0.6, label='UWB (IRLS)', zorder=3)
+        self._reset_line, = ax.plot([], [], '|', color='yellow', ms=10, label='DR reset to UWB', zorder=6)
         ax.legend(fontsize=8, loc='upper right')
         self._reset_marks_x, self._reset_marks_y = [], []
 
@@ -139,10 +143,12 @@ class IMUValidatorDashboard:
         self._fill_btn = None
 
         self._stats_text = self.fig.text(
-            0.5, 0.98, 'Waiting for data...', ha='center', va='top', fontsize=10, color='white',
+            0.5, 0.96, 'Waiting for data...', ha='center', va='top', fontsize=10, color='white',
             bbox=dict(facecolor='#111111', alpha=0.8, edgecolor='white', boxstyle='round,pad=0.4'),
         )
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
+        
+        # Swapped tight_layout for subplots_adjust to clear the warning
+        self.fig.subplots_adjust(top=0.90, bottom=0.08, left=0.08, right=0.92)
 
     # ── animation callback ─────────────────────────────────────────────
 

@@ -30,7 +30,7 @@ from preprocessor    import UWBPreprocessor
 from fusion_engine   import IRLSTrilateration
 
 # -- Configuration ----------------------------------------------------------
-DATASET_FILENAME = 'datasets/circle.csv'   # '' = live serial;  'datasets/data.csv' = playback
+DATASET_FILENAME = ''   # '' = live serial;  'datasets/data.csv' = playback
 TRUTH_XY         = None                 # Ground-truth position or None  e.g. (0.64, 0.63)
 
 
@@ -91,20 +91,18 @@ class UWBPositionDashboard:
         if self.finished:
             return
 
-        packets_per_frame = 20 if self.parser.mode == 'csv' else 5
-
-        for _ in range(packets_per_frame):
+        while True:
             pkt = self.parser.get_packet()
+            
             if pkt == 'EOF':
                 self.finished = True
                 break
-            if pkt is None or not isinstance(pkt, dict):
+            if pkt is None: # No more packets in buffer for now
+                break
+            if not isinstance(pkt, dict) or pkt['type'] != 'uwb':
                 continue
 
-            if pkt['type'] != 'uwb':
-                continue
-
-            # Preprocess UWB distances
+            # Process UWB distances
             filtered, weights, despiked = self.uwb_cleaner.process(*pkt['dists'])
 
             # Solve IRLS trilateration
@@ -117,6 +115,12 @@ class UWBPositionDashboard:
                 self._xs.append(px)
                 self._ys.append(py)
                 self._residuals.append(residuals)
+                
+        # 5. Keep the scatter plot fast by limiting the number of dots drawn
+        # Only keep the last 100 points for the 'live' view
+        if len(self._xs) > 100:
+            self._xs = self._xs[-100:]
+            self._ys = self._ys[-100:]
 
         # Update scatter
         if self._xs:

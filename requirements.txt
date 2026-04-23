@@ -23,17 +23,17 @@ matplotlib
 seaborn
 plotly
 bokeh
-xarray.0
+xarray
 numba
 numexpr
 tables
 h5py
-dask.2
-distributed.2
+dask
+distributed
 
 # Web Frameworks & APIs
 streamlit
-fastapi.0
+fastapi
 uvicorn
 Flask
 flask-socketio
@@ -52,7 +52,7 @@ python-engineio
 SQLAlchemy
 openpyxl
 xlwings
-s3fs.1
+s3fs
 botocore
 aiobotocore
 
@@ -63,7 +63,7 @@ pyqtgraph
 pyqt5
 Pillow
 imageio
-tifffile.12
+tifffile
 
 # Automation & Scraping
 scrapy
@@ -81,8 +81,8 @@ rich
 python-dotenv
 cryptography
 paramiko
-bcrypt==3.2.0
-python_bcrypt==0.3.2
+bcrypt
+python_bcrypt
 psutil
 watchdog
 colorama

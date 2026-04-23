@@ -73,82 +73,26 @@ def _get_recent_sessions(limit=4):
 # ---------------------------------------------------------------------
 @gallery_bp.route("/gallery")
 def index():
-    """
-    Dashboard/Home View.
-    Shows shortcuts (recents, trash) alongside the galleries.
-    """
-    admin = get_current_admin()
-    folders = get_eligible_galleries(admin, view_type='all')
-    is_setup = g.admin_status.get_field("hosting_active") if admin else False
-    
-    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
-    recent_sessions = _get_recent_sessions(limit=4)
-    
-    return render_template(
-        "gallery/gallery.html",
-        is_setup=is_setup,
-        folders=folders,
-        session_counts=_get_session_counts(folders),
-        is_current_user=is_current_user,
-        recent_sessions=recent_sessions,
-    )
+    """Dashboard/Home — App Shell. Data fetched client-side from /api/gallery/list and /api/gallery/recent-sessions."""
+    return render_template("gallery/gallery.html")
 
 
 @gallery_bp.route("/gallery/all")
 def all_galleries():
-    """
-    Dedicated All Galleries View.
-    Strictly focuses on displaying the full list of gallery folders.
-    """
-    admin = get_current_admin()
-    folders = get_eligible_galleries(admin, view_type='all')
-    is_setup = g.admin_status.get_field("hosting_active") if admin else False
-    
-    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
-    
-    return render_template(
-        "gallery/gallery-all.html", 
-        is_setup=is_setup, 
-        session_counts=_get_session_counts(folders),
-        is_current_user=is_current_user,
-        folders=folders
-    )
+    """All Galleries — App Shell. Data fetched client-side from /api/gallery/list?view=all."""
+    return render_template("gallery/gallery-all.html")
 
 
 @gallery_bp.route("/gallery/favorites")
 def favorites():
-    """List only favorite galleries."""
-    admin = get_current_admin()
-    folders = get_eligible_galleries(admin, view_type='favorites')
-    is_setup = g.admin_status.get_field("hosting_active") if admin else False
-    
-    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
-    
-    return render_template(
-        "gallery/gallery-fav.html", 
-        is_setup=is_setup, 
-        session_counts=_get_session_counts(folders),
-        is_current_user=is_current_user,
-        folders=folders
-    )
+    """Favorites — App Shell. Data fetched client-side from /api/gallery/list?view=favorites."""
+    return render_template("gallery/gallery-fav.html")
 
 
 @gallery_bp.route("/gallery/trash")
 def trash():
-    """List deleted/trashed galleries."""
-    admin = get_current_admin()
-    folders = get_eligible_galleries(admin, view_type='trash')
-    is_setup = g.admin_status.get_field("hosting_active") if admin else False
-    
-    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
-    
-    return render_template(
-        "gallery/gallery-bin.html", 
-        is_setup=is_setup, 
-        session_counts=_get_session_counts(folders),
-        is_current_user=is_current_user,
-        folders=folders
-    )
+    """Recycle Bin — App Shell. Data fetched client-side from /api/gallery/list?view=trash."""
+    return render_template("gallery/gallery-bin.html")
 
 
 
@@ -346,7 +290,7 @@ def serve_image(filename):
 def get_gallery_sessions(gallery_name):
     """
     Return all session names for a given gallery (by name) as JSON.
-    - Used for dynamic dropdowns for user suggestions 
+    - Used for dynamic dropdowns for user suggestions
     """
 
     admin_name = str(g.admin_status.get_field('admin_name'))
@@ -363,6 +307,48 @@ def get_gallery_sessions(gallery_name):
     session_names = [s.name for s in sessions]
 
     return jsonify({"sessions": session_names})
+
+
+@gallery_bp.route("/api/gallery/list")
+def api_gallery_list():
+    """
+    Return galleries as JSON for App Shell rendering.
+    ?view=all|favorites|trash
+    """
+    admin = get_current_admin()
+    if not admin:
+        return jsonify({"galleries": [], "session_counts": {}})
+
+    view_type = request.args.get('view', 'all')
+    folders = get_eligible_galleries(admin, view_type=view_type)
+    counts = _get_session_counts(folders)
+
+    for f in folders:
+        if hasattr(f['created_at'], 'strftime'):
+            f['created_at'] = f['created_at'].strftime('%b %d, %Y')
+
+    return jsonify({
+        "galleries": folders,
+        "session_counts": {str(k): v for k, v in counts.items()},
+        "is_current_user": ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    })
+
+
+@gallery_bp.route("/api/gallery/recent-sessions")
+def api_recent_sessions():
+    """Return the 4 most recently active sessions as JSON for the gallery home App Shell."""
+    is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
+    recent = _get_recent_sessions(limit=4)
+    data = []
+    for s in recent:
+        data.append({
+            "id": s.id,
+            "name": s.name,
+            "gallery_name": s.gallery.name,
+            "gallery_id": s.gallery.id,
+            "view_url": url_for('gallery.view_page', galleryname=s.gallery.name, sessionname=s.name)
+        })
+    return jsonify({"sessions": data, "is_current_user": is_current_user})
 
 
 

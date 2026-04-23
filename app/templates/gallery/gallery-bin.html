@@ -1,5 +1,4 @@
 {% extends "gallery/index.html" %}
-{% from "_components/_folder_card.html" import folder_card %}
 
 {% block gallery_content %}
     <div class="gallery-page-header">
@@ -15,26 +14,97 @@
 
     <section class="folders">
         <h2 class="folders-title">Recycle Bin</h2>
-        
+
         <div class="folders-wrap">
-            {% if folders %}  
-                <div class="folders-list">
-                    {% for folder in folders %}
-                        {{ folder_card(folder, 'trash', is_current_user=is_current_user, count=session_counts[folder.id]) }}
-                    {% endfor %}
+            <div id="folders-mount">
+                <div class="folders-list skeleton-list">
+                    <div class="folder-item skeleton"></div>
+                    <div class="folder-item skeleton"></div>
+                    <div class="folder-item skeleton"></div>
                 </div>
-            {% else %}
-                <div class="empty-state">
-                    <div class="empty-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 7h16m-10 4v6m4-6v6M5 7l1 12 2 2h8l2-2 1-12M9 7V4l1-1h4l1 1v3"/>
-                        </svg>
-                    </div>
-                    
-                    <h3>All Clean!</h3>
-                    <p>There are currently no galleries or sessions in the trash.</p>
-                </div>
-            {% endif %}
+            </div>
         </div>
     </section>
+
+    <script>
+    (function () {
+        function buildFolderCard(folder, count, isCurrentUser) {
+            const sessionUrl  = '/gallery/' + encodeURIComponent(folder.name);
+            const recoverUrl  = '/gallery/' + folder.id + '/recover';
+            const forceUrl    = '/gallery/' + folder.id + '/force-delete';
+
+            const actionBtns = isCurrentUser ? `
+                <button type="button" class="icon-button recover-gallery-btn"
+                        data-gallery-id="${folder.id}"
+                        data-modal-target="#recoverGalleryModal"
+                        data-recover-url="${recoverUrl}">
+                    <svg class="folder-icon" width="24" height="24"><use href="#gllry-folder-rev"></use></svg>
+                </button>
+                <button type="button" class="icon-button force-delete-btn"
+                        data-gallery-id="${folder.id}"
+                        data-modal-target="#forceDeleteGalleryModal"
+                        data-force-url="${forceUrl}">
+                    <svg class="folder-icon" width="24" height="24"><use href="#gllry-folder-del"></use></svg>
+                </button>` :
+                `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>`;
+
+            return `
+                <div class="folder-item">
+                    <a href="${sessionUrl}" class="card-link-overlay" aria-label="Open ${folder.name}"></a>
+                    <div class="item-icon">
+                        <svg width="20" height="20"><use href="#gllry-banner-folder"></use></svg>
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">${folder.name}</h3>
+                        <div class="item-meta">
+                            <span class="item-session-count">${count} sessions</span>
+                            <span class="item-separator">·</span>
+                            <span class="item-activity">${folder.created_at}</span>
+                        </div>
+                    </div>
+                    <div class="item-actions">${actionBtns}</div>
+                </div>`;
+        }
+
+        function buildEmptyState() {
+            return `<div class="empty-state">
+                <div class="empty-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                              d="M4 7h16m-10 4v6m4-6v6M5 7l1 12 2 2h8l2-2 1-12M9 7V4l1-1h4l1 1v3"/>
+                    </svg>
+                </div>
+                <h3>All Clean!</h3>
+                <p>There are currently no galleries or sessions in the trash.</p>
+            </div>`;
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            fetch('/api/gallery/list?view=trash')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    const mount = document.getElementById('folders-mount');
+                    const galleries = data.galleries;
+                    const counts = data.session_counts;
+                    const isCurrentUser = data.is_current_user;
+
+                    if (!galleries.length) {
+                        mount.innerHTML = buildEmptyState();
+                        return;
+                    }
+
+                    const html = galleries.map(function (f) {
+                        return buildFolderCard(f, counts[String(f.id)] || 0, isCurrentUser);
+                    }).join('');
+                    mount.innerHTML = '<div class="folders-list">' + html + '</div>';
+                })
+                .catch(function () {
+                    document.getElementById('folders-mount').innerHTML =
+                        '<p class="error-notice">Could not load trash.</p>';
+                });
+        });
+    }());
+    </script>
 {% endblock %}

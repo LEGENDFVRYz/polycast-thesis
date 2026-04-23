@@ -1,5 +1,4 @@
 {% extends "gallery/index.html" %}
-{% from "_components/_folder_card.html" import folder_card %}
 
 {% block gallery_content %}
     <div class="gallery-page-header">
@@ -15,26 +14,106 @@
 
     <section class="folders">
         <h2 class="folders-title">Favorites</h2>
-        
+
         <div class="folders-wrap">
-            {% if folders %}  
-                <div class="folders-list">
-                    {% for folder in folders %}
-                        {{ folder_card(folder, is_current_user=is_current_user, count=session_counts[folder.id]) }}
-                    {% endfor %}
+            <div id="folders-mount">
+                <div class="folders-list skeleton-list">
+                    <div class="folder-item skeleton"></div>
+                    <div class="folder-item skeleton"></div>
+                    <div class="folder-item skeleton"></div>
                 </div>
-            {% else %}
-                <div class="empty-state">
-                    <div class="empty-icon">
-                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>
-                        </svg>
-                    </div>
-                    
-                    <h3>No favorites yet!</h3>
-                    <p>Galleries you star will appear here for quick access.</p>
-                </div>
-            {% endif %}
+            </div>
         </div>
     </section>
+
+    <script>
+    (function () {
+        function buildFolderCard(folder, count, isCurrentUser) {
+            const isFav = folder.is_favorite;
+            const sessionUrl = '/gallery/' + encodeURIComponent(folder.name);
+            const favUrl     = '/gallery/' + folder.id + '/favorite';
+            const deleteUrl  = '/gallery/' + folder.id + '/delete';
+
+            const actionBtns = isCurrentUser ? `
+                <button type="button" class="icon-button edit-session-btn"
+                        data-gallery-id="${folder.id}"
+                        data-gallery-name="${folder.name}"
+                        data-modal-target="#editGalleryModal">
+                    <svg class="folder-icon" width="24" height="24"><use href="#gllry-folder-edit"></use></svg>
+                </button>
+                <button type="button" class="icon-button delete-session-btn"
+                        data-modal-target="#deleteGalleryModal"
+                        data-delete-url="${deleteUrl}">
+                    <svg class="folder-icon" width="24" height="24"><use href="#gllry-folder-bins"></use></svg>
+                </button>` :
+                `<svg class="chevron-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M9 18L15 12L9 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>`;
+
+            return `
+                <div class="folder-item">
+                    <a href="${sessionUrl}" class="card-link-overlay" aria-label="Open ${folder.name}"></a>
+                    <button type="button" class="icon-button favorite-gallery-btn"
+                            data-gallery-id="${folder.id}"
+                            data-favorite-url="${favUrl}"
+                            data-modal-target="#favoriteGalleryModal"
+                            title="${isFav ? 'Remove from Favorites' : 'Add to Favorites'}">
+                        <svg class="folder-favorite-icon" width="20" height="20" style="${isFav ? '' : 'fill: none;'}">
+                            <use href="#gllry-folder-star"></use>
+                        </svg>
+                    </button>
+                    <div class="item-icon">
+                        <svg width="20" height="20"><use href="#gllry-banner-folder"></use></svg>
+                    </div>
+                    <div class="item-info">
+                        <h3 class="item-title">${folder.name}</h3>
+                        <div class="item-meta">
+                            <span class="item-session-count">${count} sessions</span>
+                            <span class="item-separator">·</span>
+                            <span class="item-activity">${folder.created_at}</span>
+                        </div>
+                    </div>
+                    <div class="item-actions">${actionBtns}</div>
+                </div>`;
+        }
+
+        function buildEmptyState() {
+            return `<div class="empty-state">
+                <div class="empty-icon">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                              d="m12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z"/>
+                    </svg>
+                </div>
+                <h3>No favorites yet!</h3>
+                <p>Galleries you star will appear here for quick access.</p>
+            </div>`;
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            fetch('/api/gallery/list?view=favorites')
+                .then(function (r) { return r.json(); })
+                .then(function (data) {
+                    const mount = document.getElementById('folders-mount');
+                    const galleries = data.galleries;
+                    const counts = data.session_counts;
+                    const isCurrentUser = data.is_current_user;
+
+                    if (!galleries.length) {
+                        mount.innerHTML = buildEmptyState();
+                        return;
+                    }
+
+                    const html = galleries.map(function (f) {
+                        return buildFolderCard(f, counts[String(f.id)] || 0, isCurrentUser);
+                    }).join('');
+                    mount.innerHTML = '<div class="folders-list">' + html + '</div>';
+                })
+                .catch(function () {
+                    document.getElementById('folders-mount').innerHTML =
+                        '<p class="error-notice">Could not load favorites.</p>';
+                });
+        });
+    }());
+    </script>
 {% endblock %}

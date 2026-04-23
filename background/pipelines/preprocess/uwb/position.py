@@ -14,16 +14,20 @@ from background.pipelines.config import cfg
 class UWBPositionFilter:
     def __init__(self):
         self.board_width = cfg.anchors.board_size_x
-        
-        # Issue 3: Hardcoded board height (FIXED)
         self.board_height = cfg.anchors.board_size_y
-        
-        # Issue 4: Position EMA too strong (FIXED)
-        self.pos_ema_alpha = cfg.uwb.pos_ema_alpha
-        
-        # Issue 6: Velocity limit
         self.max_speed_ms = cfg.uwb.outlier_speed_limit_ms
-        
+
+        # Alpha-Beta filter gains
+        self._alpha = cfg.uwb.pos_alpha
+        self._beta  = cfg.uwb.pos_beta
+
+        # Alpha-Beta filter state
+        self._est_x: float | None = None
+        self._est_y: float | None = None
+        self._vel_x: float = 0.0
+        self._vel_y: float = 0.0
+
+        # Used by the velocity-outlier gate (pre-filter) and for dt
         self._prev_pos = None
         self._prev_ts = None
 
@@ -51,14 +55,30 @@ class UWBPositionFilter:
         clamped_x = max(0.0, min(self.board_width, raw_x))
         clamped_y = max(0.0, min(self.board_height, raw_y))
 
-        # ── 3. EMA Smoothing ──
-        if self._prev_pos is None:
-            clean_x, clean_y = clamped_x, clamped_y
+        # ── 3. Alpha-Beta Filter ──
+        dt_s = (ts - self._prev_ts) / 1_000_000.0 if self._prev_ts is not None else 1.0 / cfg.uwb.rate_hz
+        if dt_s <= 0:
+            dt_s = 1.0 / cfg.uwb.rate_hz
+
+        if self._est_x is None:
+            # First sample: seed the estimate directly
+            self._est_x, self._est_y = clamped_x, clamped_y
         else:
-            clean_x = (self.pos_ema_alpha * clamped_x) + ((1 - self.pos_ema_alpha) * self._prev_pos[0])
-            clean_y = (self.pos_ema_alpha * clamped_y) + ((1 - self.pos_ema_alpha) * self._prev_pos[1])
-            
-        self._prev_pos = (clean_x, clean_y)
+            # Predict
+            pred_x = self._est_x + self._vel_x * dt_s
+            pred_y = self._est_y + self._vel_y * dt_s
+            # Residual
+            err_x = clamped_x - pred_x
+            err_y = clamped_y - pred_y
+            # Update position and velocity
+            self._est_x = pred_x + self._alpha * err_x
+            self._est_y = pred_y + self._alpha * err_y
+            self._vel_x = self._vel_x + (self._beta * err_x) / dt_s
+            self._vel_y = self._vel_y + (self._beta * err_y) / dt_s
+
+        clean_x, clean_y = self._est_x, self._est_y
+
+        self._prev_pos = (clamped_x, clamped_y)
         self._prev_ts = ts
 
         # --- THE FIX: Explicit Axis Definition ---
@@ -77,6 +97,10 @@ class UWBPositionFilter:
         return ev
 
     def reset(self):
+        self._est_x = None
+        self._est_y = None
+        self._vel_x = 0.0
+        self._vel_y = 0.0
         self._prev_pos = None
         self._prev_ts = None
 
@@ -92,6 +116,7 @@ if __name__ == '__main__':
     import time
     import os
     import csv
+    import math
     import matplotlib.pyplot as plt
     
     from background.pipelines.cleaner.unpacker import SerialStreamer
@@ -118,6 +143,20 @@ if __name__ == '__main__':
     print(f"  [TEST] PHYSICS POLICE: Position Filter: {SERIAL_PORT}")
     print("  Press Ctrl+C to stop and generate Trajectory Smoothing reports.")
     print("=" * 60)
+
+    # --- REVISION: Ground Truth Prompt ---
+    ground_truth = None
+    print("Do you want to test clean position accuracy against a specific known coordinate? (y/n)")
+    if input().strip().lower() == 'y':
+        try:
+            gt_x = float(input("  Enter expected X coordinate (m): "))
+            gt_y = float(input("  Enter expected Y coordinate (m): "))
+            ground_truth = (gt_x, gt_y)
+            print(f"  [SET] Target ground truth: X={gt_x:.3f}, Y={gt_y:.3f}")
+        except ValueError:
+            print("  [ERROR] Invalid input. Proceeding without ground truth.")
+    print("=" * 60)
+    # -------------------------------------
 
     event_log = []
     last_print_time = 0
@@ -146,6 +185,13 @@ if __name__ == '__main__':
                                 print(f"  Pkt ID     : {clean_pos_event['packet_id']}")
                                 print(f"  Raw Input  : X: {clean_pos_event['pos_raw'][0]:6.3f} m  |  Y: {clean_pos_event['pos_raw'][1]:6.3f} m")
                                 print(f"  CLEAN OUT  : X: {clean_pos_event['pos_clean'][0]:6.3f} m  |  Y: {clean_pos_event['pos_clean'][1]:6.3f} m")
+                                
+                                # --- REVISION: Live Error Display ---
+                                if ground_truth:
+                                    dist_err = math.hypot(clean_pos_event['pos_clean'][0] - ground_truth[0], clean_pos_event['pos_clean'][1] - ground_truth[1])
+                                    print(f"  POS ERROR  : {dist_err:.4f} m from target (Cleaned)")
+                                # ------------------------------------
+                                
                                 print("==========================================================")
                                 last_print_time = current_time
             time.sleep(0.005)
@@ -157,6 +203,18 @@ if __name__ == '__main__':
         if not event_log:
             print("No data collected. Exiting.")
             exit()
+
+        # --- REVISION: Final Average Error Calculation ---
+        if ground_truth:
+            errors_m = [math.hypot(ev['pos_clean'][0] - ground_truth[0], ev['pos_clean'][1] - ground_truth[1]) for ev in event_log]
+            avg_error = sum(errors_m) / len(errors_m)
+            print("\n" + "=" * 60)
+            print(f"  [ACCURACY REPORT (CLEANED POSITION)]")
+            print(f"  Target Coordinate : X={ground_truth[0]:.3f}, Y={ground_truth[1]:.3f}")
+            print(f"  Samples Evaluated : {len(errors_m)}")
+            print(f"  Average Error     : {avg_error:.4f} meters ({avg_error * 100:.2f} cm)")
+            print("=" * 60 + "\n")
+        # -------------------------------------------------
 
         # --- CSV EXPORT ---
         csv_filename = "position_filter_report.csv"
@@ -188,6 +246,11 @@ if __name__ == '__main__':
         
         ax1.plot(raw_x, raw_y, label='Raw Math Trajectory (Can exit bounds)', color='red', alpha=0.3, linewidth=1, marker='.')
         ax1.plot(clean_x, clean_y, label='Filtered Trajectory (Clamped & Smoothed)', color='blue', linewidth=2)
+        
+        # --- REVISION: Plot Ground Truth if available ---
+        if ground_truth:
+            ax1.plot(ground_truth[0], ground_truth[1], marker='X', color='green', markersize=12, label='Ground Truth Target')
+        # ------------------------------------------------
         
         ax1.set_xlim(-0.2, board_w + 0.2)
         ax1.set_ylim(-0.2, board_h + 0.2)

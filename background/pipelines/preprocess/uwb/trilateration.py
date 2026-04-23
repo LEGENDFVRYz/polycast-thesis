@@ -18,22 +18,26 @@ class UWBSolver:
         # Anchor configurations
         self.anchors = np.array(cfg.anchors.positions)
         self.board_width = cfg.anchors.board_size_x
-        self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24) 
-        
-        # Issue 5: Z-plane assumption. Pen is at Z=0.0. 
+        self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24)
+
+        # Issue 5: Z-plane assumption. Pen is at Z=0.0.
         # The anchors are at Z=0.07. The 3D distance math inherently handles this offset!
-        self.pen_z = 0.0  
-        
+        self.pen_z = 0.0
+
         # Bounds and initial guess
         self.bounds_min = [-0.10, -0.10]
-        self.bounds_max = [self.board_width + 0.10, self.board_height + 0.10] 
+        self.bounds_max = [self.board_width + 0.10, self.board_height + 0.10]
         self._guess = np.array([self.board_width / 2.0, self.board_height / 2.0])
 
-    def _residuals(self, guess_xy, distances, valid_anchors):
-        """Calculate the error between the guess and the actual measured ranges."""
+        # Stale-guess recovery: track last successful solve timestamp
+        self._last_valid_ts: int | None = None
+        self._stale_timeout_us: int = cfg.uwb.stale_guess_timeout_us
+
+    def _residuals(self, guess_xy, distances, valid_anchors, weights):
+        """Weighted residuals for WLS: multiplying by sqrt(w) makes least_squares minimize Σ w·r²."""
         guess_xyz = np.array([guess_xy[0], guess_xy[1], self.pen_z])
         calc_dists = np.linalg.norm(valid_anchors - guess_xyz, axis=1)
-        return calc_dists - distances
+        return (calc_dists - distances) * np.sqrt(weights)
 
     def process_one(self, ev: dict) -> dict | None:
         if ev.get('sensor') != 'UWB' or 'clean_dists' not in ev:
@@ -49,26 +53,40 @@ class UWBSolver:
         # Trilateration fundamentally requires at least 3 valid spheres to intersect
         if len(valid_dists) < 3:
             return None
-        
+
+        # Stale-guess recovery: if pen was lifted/relocated, re-seed from anchor centroid
+        ts = ev['ts_hw']
+        if (self._last_valid_ts is None or
+                (ts - self._last_valid_ts) > self._stale_timeout_us):
+            self._guess = np.mean(valid_anchors[:, :2], axis=0)
+
         try:
+            # IDW weights: closer anchors trusted more (shorter range = less multipath opportunity)
+            raw_w = 1.0 / (valid_dists ** cfg.uwb.wls_power + cfg.uwb.wls_epsilon)
+            weights = raw_w * (len(raw_w) / raw_w.sum())  # normalize so mean weight = 1
+
             res = least_squares(
                 self._residuals,
                 self._guess,
                 bounds=(self.bounds_min, self.bounds_max),
-                args=(valid_dists, valid_anchors),
+                args=(valid_dists, valid_anchors, weights),
                 loss='soft_l1',
                 f_scale=0.1
             )
-            
+
             raw_x, raw_y = res.x
-            cost = res.cost
-            
-            # Issue 2: No confidence gating (FIXED)
-            rms_error = float(np.sqrt(np.mean(res.fun ** 2)))
+
+            # Compute RMS on unweighted geometric residuals so trilat_max_residual keeps its
+            # physical meaning in metres (res.fun contains weighted residuals after WLS).
+            unweighted = np.linalg.norm(
+                valid_anchors - np.array([raw_x, raw_y, self.pen_z]), axis=1
+            ) - valid_dists
+            rms_error = float(np.sqrt(np.mean(unweighted ** 2)))
             if rms_error > cfg.uwb.trilat_max_residual:
                 return None  # Math converged, but to a garbage location
             
             self._guess = res.x
+            self._last_valid_ts = ts
 
             return {
                 'sensor':      'POSITION',
@@ -83,6 +101,7 @@ class UWBSolver:
 
     def reset(self):
         self._guess = np.array([self.board_width / 2.0, self.board_height / 2.0])
+        self._last_valid_ts = None
 
 
 
@@ -96,6 +115,7 @@ if __name__ == '__main__':
     import time
     import os
     import csv
+    import math
     import matplotlib.pyplot as plt
     
     from background.pipelines.cleaner.unpacker import SerialStreamer
@@ -120,6 +140,20 @@ if __name__ == '__main__':
     print("  Press Ctrl+C to stop and generate raw mathematical reports.")
     print("=" * 60)
 
+    # --- REVISION: Ground Truth Prompt ---
+    ground_truth = None
+    print("Do you want to test accuracy against a specific known coordinate? (y/n)")
+    if input().strip().lower() == 'y':
+        try:
+            gt_x = float(input("  Enter expected X coordinate (m): "))
+            gt_y = float(input("  Enter expected Y coordinate (m): "))
+            ground_truth = (gt_x, gt_y)
+            print(f"  [SET] Target ground truth: X={gt_x:.3f}, Y={gt_y:.3f}")
+        except ValueError:
+            print("  [ERROR] Invalid input. Proceeding without ground truth.")
+    print("=" * 60)
+    # -------------------------------------
+
     event_log = []
     last_print_time = 0
 
@@ -143,6 +177,13 @@ if __name__ == '__main__':
                             print(f"  Pkt ID     : {pos_event['packet_id']}")
                             print(f"  Solve Cost : {pos_event['solve_error']:.6f} (Math Confidence)")
                             print(f"  RAW POS    : X: {pos_event['pos_raw'][0]:6.3f} m  |  Y: {pos_event['pos_raw'][1]:6.3f} m")
+                            
+                            # --- REVISION: Live Error Display ---
+                            if ground_truth:
+                                dist_err = math.hypot(pos_event['pos_raw'][0] - ground_truth[0], pos_event['pos_raw'][1] - ground_truth[1])
+                                print(f"  POS ERROR  : {dist_err:.4f} m from target")
+                            # ------------------------------------
+                            
                             print("==========================================================")
                             last_print_time = current_time
             time.sleep(0.005)
@@ -154,6 +195,18 @@ if __name__ == '__main__':
         if not event_log:
             print("No data collected. Exiting.")
             exit()
+
+        # --- REVISION: Final Average Error Calculation ---
+        if ground_truth:
+            errors_m = [math.hypot(ev['pos_raw'][0] - ground_truth[0], ev['pos_raw'][1] - ground_truth[1]) for ev in event_log]
+            avg_error = sum(errors_m) / len(errors_m)
+            print("\n" + "=" * 60)
+            print(f"  [ACCURACY REPORT]")
+            print(f"  Target Coordinate : X={ground_truth[0]:.3f}, Y={ground_truth[1]:.3f}")
+            print(f"  Samples Evaluated : {len(errors_m)}")
+            print(f"  Average Error     : {avg_error:.4f} meters ({avg_error * 100:.2f} cm)")
+            print("=" * 60 + "\n")
+        # -------------------------------------------------
 
         # --- CSV EXPORT ---
         csv_filename = "trilateration_math_report.csv"
@@ -181,6 +234,12 @@ if __name__ == '__main__':
             ax1.add_patch(plt.Rectangle((0, 0), board_w, board_h, fill=False, edgecolor='black', linestyle='--', lw=2))
             ax1.scatter([0, board_w, board_w, 0], [0, 0, board_h, board_h], c='red', s=100, marker='s', label='Anchors')
             ax1.plot(raw_x, raw_y, label='Raw Solved Coordinates', color='red', alpha=0.5, marker='.', linestyle='none')
+            
+            # --- REVISION: Plot Ground Truth if available ---
+            if ground_truth:
+                ax1.plot(ground_truth[0], ground_truth[1], marker='X', color='blue', markersize=12, label='Ground Truth Target')
+            # ------------------------------------------------
+            
             ax1.set_xlim(-0.2, board_w + 0.2)
             ax1.set_ylim(-0.2, board_h + 0.2)
             ax1.set_aspect('equal')

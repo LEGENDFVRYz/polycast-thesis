@@ -28,9 +28,9 @@ class IMUConfig:
     sample_rate_hz: float = 200.0
 
     # ZUPT
-    zupt_acc_threshold: float = 0.50
-    zupt_jerk_threshold: float = 21.5
-    zupt_min_duration_s: float = 0.15
+    zupt_acc_threshold: float = 0.15
+    zupt_jerk_threshold: float = 8.5
+    zupt_min_duration_s: float = 0.05
 
     # Contact / force
     force_contact_threshold: float = 100.0
@@ -41,8 +41,25 @@ class IMUConfig:
 
     # Board projection
     board_axes: tuple[str, str] = ("x", "z")
-    smooth_alpha: float = 0.75
+    smooth_alpha: float = 0.75          # legacy heavy EMA — superseded by smooth_alpha_eskf
+    smooth_alpha_eskf: float = 0.18     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
     acc_is_linear: bool = True
+
+    # High-pass filter (Path C) — strips DC bias drift before ESKF integration
+    hpf_enabled: bool = True
+    hpf_cutoff_hz: float = 0.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
+
+
+# ------------------------------------------------------------------------
+# CONTACT STATE DETECTOR
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class ContactConfig:
+    force_exit_ratio:     float = 0.70   # exit threshold = force_enter * ratio
+    pen_down_debounce_ms: float = 10.0   # reject bumps/spikes (ms of sustained force)
+    pen_up_debounce_ms:   float = 100.0   # reject tremor dips (ms below exit threshold)
+    min_draw_ms:          float = 30.0   # cumulative CONTACT_DRAWING before session opens
+    state_debounce_n:     int   = 5      # N consecutive samples to confirm substate change
 
 
 # ------------------------------------------------------------------------
@@ -50,20 +67,35 @@ class IMUConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
-    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
+    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
+    # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
 
-    rate_hz: float = 9.0
+    rate_hz: float = 50.0
 
     ema_alpha: float = 0.25
     max_range_jump_m: float = 0.40
-    median_window: int = 5
+    median_window: int = 10
 
     outlier_speed_limit_ms: float = 2.0
     drop_speed_outliers: bool = True
     num_anchors: int = 4
-    pos_ema_alpha: float = 0.05
+    pos_ema_alpha: float = 0.75             # legacy — kept for reference, superseded by pos_alpha
     trilat_max_residual: float = 0.15
+
+    # Alpha-Beta filter (replaces scalar EMA)
+    pos_alpha: float = 0.60                 # position correction gain
+    pos_beta: float = 0.10                  # velocity correction gain
+
+    # Trilateration stale-guess recovery
+    stale_guess_timeout_us: int = 1_000_000 # 1 second gap triggers centroid re-seed
+
+    # Range filter time-aware EMA (tau = smoothing time constant)
+    range_tau_s: float = 0.30               # at 9 Hz (dt≈0.11s): α ≈ 0.31; tune up to slow down
+
+    # Weighted least squares (inverse distance weighting in trilateration)
+    wls_power: float   = 2.0                # exponent: 2.0 = inverse-square, 1.0 = inverse-linear
+    wls_epsilon: float = 0.01               # numerical guard prevents ÷0 at very-close anchors
 
 
 # ------------------------------------------------------------------------
@@ -114,27 +146,58 @@ class MarkerConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
-    # Process noise
-    sigma_a: float           = 0.15      
-    sigma_b_a: float         = 0.005     
-    sigma_zupt: float        = 0.005     
-    
-    # Measurement noise 
-    sigma_uwb: float         = 0.12      # Tightened for faster relocation
-    sigma_trilat: float      = 0.05      
-    k_nlos: float            = 0.00 
-    r_scale_max: float       = 100.0
-    
-    # Raised to 6.0 to stop rejecting valid macro-movements
-    hard_reject_mult: float  = 15.0       
-    
-    # Turn detection - Reactivated with high threshold
-    turn_omega_threshold: float = 1.85    # ~140 dps (Ignores friction, catches corners)
-    turn_k_q: float             = 3.0    # Forces a crisp corner
-    turn_n_post: int            = 2      
-    
-    state_buffer_size: int      = 20
-    # Initial covariance (diagonal, one value per block in m/s/m/s²)
+    # ── Process noise ─────────────────────────────────────────────────────
+    # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
+    # are present — inflate Q so UWB retains authority between updates.
+    sigma_a: float           = 0.6      # m/s² (was 0.15)
+    # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
+    sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
+    sigma_zupt: float        = 0.005     # unchanged — already aggressive
+
+    # ── Measurement noise ─────────────────────────────────────────────────
+    # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
+    # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
+    sigma_uwb: float         = 0.05      # m (was 0.12)
+    sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
+
+    # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
+    k_nlos: float            = 1.5       # (was 0.00)
+    r_scale_max: float       = 25.0      # (was 100.0 — tighter ceiling, avoids completely freezing updates)
+
+    # Hard-reject threshold tightened back to intended value.
+    hard_reject_mult: float  = 7.5       # (was 15.0 — comment said 6.0, now actually enforced)
+
+    # ── Turn detection ────────────────────────────────────────────────────
+    # Threshold lowered slightly: cleaner acc signal means real corners are
+    # detectable earlier without false positives from noise.
+    turn_omega_threshold: float = 0.8    # rad/s (was 1.85 — ~86 dps)
+    turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
+    turn_n_post: int            = 2      # unchanged
+
+    # ── Ring buffer ───────────────────────────────────────────────────────
+    # Enlarged for 200 Hz IMU: covers a ~0.3 s window for robust UWB time-interpolation.
+    state_buffer_size: int      = 75     # (was 20)
+
+    # ── Velocity drag ─────────────────────────────────────────────────────
+    # Reduced: BUG-1 lag was masking the need for heavy drag. With near-raw
+    # Path-A acc, lighter drag still suppresses lever-arm runaway without
+    # artificially killing real pen velocity.
+    velocity_drag_inv_s: float  = 2.5   # s⁻¹ (was 5.0)
+
+    # ── ITrackU-style hybrid reset (Phase 3) ─────────────────────────────
+    # 3a: after this many consecutive static IMU samples, hard-zero velocity.
+    # At 200 Hz, 20 samples = 100 ms of confirmed stillness.
+    zupt_hard_reset_n: int     = 20
+
+    # 3b: velocity pseudo-measurement noise when UWB is pristine.
+    # Applied when solve_error < sigma_trilat (reliable trilateration).
+    sigma_uwb_vel: float       = 0.08    # m/s
+
+    # 3c: sigma_uwb scale factor while pen is actively drawing.
+    # Pen physically constrained to board → trust UWB more during strokes.
+    contact_sigma_scale: float = 0.85    # 30 % tighter (multiplicative)
+
+    # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20
     p0_vel: float    = 0.10
     p0_bias: float   = 0.05
@@ -145,9 +208,10 @@ class FusionESKFConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Config:
-    serial: SerialConfig = field(default_factory=SerialConfig)
-    imu: IMUConfig = field(default_factory=IMUConfig)
-    uwb: UWBConfig = field(default_factory=UWBConfig)
+    serial:  SerialConfig  = field(default_factory=SerialConfig)
+    imu:     IMUConfig     = field(default_factory=IMUConfig)
+    contact: ContactConfig = field(default_factory=ContactConfig)
+    uwb:     UWBConfig     = field(default_factory=UWBConfig)
     anchors: AnchorConfig = field(default_factory=AnchorConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     marker: MarkerConfig = field(default_factory=MarkerConfig)

@@ -102,6 +102,72 @@ class SerialStreamer:
         return packets_found
 
 
+class PacketStats:
+    def __init__(self, name):
+        self.name = name
+        
+        self.total_received = 0
+        self.total_expected = 0
+        self.total_lost = 0
+        
+        self.last_packet_id = None
+        self.first_ts = None
+        self.last_ts = None
+
+    def update(self, pkt):
+        pkt_id = pkt['packet_id']
+        ts = pkt['ts_hw']
+
+        # Initialize timestamps
+        if self.first_ts is None:
+            self.first_ts = ts
+
+        self.last_ts = ts
+
+        # Packet counting
+        self.total_received += 1
+
+        if self.last_packet_id is not None:
+            gap = pkt_id - self.last_packet_id
+            
+            if gap > 1:
+                lost = gap - 1
+                self.total_lost += lost
+                self.total_expected += gap
+            else:
+                self.total_expected += 1
+        else:
+            self.total_expected += 1
+
+        self.last_packet_id = pkt_id
+
+    def get_summary(self):
+        if self.total_expected == 0:
+            loss_percent = 0
+        else:
+            loss_percent = (self.total_lost / self.total_expected) * 100
+
+        if self.total_expected == 0:
+            recv_percent = 0
+        else:
+            recv_percent = (self.total_received / self.total_expected) * 100
+
+        # Hertz calculation
+        if self.first_ts is not None and self.last_ts != self.first_ts:
+            elapsed_sec = (self.last_ts - self.first_ts) / 1000.0  # assuming ms
+            hz = self.total_received / elapsed_sec if elapsed_sec > 0 else 0
+        else:
+            hz = 0
+
+        return {
+            'received': self.total_received,
+            'received_percent': recv_percent,
+            'lost': self.total_lost,
+            'loss_percent': loss_percent,
+            'hz': hz
+        }
+
+
 # ==============================================================================
 # DEBUG MODE
 #   - Enable to print all the collected data immediately as possible
@@ -134,6 +200,10 @@ if __name__ == "__main__":
     BAUD_RATE = cfg.serial.baud
     streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
     
+    # --- Statistics ---
+    imu_stats = PacketStats('IMU')
+    uwb_stats = PacketStats('UWB')
+    
     if not streamer.ser:
         exit(1)
         
@@ -147,19 +217,27 @@ if __name__ == "__main__":
                 
                 if sensor_type == 'IMU':
                     latest['IMU'] = pkt
+                    imu_stats.update(pkt)
+                    
                     # In History mode, print immediately
                     if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'IMU']:
                         print(f"[IMU #{pkt['packet_id']}] Acc: {pkt['acc']}")
                         
                 elif sensor_type == 'UWB':
                     latest['UWB'] = pkt
+                    uwb_stats.update(pkt)
+                    
                     if VIEW_MODE == 'HISTORY' and FILTER_MODE in ['BOTH', 'UWB']:
                         d = pkt['dists']
                         print(f">>> [UWB #{pkt['packet_id']}] Dists: {d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}, {d[3]:.2f}")
 
             # LIVE VISUALIZATION (Throttled via DISPLAY RATE)
             if VIEW_MODE == 'LIVE' and (time.time() - last_draw_time > DISPLAY_RATE):
+                imu_summary = imu_stats.get_summary()
+                uwb_summary = uwb_stats.get_summary()
+                
                 os.system('cls' if os.name == 'nt' else 'clear')
+                
                 print(f"=========== STREAMER DEBUG ({DISPLAY_RATE}s) ==========")
                 
                 if FILTER_MODE in ['BOTH', 'IMU'] and latest['IMU']:
@@ -175,6 +253,20 @@ if __name__ == "__main__":
                     d = uwb['dists']
                     print(f"\n[UWB #{uwb['packet_id']}]")
                     print(f"  Dists: {d[0]:.2f}, {d[1]:.2f}, {d[2]:.2f}, {d[3]:.2f}")
+                    
+                print("\n=============== STATISTICS =================")
+
+                if FILTER_MODE in ['BOTH', 'IMU'] and latest['IMU']:
+                    print("\n[IMU]")
+                    print(f"  Received: {imu_summary['received']} ({imu_summary['received_percent']:.2f}%)")
+                    print(f"  Lost:     {imu_summary['lost']} ({imu_summary['loss_percent']:.2f}%)")
+                    print(f"  Avg Hz:   {imu_summary['hz']:.2f}")
+
+                if FILTER_MODE in ['BOTH', 'UWB'] and latest['UWB']:
+                    print("\n[UWB]")
+                    print(f"  Received: {uwb_summary['received']} ({uwb_summary['received_percent']:.2f}%)")
+                    print(f"  Lost:     {uwb_summary['lost']} ({uwb_summary['loss_percent']:.2f}%)")
+                    print(f"  Avg Hz:   {uwb_summary['hz']:.2f}")
                 
                 print("\n============================================")
                 last_draw_time = time.time()

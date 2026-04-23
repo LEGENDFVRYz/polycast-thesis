@@ -120,8 +120,15 @@ class ESKF:
         self._omega_in_plane_last = 0.0
         self._turn_flag_last = False
 
-        # ── Contact-edge tracking (for stroke-start soft ZUPT) ──────────────
+        # ── Contact-edge tracking (for stroke-start soft ZUPT + 3c sigma) ────
         self._prev_stroke_active = False
+
+        # ── Phase 3a — sustained-static hard reset ───────────────────────────
+        self._zupt_hard_count = 0
+
+        # ── Phase 3b — UWB-velocity pseudo-measurement buffer ────────────────
+        # Stores (ts_hw, pos) of the last N accepted pristine UWB corrections.
+        self._uwb_vel_buf: deque[tuple[int, np.ndarray]] = deque(maxlen=5)
 
         # ── Book-keeping ────────────────────────────────────────────────────
         self.last_ts: int | None = None
@@ -174,8 +181,7 @@ class ESKF:
         # Velocity drag — damps rotational-acc integration runaway between UWB corrections.
         # IMU sits 200mm from tip: circular motion generates ~1000 m/s3 apparent acc.
         # Drag prevents that from accumulating into multi-cm position error per UWB cycle.
-        _DRAG = 5.0  # s⁻¹
-        self.v *= max(0.0, 1.0 - _DRAG * dt_s)
+        self.v *= max(0.0, 1.0 - cfg.fusion_eskf.velocity_drag_inv_s * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
         #    Q is now turn-aware — σ_a is inflated during sharp-stroke windows.
@@ -187,6 +193,14 @@ class ESKF:
         #    flags the pen as still.
         if ev.get('is_static', False):
             self._zupt_update()
+            # Phase 3a: sustained static → hard-zero velocity after N samples.
+            # Prevents drift from compounding when the pen sits still between strokes.
+            # b_a is deliberately kept so bias convergence is not disrupted.
+            self._zupt_hard_count += 1
+            if self._zupt_hard_count >= cfg.fusion_eskf.zupt_hard_reset_n:
+                self.v[:] = 0.0
+        else:
+            self._zupt_hard_count = 0
 
         # 4. Contact rising-edge soft ZUPT: tip just pressed on board →
         #    tip velocity should be near zero (pen end may still wiggle, but
@@ -243,6 +257,21 @@ class ESKF:
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
         self._uwb_accepted += 1
+
+        # Phase 3b: UWB-velocity pseudo-measurement on pristine trilateration.
+        # When solve_error < sigma_trilat the geometry is well-conditioned; two
+        # consecutive clean positions give a reliable velocity estimate that
+        # prevents IMU velocity from drifting between UWB fixes.
+        self._uwb_vel_buf.append((ts_uwb, z_tip.copy()))
+        if solve_error < cfg.fusion_eskf.sigma_trilat and len(self._uwb_vel_buf) >= 2:
+            t1, p1 = self._uwb_vel_buf[-2]
+            t2, p2 = self._uwb_vel_buf[-1]
+            dt_vel = (t2 - t1) / 1_000_000.0
+            if 0.01 < dt_vel < 0.5:                       # guard against stale/duplicate ts
+                v_uwb = (p2 - p1) / dt_vel
+                if float(np.linalg.norm(v_uwb)) < 2.0:   # clamp to physical pen-speed limit
+                    self._velocity_pseudo_update(v_uwb, cfg.fusion_eskf.sigma_uwb_vel)
+
         self._clamp_to_board()
 
         return self._emit(
@@ -274,9 +303,12 @@ class ESKF:
             return False
 
         # Adaptive R — scale measurement noise by NLOS severity.
-        ratio   = solve_error / ecfg.sigma_trilat if ecfg.sigma_trilat > 0 else 0.0
-        r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
-        r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
+        if ecfg.k_nlos > 0.0 and ecfg.sigma_trilat > 0.0:
+            ratio   = solve_error / ecfg.sigma_trilat
+            r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
+            r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
+        else:
+            r_scale = 1.0
         self._last_r_scale = r_scale
 
         H = np.zeros((2, 6))
@@ -284,6 +316,9 @@ class ESKF:
         H[1, 1] = 1.0
 
         sigma = ecfg.sigma_uwb
+        # Phase 3c: pen physically on the board → trust UWB more during active strokes.
+        if self._prev_stroke_active:
+            sigma *= ecfg.contact_sigma_scale
         R = (sigma * sigma) * r_scale * np.eye(2)
 
         # Innovation  y = z − p_ref  (time-aligned)
@@ -409,6 +444,32 @@ class ESKF:
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
 
+    def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
+        """Kalman update for a UWB-derived velocity pseudo-measurement.
+
+        H = [0 I 0]  (velocity block at columns 2–3).
+        Innovation y = v_meas − v_nom.
+        Uses the same Joseph-form update as ZUPT for numerical stability.
+        """
+        H = np.zeros((2, 6))
+        H[0, 2] = 1.0
+        H[1, 3] = 1.0
+
+        R = (sigma ** 2) * np.eye(2)
+        y = v_meas - self.v
+
+        S   = H @ self.P @ H.T + R
+        K   = self.P @ H.T @ np.linalg.inv(S)
+
+        dx       = K @ y
+        self.p   += dx[0:2]
+        self.v   += dx[2:4]
+        self.b_a += dx[4:6]
+
+        I   = np.eye(6)
+        IKH = I - K @ H
+        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
     # ────────────────────────────────────────────────────────────────────────
@@ -513,6 +574,7 @@ class ESKF:
 if __name__ == '__main__':
     import time
     import os
+    import csv
 
     os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
@@ -549,9 +611,11 @@ if __name__ == '__main__':
     print("=" * 60)
 
     last_print_time = 0.0
-    latest = None
-    imu_count = 0
-    uwb_count = 0
+    latest      = None
+    latest_imu  = None   # most-recent pre-fusion IMU event (for acc_board diagnostic)
+    imu_count   = 0
+    uwb_count   = 0
+    event_log   = []     # accumulates every fused event for CSV export
 
     try:
         while True:
@@ -570,7 +634,12 @@ if __name__ == '__main__':
                             fused = eskf.process_event(s)
                             if fused:
                                 imu_count += 1
-                                latest = fused
+                                latest     = fused
+                                latest_imu = s
+                                # Decorate with is_static before logging so CSV
+                                # has the IMU-side flag alongside fusion state.
+                                fused['_is_static'] = bool(s.get('is_static', False))
+                                event_log.append(fused)
                     elif ev['sensor'] == 'UWB':
                         for r in range_prep.feed([ev]):
                             raw_pos = trilat.process_one(r)
@@ -581,20 +650,31 @@ if __name__ == '__main__':
                                     if fused:
                                         uwb_count += 1
                                         latest = fused
+                                        fused['_is_static'] = False
+                                        event_log.append(fused)
 
             now = time.time()
             if latest and (now - last_print_time) >= DISPLAY_RATE:
                 os.system('cls' if os.name == 'nt' else 'clear')
                 e = latest['eskf']
-                print(f"========= LIVE ESKF (skeleton, {DISPLAY_RATE}s) =========")
+
+                # acc_board magnitude — sanity-check Path-A amplitude (expect ~1–3 m/s² when writing)
+                if latest_imu is not None:
+                    ab = latest_imu.get('acc_board', (0.0, 0.0))
+                    acc_board_mag = math.sqrt(ab[0]**2 + ab[1]**2)
+                else:
+                    acc_board_mag = 0.0
+
+                print(f"========= LIVE ESKF ({DISPLAY_RATE}s) =========")
                 print(f"  State      : {latest['state']}")
                 print(f"  Stroke ID  : {latest['stroke_id']} (Active: {latest['stroke_active']})")
                 print(f"  Source     : {latest['source']}")
                 print("-" * 50)
                 print(f"  Fused Pos  : X: {latest['fused_x']:6.3f} m | Y: {latest['fused_y']:6.3f} m")
                 print(f"  UWB Anchor : X: {latest['uwb_x']:6.3f} m | Y: {latest['uwb_y']:6.3f} m")
-                print(f"  K_pos_diag : X: {e['K_pos_diag']}")
-                print(f"  uwb_residual_rms : X: {e['uwb_residual_rms']}")
+                print(f"  |acc_board|: {acc_board_mag:.4f} m/s²  (Path-A; expect 1–3 when writing)")
+                print(f"  K_pos_diag : {e['K_pos_diag']:.4f}")
+                print(f"  uwb_resid  : {e['uwb_residual_rms']:.4f} m")
                 print(f"  P_pos_trace: {e['P_pos_trace']:.4f} m")
                 print(f"  Bias b_a   : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
                 print(f"  Last |y|   : {e['innovation_norm']:.4f} m  (UWB innovation)")
@@ -608,11 +688,72 @@ if __name__ == '__main__':
             time.sleep(0.005)
 
     except KeyboardInterrupt:
-        print("\n\n[STOP] Halting ESKF skeleton.")
+        print("\n\n[STOP] Halting ESKF.")
         streamer.close()
+
+        # ── Terse session summary ────────────────────────────────────────────
         print("-" * 60)
         print(f"  IMU events processed : {imu_count}")
         print(f"  UWB events processed : {uwb_count}")
         if latest:
+            e = latest['eskf']
             print(f"  Final fused position : ({latest['fused_x']:.3f}, {latest['fused_y']:.3f}) m")
+            print(f"  Final P_pos_trace    : {e['P_pos_trace']:.4f} m")
+            print(f"  UWB accepted/rejected: {e['uwb_accepted']} / {e['uwb_rejected']}")
+        print("=" * 60)
+
+        if not event_log:
+            print("No events logged. Exiting.")
+            exit()
+
+        # ── CSV export ───────────────────────────────────────────────────────
+        # One row per fused event (both IMU and UWB source).
+        # Columns are stable across phases so CSVs can be overlaid for comparison.
+        csv_filename = "eskf_session.csv"
+        _CSV_COLS = [
+            'ts_hw', 'source',
+            'fused_x', 'fused_y',
+            'uwb_x', 'uwb_y',
+            'stroke_id', 'stroke_active', 'is_static', 'state',
+            'P_pos_trace', 'innovation_norm', 'r_scale',
+            'K_pos_diag', 'b_a_x', 'b_a_y', 'b_a_norm',
+            'omega_in_plane', 'turn_flag',
+            'uwb_residual_rms', 'uwb_accepted', 'uwb_rejected',
+        ]
+        print(f"[EXPORT] Writing {len(event_log)} rows to {csv_filename} ...")
+        with open(csv_filename, mode='w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(_CSV_COLS)
+            for ev in event_log:
+                e = ev.get('eskf', {})
+                ba = e.get('b_a', (0.0, 0.0))
+                writer.writerow([
+                    ev.get('ts_hw'),
+                    ev.get('source'),
+                    round(ev.get('fused_x', 0.0), 6),
+                    round(ev.get('fused_y', 0.0), 6),
+                    round(ev.get('uwb_x', 0.0), 6),
+                    round(ev.get('uwb_y', 0.0), 6),
+                    ev.get('stroke_id', 0),
+                    int(ev.get('stroke_active', False)),
+                    int(ev.get('_is_static', False)),
+                    ev.get('state', ''),
+                    round(e.get('P_pos_trace', 0.0), 6),
+                    round(e.get('innovation_norm', 0.0), 6),
+                    round(e.get('r_scale', 1.0), 4),
+                    round(e.get('K_pos_diag', 0.0), 6),
+                    round(ba[0], 6),
+                    round(ba[1], 6),
+                    round(e.get('b_a_norm', 0.0), 6),
+                    round(e.get('omega_in_plane', 0.0), 4),
+                    int(e.get('turn_flag', False)),
+                    round(e.get('uwb_residual_rms', 0.0), 6),
+                    e.get('uwb_accepted', 0),
+                    e.get('uwb_rejected', 0),
+                ])
+        print(f"[EXPORT] Saved to {csv_filename}")
+        print()
+        print("  Phase comparison tip: rename each run's CSV before the next")
+        print("  session (e.g. eskf_phase2.csv, eskf_phase3.csv) and diff the")
+        print("  P_pos_trace, innovation_norm, and uwb_accepted columns.")
         print("=" * 60)

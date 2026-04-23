@@ -33,7 +33,14 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from _common import (ensure_out, collect, LayerResult, DATASET_DIR, stems_matching)
+from _common import (ensure_out, collect, LayerResult, DATASET_DIR,
+                     stems_matching, list_datasets)
+
+# Truly stationary stems (marker held still). `pt_a`/`pt_aa` are multi-stroke
+# character writes, not static holds. Rotation tests (rt_*, pt_middle_r*)
+# move the UWB tag in a circle around the still tip via the 0.21 m lever arm,
+# so they violate L1's static-range assumption by physical geometry.
+STATIONARY_STEMS = {'pt_middle', 'pt_middle-', 'middle-'}
 from config    import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
 from preprocessor import UWBPreprocessor
 from ground_truth import get_truth
@@ -172,7 +179,7 @@ def analyse(csv_path: Path) -> LayerResult:
     out_dir = ensure_out(LAYER)
     fig, axes = plt.subplots(2, 2, figsize=(11, 7), sharex=True)
     axes = axes.flatten()
-    t_s = (np.arange(len(raws))) * 0.1   # assume ~10 Hz UWB
+    t_s = (np.arange(len(raws))) * 0.02   # ~50 Hz UWB
     for i in range(4):
         ax = axes[i]
         ax.plot(t_s, raws[:, i],    color='grey',   lw=0.6, label='raw')
@@ -209,20 +216,8 @@ def analyse(csv_path: Path) -> LayerResult:
 def run_all() -> list[LayerResult]:
     """Layer 1 runs on all stationary datasets (known ground truth)."""
     results = []
-    for stem in stems_matching('0s', '1s', '2s', '3s', '4s'):
-        results.append(analyse(DATASET_DIR / f'{stem}.csv'))
-    # Orientation tests (stationary at center, different marker angles)
-    for base in ['NorthS', 'SouthS', 'EastS', 'WestS']:
-        for s in (base, f'{base}-'):
-            p = DATASET_DIR / f'{s}.csv'
-            if p.exists():
-                results.append(analyse(p))
-    # Rotation tests (stationary at center, body rotating)
-    for base in ['clockwiseM', 'revclockwiseM', 'mix-mix_method']:
-        for s in (base, f'{base}-'):
-            p = DATASET_DIR / f'{s}.csv'
-            if p.exists():
-                results.append(analyse(p))
+    for p in list_datasets(lambda s: s in STATIONARY_STEMS):
+        results.append(analyse(p))
     return results
 
 
@@ -234,8 +229,7 @@ if __name__ == '__main__':
     if args.datasets:
         files = [DATASET_DIR / f'{d}.csv' for d in args.datasets]
     else:
-        files = [DATASET_DIR / f'{s}.csv'
-                 for s in stems_matching('0s', '1s', '2s', '3s', '4s')]
+        files = list_datasets(lambda s: s in STATIONARY_STEMS)
     for p in files:
         r = analyse(p)
         print(r.summary_line())

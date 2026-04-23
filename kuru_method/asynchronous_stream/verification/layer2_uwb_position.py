@@ -27,7 +27,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from _common       import (ensure_out, collect, LayerResult, DATASET_DIR,
-                           draw_board, stems_matching)
+                           draw_board, stems_matching, list_datasets)
 from config        import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
 from preprocessor  import UWBPreprocessor
 from fusion_engine import IRLSTrilateration
@@ -39,38 +39,32 @@ from ekf_fusion    import TightlyCoupledEKF
 LAYER = 'layer2_uwb_position'
 
 
-_POSITION_STEMS    = {'0s', '0s-', '1s', '1s-', '2s', '2s-',
-                      '3s', '3s-', '4s', '4s-'}
-_ORIENTATION_STEMS = {'NorthS', 'NorthS-', 'SouthS', 'SouthS-',
-                      'EastS', 'EastS-', 'WestS', 'WestS-'}
-_ROTATION_STEMS    = {'clockwiseM', 'clockwiseM-', 'revclockwiseM',
-                      'revclockwiseM-', 'mix-mix_method', 'mix-mix_method-'}
+_POSITION_STEMS    = {'pt_middle', 'pt_middle-', 'middle-',
+                      'pt_a', 'pt_aa', 'pt_a1', 'pt_a2'}
+_ROTATION_STEMS    = {'rt_circle', 'rt_square', 'rt_triangle',
+                      'pt_middle_r', 'pt_middle_rotation', 'pt_middle_rr',
+                      'middleCCW_rot-', 'middleCW_rot-'}
 
 
 def _classify(stem: str) -> str:
     if stem in _POSITION_STEMS:
         return 'stationary'
-    if stem in _ORIENTATION_STEMS:
-        return 'orientation'
     if stem in _ROTATION_STEMS:
         return 'rotation'
     s = stem.lower()
-    if s.startswith('hline'):
+    # ct_ = contour-trace, pt_ = point-trace; both produce the same shape kind.
+    if s.startswith('ct_hline') or s == 'hline' or s == 'hline-':
         return 'line_h'
-    if s.startswith('vline'):
+    if s.startswith('ct_vline') or s == 'vline' or s == 'vline-':
         return 'line_v'
-    if s.startswith('dline_a0_a2'):
+    if s.startswith('ct_diagonal'):
         return 'line_d02'
-    if s.startswith('dline_a3_a1'):
-        return 'line_d31'
-    if s.startswith('circle'):
+    if s.startswith('ct_circle') or s.startswith('pt_circle'):
         return 'shape_circle'
-    if s.startswith('square'):
+    if s.startswith('ct_square') or s.startswith('pt_square'):
         return 'shape_square'
-    if s.startswith('triangle'):
+    if s.startswith('ct_triangle') or s.startswith('pt_triangle'):
         return 'shape_triangle'
-    if s.startswith('star'):
-        return 'shape_star'
     return 'other'
 
 
@@ -295,28 +289,17 @@ def analyse(csv_path: Path) -> LayerResult:
 
 
 def run_all() -> list[LayerResult]:
-    interesting = (
-        stems_matching('0s', '1s', '2s', '3s', '4s') +
-        # Orientation tests (stationary at center)
-        ['NorthS', 'NorthS-', 'SouthS', 'SouthS-',
-         'EastS', 'EastS-', 'WestS', 'WestS-',
-         # Rotation tests (stationary at center)
-         'clockwiseM', 'clockwiseM-', 'revclockwiseM', 'revclockwiseM-',
-         'mix-mix_method', 'mix-mix_method-',
-         # Lines
-         'hline', 'hline-', 'vline', 'vline-',
-         'dline_A0_A2', 'dline_A0_A2-', 'dline_A3_A1', 'dline_A3_A1-',
-         # Shapes (large + small)
-         'CIRCLE', 'CIRCLE-', 'SQUARE', 'SQUARE-',
-         'TRIANGLE', 'TRIANGLE-', 'STAR', 'STAR-',
-         'circleS', 'circleS-', 'squareS', 'squareS-',
-         'triangleS', 'triangleS-', 'starS', 'starS-',
-         # Characters
-         'ABC', 'ABC-', 'HELLO', 'HELLO-',
-         'abcS', 'abcS-', 'helloS', 'helloS-',
-         # Corner visit
-         'corners', 'corners-']
-    )
+    # Stationary (point-tap and middle-hold)
+    stationary = [p.stem for p in list_datasets(lambda s: s in _POSITION_STEMS)]
+    # Rotation in place
+    rotation = list(_ROTATION_STEMS)
+    # Lines (with repeat-count variants -e/-ee/-eee and -l/-ll/-lll)
+    lines = stems_matching('ct_hline', 'ct_vline', 'ct_diagonal')
+    # Shapes (contour-trace and point-trace variants -e/-ee/-eee)
+    shapes = stems_matching('ct_circle', 'ct_square', 'ct_triangle',
+                            'pt_circle', 'pt_square', 'pt_triangle')
+    interesting = stationary + rotation + lines + shapes
+
     seen = set()
     out = []
     for s in interesting:
@@ -337,7 +320,7 @@ if __name__ == '__main__':
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
              if args.datasets else
              [DATASET_DIR / f'{s}.csv'
-              for s in ['0s', 'hline', 'vline', 'CIRCLE']])
+              for s in ['pt_middle', 'ct_hline', 'ct_vline', 'ct_circle']])
     for p in files:
         r = analyse(p)
         print(r.summary_line())

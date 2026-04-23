@@ -26,7 +26,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 from _common    import (ensure_out, collect, LayerResult, DATASET_DIR,
-                        stems_matching)
+                        stems_matching, list_datasets)
+
+STATIONARY_STEMS = {'pt_middle', 'pt_middle-', 'middle-'}
 from imu_integrator import IMUIntegrator
 
 
@@ -157,20 +159,11 @@ def analyse(csv_path: Path, is_stationary: bool) -> LayerResult:
 
 def run_all() -> list[LayerResult]:
     out = []
-    # Stationary position tests
-    for s in stems_matching('0s', '1s', '2s', '3s', '4s'):
-        out.append(analyse(DATASET_DIR / f'{s}.csv', is_stationary=True))
-    # Orientation tests (stationary at center, different marker angles)
-    for s in ['NorthS', 'SouthS', 'EastS', 'WestS']:
-        p = DATASET_DIR / f'{s}.csv'
-        if p.exists():
-            out.append(analyse(p, is_stationary=True))
-    # Rotation tests (stationary position, body rotating — accel should be ~0)
-    for base in ['clockwiseM', 'revclockwiseM', 'mix-mix_method']:
-        for s in (base, f'{base}-'):
-            p = DATASET_DIR / f'{s}.csv'
-            if p.exists():
-                out.append(analyse(p, is_stationary=False))
+    # Truly stationary holds only. Rotation tests (rt_*, pt_middle_r*) inject
+    # centripetal accel via the 0.13 m IMU lever arm, so they violate L3's
+    # static noise-floor assumption by physical geometry — handled in L4 instead.
+    for p in list_datasets(lambda s: s in STATIONARY_STEMS):
+        out.append(analyse(p, is_stationary=True))
     return out
 
 
@@ -182,7 +175,7 @@ if __name__ == '__main__':
                     help='treat as moving (relaxed pass criteria)')
     args = ap.parse_args()
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
-             if args.datasets else [DATASET_DIR / '0s.csv'])
+             if args.datasets else [DATASET_DIR / 'pt_middle.csv'])
     for p in files:
         r = analyse(p, is_stationary=not args.moving)
         print(r.summary_line())

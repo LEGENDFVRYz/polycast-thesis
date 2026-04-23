@@ -57,15 +57,12 @@ LAYER = 'layer4_imu_integration'
 
 DR_RESET_S = 2.0   # seconds between UWB-anchored DR resets
 
-# Dataset category classification
-ORIENTATION_STEMS = {'NorthS', 'SouthS', 'EastS', 'WestS',
-                     'NorthS-', 'SouthS-', 'EastS-', 'WestS-'}
-ROTATION_STEMS    = {'clockwiseM', 'revclockwiseM',
-                     'clockwiseM-', 'revclockwiseM-'}
-TILT_ROT_STEMS    = {'mix-mix_method', 'mix-mix_method-'}
-LINE_STEMS        = {'hline', 'hline-', 'vline', 'vline-',
-                     'dline_A0_A2', 'dline_A0_A2-',
-                     'dline_A3_A1', 'dline_A3_A1-'}
+# Dataset category classification (datasets_standard naming)
+ORIENTATION_STEMS = set()  # no orientation-only datasets in standard collection
+ROTATION_STEMS    = {'rt_circle', 'rt_square', 'rt_triangle',
+                     'pt_middle_r', 'pt_middle_rotation', 'pt_middle_rr',
+                     'middleCCW_rot-', 'middleCW_rot-'}
+TILT_ROT_STEMS    = set()
 
 
 def _classify(stem: str) -> str:
@@ -75,7 +72,13 @@ def _classify(stem: str) -> str:
         return 'rotation'
     if stem in TILT_ROT_STEMS:
         return 'tilt_rotation'
-    if stem in LINE_STEMS:
+    s = stem.lower()
+    # Lines: horizontal-stroke datasets get the heading-vs-motion check.
+    # ct_hline + repeats (ct_hlinee/eee), legacy hline.
+    if s.startswith('ct_hline') or s == 'hline' or s == 'hline-':
+        return 'motion_line'
+    if s.startswith('ct_vline') or s.startswith('ct_diagonal') \
+            or s == 'vline' or s == 'vline-':
         return 'motion_line'
     return 'motion'
 
@@ -265,7 +268,7 @@ def analyse(csv_path: Path) -> LayerResult:
             metrics['heading_range_deg'] = h_range
             if len(heading_angles) > 1:
                 # Drift rate: total heading change / duration
-                duration_s = n_imu / 100.0  # ~100 Hz IMU
+                duration_s = n_imu * metrics.get('mean_imu_dt_s', 0.005)
                 metrics['heading_drift_rate_deg_per_s'] = h_range / max(duration_s, 0.01)
         else:
             h_range = 999.0
@@ -369,36 +372,25 @@ def analyse(csv_path: Path) -> LayerResult:
 
 def run_all() -> list[LayerResult]:
     out = []
+    seen: set[str] = set()
 
-    # Category A: Stationary orientation tests
-    for stem in ['NorthS', 'SouthS', 'EastS', 'WestS']:
-        for s in (stem, f'{stem}-'):
+    def _add(stems: list[str]) -> None:
+        for s in stems:
+            if s in seen:
+                continue
+            seen.add(s)
             p = DATASET_DIR / f'{s}.csv'
             if p.exists():
                 out.append(analyse(p))
 
-    # Category B: Rotation in-place tests
-    for stem in ['clockwiseM', 'revclockwiseM']:
-        for s in (stem, f'{stem}-'):
-            p = DATASET_DIR / f'{s}.csv'
-            if p.exists():
-                out.append(analyse(p))
+    # Category B: Rotation in-place
+    _add(sorted(ROTATION_STEMS))
 
-    # Category C: Tilt-rotation test
-    for s in ['mix-mix_method', 'mix-mix_method-']:
-        p = DATASET_DIR / f'{s}.csv'
-        if p.exists():
-            out.append(analyse(p))
-
-    # Category D: Motion tests (lines, shapes, characters)
-    for stem in ['hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-                 'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
-                 'circleS', 'squareS', 'triangleS', 'starS',
-                 'ABC', 'HELLO', 'abcS', 'helloS', 'corners']:
-        for s in (stem, f'{stem}-'):
-            p = DATASET_DIR / f'{s}.csv'
-            if p.exists():
-                out.append(analyse(p))
+    # Category D: Motion (lines, shapes, characters)
+    _add(stems_matching('ct_hline', 'ct_vline', 'ct_diagonal',
+                        'ct_circle', 'ct_square', 'ct_triangle',
+                        'pt_circle', 'pt_square', 'pt_triangle',
+                        '_abc', '_wave'))
 
     return out
 
@@ -411,7 +403,7 @@ if __name__ == '__main__':
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
              if args.datasets else
              [DATASET_DIR / f'{s}.csv'
-              for s in ['NorthS', 'clockwiseM', 'hline', 'vline']])
+              for s in ['pt_middle', 'rt_circle', 'ct_hline', 'ct_vline']])
     for p in files:
         r = analyse(p)
         print(r.summary_line())

@@ -37,6 +37,21 @@ STATIC_TRUTH = {
     'revclockwiseM-':  (0.625, 0.620),
     'mix-mix_method':  (0.625, 0.620),
     'mix-mix_method-': (0.625, 0.620),
+
+    # datasets_standard (all anchors portrait)
+    # Stationary middle-hold (with-/no-contact pair). Other pt_*/ct_*/rt_*
+    # entries are character/shape writes, not static holds — no truth here.
+    'pt_middle':           (0.625, 0.620),
+    'pt_middle-':          (0.625, 0.620),
+    # Rotation in place at board center
+    'pt_middle_r':         (0.625, 0.620),
+    'pt_middle_rotation':  (0.625, 0.620),
+    'pt_middle_rr':        (0.625, 0.620),
+
+    # datasets_str_50hz (50 Hz UWB capture, renamed middle/rotation files)
+    'middle-':             (0.625, 0.620),
+    'middleCCW_rot-':      (0.625, 0.620),
+    'middleCW_rot-':       (0.625, 0.620),
 }
 
 

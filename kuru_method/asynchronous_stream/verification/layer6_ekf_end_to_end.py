@@ -215,6 +215,7 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
 
     ekf_arr  = np.asarray(ekf_xy)  if ekf_xy  else np.zeros((0, 2))
     irls_arr = np.asarray(irls_xy) if irls_xy else np.zeros((0, 2))
+    uwb_dt = float(np.median(np.diff(irls_t))) if len(irls_t) > 1 else 0.02
 
     if len(ekf_arr) > 5 and len(irls_arr) > 5:
         # Align lengths from the tail so both cover the warm period.
@@ -224,14 +225,31 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
         rms = float(np.sqrt(np.mean(np.sum((ekf_tail - irls_tail) ** 2, axis=1))))
         metrics['rms_ekf_vs_irls_m'] = rms
 
-        # Latency proxy: 1D cross-correlation of the X channel, lag in samples
+        # Latency proxy: 1D cross-correlation of the X channel, lag in samples.
+        # This metric is only physically meaningful for (a) non-stationary
+        # trajectories with (b) near-linear motion. On stationary data both
+        # signals are sensor noise; on circular / rotational / complex motion
+        # the correlation has multiple peaks (phase ambiguity) and the lag is
+        # arbitrary. Require: >10 cm span AND principal-axis ratio >= 3:1.
+        ekf_span = max(
+            float(ekf_tail[:, 0].max() - ekf_tail[:, 0].min()),
+            float(ekf_tail[:, 1].max() - ekf_tail[:, 1].min()),
+        )
+        pc_ratio = 0.0
+        if len(irls_tail) >= 3:
+            M = irls_tail - irls_tail.mean(axis=0)
+            # eigenvalues of 2x2 covariance — ratio of spread along principal axes
+            w = np.linalg.eigvalsh(M.T @ M / max(len(M) - 1, 1))
+            w = np.sort(np.maximum(w, 1e-12))
+            pc_ratio = float(w[1] / w[0])
         ex = ekf_tail[:, 0] - ekf_tail[:, 0].mean()
         ix = irls_tail[:, 0] - irls_tail[:, 0].mean()
-        if np.std(ex) > 1e-4 and np.std(ix) > 1e-4:
+        if (ekf_span > 0.10 and pc_ratio >= 3.0
+                and np.std(ex) > 1e-4 and np.std(ix) > 1e-4):
             corr = np.correlate(ex, ix, mode='full')
             lag = int(np.argmax(corr) - (len(ex) - 1))
             metrics['latency_proxy_samples'] = lag
-            metrics['latency_proxy_s'] = float(lag * 0.1)  # UWB dt
+            metrics['latency_proxy_s'] = float(lag * uwb_dt)
         else:
             metrics['latency_proxy_s'] = 0.0
 
@@ -246,8 +264,8 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
     # IRLS-speed-gated stationary metric: works for both hover and contact
     # datasets. Detect "genuinely still" windows from the IRLS trace itself.
     if len(irls_arr) >= 3 and speeds:
-        # IRLS at ~10 Hz; speed between consecutive samples.
-        d_irls = np.linalg.norm(np.diff(irls_arr, axis=0), axis=1) * 10.0
+        # Speed between consecutive IRLS samples (uses actual UWB dt).
+        d_irls = np.linalg.norm(np.diff(irls_arr, axis=0), axis=1) / max(uwb_dt, 1e-6)
         if d_irls.size and (d_irls < 0.05).any():
             # Bucket EKF speeds onto IRLS indices via uniform stretch.
             spd_arr = np.asarray(speeds)
@@ -381,24 +399,41 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
 
 def run_all() -> list[LayerResult]:
     base_stems = [
-        # Stationary position
-        '0s', '1s', '2s', '3s', '4s',
-        # Stationary orientation (all at center)
-        'NorthS', 'SouthS', 'EastS', 'WestS',
-        # Rotation in-place (all at center)
-        'clockwiseM', 'revclockwiseM',
-        # Tilt-rotation (at center)
-        'mix-mix_method',
-        # Lines
-        'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-        # Shapes (large)
-        'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
-        # Shapes (small)
-        'circleS', 'squareS', 'triangleS', 'starS',
-        # Characters
-        'ABC', 'HELLO', 'abcS', 'helloS',
-        # Corner visit
-        'corners',
+        # Stationary middle-hold
+        'pt_middle',
+        # Rotation in-place at center
+        'pt_middle_r', 'pt_middle_rotation', 'pt_middle_rr',
+        # Repeated shapes (rt_ = repeated, single continuous trace)
+        'rt_circle', 'rt_square', 'rt_triangle',
+        # Lines -- continuous (ct_) trace, with extra-length variants
+        'ct_hline', 'ct_hlinee', 'ct_hlineee',
+        'ct_vline', 'ct_vlinee', 'ct_vlineee',
+        'ct_diagonal', 'ct_diagonall', 'ct_diagonalll',
+        # Shapes -- continuous (ct_) single-stroke
+        'ct_circle', 'ct_circlee', 'ct_circleee',
+        'ct_square', 'ct_squaree', 'ct_squareee',
+        'ct_triangle', 'ct_trianglee', 'ct_triangleee',
+        # Shapes -- partial (pt_) multi-stroke (lift between strokes)
+        'pt_circle', 'pt_circlee',
+        'pt_square', 'pt_squaree',
+        'pt_triangle', 'pt_trianglee',
+        # Characters / freeform writing
+        'pt_a', 'pt_aa', '_abc', '_wave',
+        # datasets_str_50hz naming: numeric variants + renamed middle/rotation
+        'middle-', 'middleCCW_rot-', 'middleCW_rot-',
+        'ct_hline1', 'ct_hline2', 'ct_hline3',
+        'ct_vline1', 'ct_vline2', 'ct_vline3',
+        'ct_diagonal1', 'ct_diagonal2', 'ct_diagonal3',
+        'ct_circle1', 'ct_circle2', 'ct_circle3',
+        'ct_square1', 'ct_square2', 'ct_square3',
+        'ct_triangle1', 'ct_triangle2', 'ct_triangle3',
+        'pt_circle1', 'pt_circle2',
+        'pt_square1', 'pt_square2',
+        'pt_triangle1', 'pt_triangle2',
+        'pt_a1', 'pt_a2',
+        # Character-reconstruction targets (letters, small & big)
+        'hello_s1', 'hello_s2', 'abc_s1', 'abc_s2',
+        'ABC_b1', 'ABC_b2', 'HELLO_b1', 'HELLO_b2',
     ]
     # Hover + dashed contact variants (same motion, different contact state).
     stems: list[str] = []
@@ -413,14 +448,33 @@ def run_all() -> list[LayerResult]:
         if p.exists():
             out.append(analyse(p))
 
-    # Forced-contact replay on motion hover datasets to isolate
-    # LIFTED_VEL_DAMP starvation.  Skip stationary/orientation/rotation
+    # Forced-contact replay on motion datasets to isolate
+    # LIFTED_VEL_DAMP starvation.  Skip stationary/rotation
     # datasets where forced contact doesn't change behavior.
     motion_stems = [
-        'hline', 'vline', 'dline_A0_A2', 'dline_A3_A1',
-        'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
-        'circleS', 'squareS', 'triangleS', 'starS',
-        'ABC', 'HELLO', 'abcS', 'helloS', 'corners',
+        'ct_hline', 'ct_hlinee', 'ct_hlineee',
+        'ct_vline', 'ct_vlinee', 'ct_vlineee',
+        'ct_diagonal', 'ct_diagonall', 'ct_diagonalll',
+        'ct_circle', 'ct_circlee', 'ct_circleee',
+        'ct_square', 'ct_squaree', 'ct_squareee',
+        'ct_triangle', 'ct_trianglee', 'ct_triangleee',
+        'pt_circle', 'pt_circlee',
+        'pt_square', 'pt_squaree',
+        'pt_triangle', 'pt_trianglee',
+        'pt_a', 'pt_aa', '_abc', '_wave',
+        # datasets_str_50hz naming
+        'ct_hline1', 'ct_hline2', 'ct_hline3',
+        'ct_vline1', 'ct_vline2', 'ct_vline3',
+        'ct_diagonal1', 'ct_diagonal2', 'ct_diagonal3',
+        'ct_circle1', 'ct_circle2', 'ct_circle3',
+        'ct_square1', 'ct_square2', 'ct_square3',
+        'ct_triangle1', 'ct_triangle2', 'ct_triangle3',
+        'pt_circle1', 'pt_circle2',
+        'pt_square1', 'pt_square2',
+        'pt_triangle1', 'pt_triangle2',
+        'pt_a1', 'pt_a2',
+        'hello_s1', 'hello_s2', 'abc_s1', 'abc_s2',
+        'ABC_b1', 'ABC_b2', 'HELLO_b1', 'HELLO_b2',
     ]
     for s in motion_stems:
         p = DATASET_DIR / f'{s}.csv'
@@ -436,7 +490,7 @@ if __name__ == '__main__':
     args = ap.parse_args()
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
              if args.datasets else
-             [DATASET_DIR / f'{s}.csv' for s in ['0s', 'CIRCLE']])
+             [DATASET_DIR / f'{s}.csv' for s in ['pt_middle', 'ct_circle']])
     for p in files:
         r = analyse(p)
         print(r.summary_line())

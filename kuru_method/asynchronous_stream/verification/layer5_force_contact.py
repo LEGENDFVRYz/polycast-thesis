@@ -12,7 +12,8 @@ from pathlib import Path
 import numpy as np
 import matplotlib.pyplot as plt
 
-from _common        import ensure_out, collect, LayerResult, DATASET_DIR
+from _common        import (ensure_out, collect, LayerResult, DATASET_DIR,
+                             list_datasets)
 from force_detector import ForceContactDetector
 
 
@@ -118,18 +119,11 @@ def analyse(csv_path: Path) -> LayerResult:
 
 
 def run_all() -> list[LayerResult]:
-    out = []
-    # Prefer the dashed (contact-active) variants; fall back to hover if the
-    # contact version is missing.
-    for base in ['HELLO', 'ABC', 'CIRCLE', 'SQUARE', 'TRIANGLE', 'STAR',
-                 'hline', 'vline', '0s',
-                 'helloS', 'abcS', 'circleS', 'squareS', 'triangleS', 'starS']:
-        for stem in (f'{base}-', base):
-            p = DATASET_DIR / f'{stem}.csv'
-            if p.exists():
-                out.append(analyse(p))
-                break
-    return out
+    # Run contact detection against every CSV in the dataset folder.
+    # Naming conventions have drifted across captures (legacy dashed,
+    # numbered variants in datasets_str_50hz, char files) — safest is to
+    # analyse everything and let the dataset contents drive the result.
+    return [analyse(p) for p in list_datasets()]
 
 
 if __name__ == '__main__':
@@ -138,7 +132,7 @@ if __name__ == '__main__':
     ap.add_argument('datasets', nargs='*')
     args = ap.parse_args()
     files = ([DATASET_DIR / f'{d}.csv' for d in args.datasets]
-             if args.datasets else [DATASET_DIR / 'HELLO.csv'])
+             if args.datasets else [DATASET_DIR / '_wave.csv'])
     for p in files:
         r = analyse(p)
         print(r.summary_line())

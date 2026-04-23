@@ -24,7 +24,7 @@ from config      import ANCHORS            # noqa: E402
 
 # -- Paths ----------------------------------------------------------------
 ASYNC_DIR    = _PARENT
-DATASET_DIR  = ASYNC_DIR / 'datasets_a3_ls'
+DATASET_DIR  = ASYNC_DIR / os.environ.get('ASYNC_DATASETS', 'datasets_standard')
 OUT_DIR      = Path(__file__).resolve().parent / 'out'
 
 

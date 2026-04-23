@@ -1,0 +1,88 @@
+# ----------------------------------------------------
+# ENVIRONEMENTS
+# - (purpose) creating compatible env for production,
+#   ensuing compatible with the Raspberry Pi 4B
+# - This version are reliant to standard python venv
+#
+# [ Note: Reccomended to use the conda for dev pc ]
+# ----------------------------------------------------
+
+# Core Python Version
+# python==3.12.7
+
+# Data Science & Numerical Analysis
+numpy==2.4.4
+pandas==2.2.2
+scipy==1.17.1
+scikit-learn==1.5.1
+scikit-image==0.24.0
+statsmodels==0.14.2
+sympy==1.13.2
+matplotlib==3.10.8
+seaborn==0.13.2
+plotly==5.24.1
+bokeh==3.6.0
+xarray==2023.6.0
+numba==0.60.0
+numexpr==2.8.7
+tables==3.10.1
+h5py==3.11.0
+dask==2024.8.2
+distributed==2024.8.2
+
+# Web Frameworks & APIs
+streamlit==1.41.1
+fastapi==0.118.0
+uvicorn==0.37.0
+Flask==3.1.3
+flask-socketio==5.5.1
+flask_sqlalchemy==3.1.1
+starlette==0.48.0
+requests==2.32.3
+urllib3==2.2.3
+aiohttp==3.10.5
+websockets==15.0.1
+websocket_client==1.8.0
+websocket_server==0.6.4
+python-socketio==5.14.0
+python-engineio==4.12.3
+
+# Database & Storage
+SQLAlchemy==2.0.34
+openpyxl==3.1.5
+xlwings==0.32.1
+s3fs==2024.6.1
+botocore==1.34.69
+aiobotocore==2.12.3
+
+# Hardware, Graphics & UI
+pyserial==3.5
+pygame==2.6.1
+pyopengl==3.1.10
+pyqtgraph==0.14.0
+pyqt5==5.15.10
+Pillow==12.2.0
+imageio==2.33.1
+tifffile==2023.4.12
+
+# Automation & Scraping
+scrapy==2.11.1
+beautifulsoup4==4.12.3
+lxml==5.2.1
+pyyaml==6.0.1
+
+# Utilities & Dev Tools
+pydantic==2.8.2
+pydantic-settings==2.11.0
+tqdm==4.66.5
+click==8.1.7
+typer==0.19.2
+rich==13.7.1
+python-dotenv==0.21.0
+cryptography==43.0.0
+paramiko==2.8.1
+bcrypt==3.2.0
+python_bcrypt==0.3.2
+psutil==5.9.0
+watchdog==4.0.1
+colorama==0.4.6

@@ -13,6 +13,9 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
     if isinstance(dbapi_connection, SQLite3Connection):
         cursor = dbapi_connection.cursor()
         cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA cache_size=-8000;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
         cursor.close()
 
 # Initialize SQLAlchemy globally (used in models and services)

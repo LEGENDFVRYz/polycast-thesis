@@ -1,0 +1,16 @@
+[Unit]
+Description=PolyCast Web Server (Gunicorn + gthread)
+After=network.target
+
+[Service]
+User=pi
+Group=www-data
+WorkingDirectory=/home/pi/PolyCast_Research/mock_server_v2
+Environment=FLASK_ENV=production
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/pi/venv/bin/gunicorn -c gunicorn.conf.py "app.webserver:app"
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

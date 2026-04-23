@@ -229,9 +229,9 @@ bool runUWBCycle(int* out_distances) {
 
         // TDMA Sleep Calculation
         uint32_t elapsed_ms = millis() - superframe_start_ms;
-        int32_t sleep_time_ms = 100 - elapsed_ms;
+        int32_t sleep_time_ms = 20 - elapsed_ms;
         if (latest_slot_corr != 0) sleep_time_ms += latest_slot_corr;
-        if (sleep_time_ms < 5 || sleep_time_ms > 100) sleep_time_ms = 100 - elapsed_ms; 
+        if (sleep_time_ms < 5 || sleep_time_ms > 20) sleep_time_ms = 20 - elapsed_ms; 
         
         if (sleep_time_ms > 0) delay(sleep_time_ms);
 

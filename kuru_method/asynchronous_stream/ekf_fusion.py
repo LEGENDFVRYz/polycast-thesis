@@ -57,7 +57,9 @@ class TightlyCoupledEKF:
     # -- Tuning -------------------------------------------------------------
 
     # Process noise
-    SIGMA_ACC  = 0.5     # m/s^2  (raised to balance reduced SIGMA_UWB)
+    SIGMA_ACC  = 1.5     # m/s^2  — direction reversals during writing can exceed
+                         # 2–3 m/s^2 on big characters; lower values under-sized
+                         # the process noise and caused shrunken-curve tracking.
     SIGMA_BIAS = 0.0005  # m/s^2/sqrt(s)  (was 0.002 — slower bias drift)
 
     # Measurement noise
@@ -71,8 +73,8 @@ class TightlyCoupledEKF:
     MAX_INNOV_M = 0.30   # m — reject any |innov| > 30 cm regardless of P
 
     # Per-anchor NLOS muting
-    NLOS_MUTE_THRESH = 5    # consecutive rejections before muting
-    NLOS_MUTE_CYCLES = 10   # UWB cycles to skip while muted
+    NLOS_MUTE_THRESH = 25    # consecutive rejections before muting
+    NLOS_MUTE_CYCLES = 50   # UWB cycles to skip while muted
     NLOS_MAX_MUTED   = 2    # never mute more than this many anchors at once
 
     # Prolonged UWB outage handling (all anchors rejected N consecutive packets)
@@ -86,8 +88,9 @@ class TightlyCoupledEKF:
     SLOW_SPEED_THRESH = 0.04   # m/s
     SLOW_VEL_DECAY    = 0.85
 
-    # Hard velocity cap (pen writing never exceeds this)
-    MAX_WRITING_SPEED = 0.50   # m/s
+    # Hard velocity cap (pen writing never exceeds this). Natural handwriting
+    # peaks at 0.5–1.5 m/s on big characters; 0.50 was clipping fast strokes.
+    MAX_WRITING_SPEED = 1.50   # m/s
 
     # Zero-velocity update (ZUPT) — Fix B: bias-independent raw-accel variance
     # ZUPT triggers when the *variance* of the raw (pre-bias-subtraction)
@@ -120,7 +123,7 @@ class TightlyCoupledEKF:
     # the feedback loop where large innovations -> all rejected -> NLOS mute
     # -> IMU-only drift -> even larger innovations.
     RUNAWAY_DIST_M = 0.50     # m — EKF vs IRLS discrepancy
-    RUNAWAY_HOLD   = 3        # consecutive UWB cycles to confirm
+    RUNAWAY_HOLD   = 10       # consecutive UWB cycles to confirm
 
     # -- init ---------------------------------------------------------------
 
@@ -144,9 +147,13 @@ class TightlyCoupledEKF:
         # IRLS speed for velocity damping gating (fed from AsyncEKFFusionEngine)
         self._irls_speed = 0.0
 
-        # Innovation-based adaptive measurement noise (per anchor)
+        # Innovation-based adaptive measurement noise (per anchor).
+        # alpha=0.20 gives ~10-sample response time (≈ 200ms @ 50 Hz UWB),
+        # half of the previous 0.10 (≈ 400ms). The faster adaptation lets
+        # R_eff inflate quickly on motion (so UWB influence drops) and
+        # re-tighten on stationary segments.
         self._innov_var   = np.ones(len(anchors)) * 0.005
-        self._innov_alpha = 0.10   # EMA smoothing for innovation variance
+        self._innov_alpha = 0.20   # EMA smoothing for innovation variance
 
         # Per-anchor NLOS muting state
         self._consec_reject = np.zeros(len(anchors), dtype=int)
@@ -414,13 +421,13 @@ class TightlyCoupledEKF:
         tag_z_wb = TIP_OFFSET_FROM_TAG_M * float(e_wb[2])
 
         # -- Item B: per-anchor 1D Kalman pre-filter on the raw ranges ----
-        # Compute dt between successive UWB packets; default to 0.1 s on
-        # the first packet (~10 Hz nominal cycle).
+        # Compute dt between successive UWB packets; default to 0.02 s on
+        # the first packet (~50 Hz nominal cycle).
         if ts is not None and self._last_uwb_ts is not None:
             dt_us = ts - self._last_uwb_ts
-            dt = dt_us / 1_000_000.0 if 0 < dt_us < 2_000_000 else 0.1
+            dt = dt_us / 1_000_000.0 if 0 < dt_us < 2_000_000 else 0.02
         else:
-            dt = 0.1
+            dt = 0.02
         if ts is not None:
             self._last_uwb_ts = ts
 
@@ -744,7 +751,7 @@ class AsyncEKFFusionEngine:
         # Robust cold-start: collect several IRLS solutions and use their
         # median.  A single IRLS packet can land way outside the board.
         self._cold_buf       = []
-        self._COLD_N         = 3     # packets to median-average (was 5)
+        self._COLD_N         = 5     # packets to median-average (~100 ms @ 50 Hz)
         self._COLD_MARGIN    = 0.25  # m — reject IRLS fixes outside board+margin
 
         # IRLS speed tracking (for LIFTED_VEL_DAMP gating)
@@ -895,9 +902,18 @@ class AsyncEKFFusionEngine:
         # runaway-drift escape in the same pass.
         pos = self._ekf.position
         if pos is not None and self._prev_irls_pos is not None:
-            dt_uwb = 0.10  # default ~10 Hz
+            # Dynamically calculate UWB time delta
+            dt_uwb = 0.02  # default to 50 Hz
+            if ts is not None and self._prev_uwb_ts is not None:
+                dt_us = ts - self._prev_uwb_ts
+                if 0 < dt_us < 2_000_000:
+                    dt_uwb = dt_us / 1_000_000.0
+            self._prev_uwb_ts = ts
+            
+            # ---> DO NOT FORGET THESE TWO LINES <---
             disp = float(np.linalg.norm(pos - self._prev_irls_pos))
             self._ekf._irls_speed = disp / dt_uwb
+            
         if pos is not None:
             self._prev_irls_pos = pos.copy()
 

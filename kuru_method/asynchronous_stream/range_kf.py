@@ -40,7 +40,9 @@ from __future__ import annotations
 import numpy as np
 
 
-SIGMA_RDOT_DEFAULT     = 0.3   # m/s  process noise on range-rate
+SIGMA_RDOT_DEFAULT     = 0.8   # m/s  process noise on range-rate
+                               # (0.3 under-sized: natural writing causes ranges
+                               # to change at up to 1 m/s during fast strokes)
 MAX_DT_S               = 0.5   # s    gap above which we re-init
 INIT_VAR_R             = 1.0   # m^2  initial range variance (huge)
 INIT_VAR_RDOT          = 1.0   # (m/s)^2 initial range-rate variance

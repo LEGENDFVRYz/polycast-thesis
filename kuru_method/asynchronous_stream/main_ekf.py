@@ -42,7 +42,7 @@ from imu_calibrate  import trigger_dcd_save
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
-DATASET_FILENAME = 'datasets_standard/ct_squareee.csv'
+DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier
@@ -272,6 +272,7 @@ def on_key(event):
     elif event.key == 'r':
         engine.ekf._x = None   # force re-initialisation
         engine._cold_buf.clear()
+        engine.imu_integrator.reset_heading()
         print("[UI] EKF reset — will re-initialise from next IRLS fix.")
     elif event.key in ('q', 'escape'):
         plt.close('all')

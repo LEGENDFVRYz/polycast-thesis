@@ -44,7 +44,7 @@ ANCHORS = np.array([
 # Per-anchor distance correction applied to raw UWB measurements.
 # Re-run calibrate.py and paste the new tuple here after each recalibration.
 # UWB_OFFSETS = (-0.1326, -0.0332, -0.1785, -0.1318)
-UWB_OFFSETS = (-0.1232, -0.0146, -0.1919, -0.0965)
+UWB_OFFSETS = (-0.1538, -0.0134, -0.1833, -0.0960)
 
 # -- EKF feature flags ------------------------------------------------------
 # Item C (Zou 2023, §3.3): feed the EKF posterior range back into each

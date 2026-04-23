@@ -47,7 +47,7 @@ class AnchorQualityTracker:
     _INNOV_SIGMA  = 0.08   # Innovation sigma (m); 8 cm -> half-weight at innovation = 8 cm
     _MIN_WEIGHT   = 0.05   # Floor — near-zero gain for chronically bad anchors
 
-    def __init__(self, window: int = 15):
+    def __init__(self, window: int = 75):
         self._window    = deque(maxlen=window)
         self._predicted = None          # Expected distance fed back from FusionEngine
 
@@ -104,9 +104,9 @@ class UWBPreprocessor:
     # EMA parameters — alpha adapts based on how large the step is
     _EMA_BASE  = 0.30   # Normal-movement EMA coefficient
     _EMA_FAST  = 0.70   # Fast-movement EMA coefficient (large step detected)
-    _STEP_THR  = 0.12   # Distance change (m) that triggers fast mode
+    _STEP_THR  = 0.024   # Distance change (m) that triggers fast mode
 
-    def __init__(self, spike_window: int = 7, max_range: float = 6.0, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
+    def __init__(self, spike_window: int = 35, max_range: float = 6.0, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
         self.max_range = max_range
         self.n         = 4
         self.offsets   = offsets

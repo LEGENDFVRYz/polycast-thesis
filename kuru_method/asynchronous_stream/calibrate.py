@@ -85,8 +85,8 @@ import serial
 from config import SERIAL_PORT, BAUD_RATE, MARKER_LENGTH, ANCHORS
 
 # Number of UWB packets to average at each calibration position
-# ~3 seconds at 10 Hz UWB rate = ~30 packets
-SAMPLES_PER_POINT = 50
+# ~3 seconds at 50 Hz UWB rate = ~150 packets
+SAMPLES_PER_POINT = 150
 
 
 # -------------------------------------------------------------------------

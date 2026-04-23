@@ -71,8 +71,8 @@ REFERENCE_POINTS = [
 ]
 
 # Number of UWB packets to collect per reference point
-# ~5 seconds at 10 Hz UWB rate = 50 packets
-SAMPLES_PER_POINT = 50
+# ~5 seconds at 50 Hz UWB rate = 250 packets
+SAMPLES_PER_POINT = 250
 
 # Timeout per point (seconds) — abort if no data
 POINT_TIMEOUT_S = 30.0

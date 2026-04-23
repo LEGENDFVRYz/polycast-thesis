@@ -27,7 +27,7 @@ import serial
 class AsyncCSVRecorder:
     """Records validated async stream lines from serial to a CSV file."""
 
-    def __init__(self, port='COM5', baud=115200, output_path=None):
+    def __init__(self, port='COM5', baud=921600, output_path=None):
         self.port        = port
         self.baud        = baud
         self.output_path = output_path or self._default_filename()
@@ -43,7 +43,7 @@ class AsyncCSVRecorder:
     def _default_filename():
         """Generate a timestamped filename in the script's directory."""
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        datasets_dir = os.path.join(script_dir, 'datasets')
+        datasets_dir = os.path.join(script_dir, 'datasets_str_50hz')
         os.makedirs(datasets_dir, exist_ok=True)
         ts = time.strftime('%Y%m%d_%H%M%S')
         return os.path.join(datasets_dir, f'async_{ts}.csv')
@@ -135,8 +135,8 @@ def main():
         description='PolyCast Async Stream CSV Recorder')
     parser.add_argument('--port', default='COM5',
                         help='Serial port (default: COM5)')
-    parser.add_argument('--baud', type=int, default=115200,
-                        help='Baud rate (default: 115200)')
+    parser.add_argument('--baud', type=int, default=921600,
+                        help='Baud rate (default: 921600)')
     parser.add_argument('--output', default=None,
                         help='Output CSV path (default: auto-timestamped)')
     args = parser.parse_args()

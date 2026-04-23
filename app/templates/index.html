@@ -25,10 +25,20 @@
         - check the example below
     #}
     <div class="content-block">
-        <div class="placeholder">
-            Place Holder
+        <div class="goals-section">
+            <div class="badge">OUR GOALS</div>
+            
+            <h1 class="title">
+                Capture the brilliance, skip the burnout.
+            </h1>
+            
+            <p class="description">
+                Designed for computation-heavy classrooms, PolyCast ensures students focus on the "why" rather than just the "what." 
+                It's a seamless solution for flexible, high-retention learning.
+            </p>
         </div>
     </div>
+    
 
     <div class="content-block">
         {# 
@@ -37,13 +47,104 @@
             - Note: You can remove the placeholder and create your own div
         #}
 
-        <div class="placeholder">
-            Place Holder
+        <div class="polycast-problem-section">
+            <div class="text-content">
+                <span class="badge">PROBLEM</span>
+                <h2>The system integrates <strong>motion tracking, spatial positioning, and writing-state detection</strong> technologies—utilizing advanced sensor fusion—into a marker-based device capable of converting handwritten board content into structured digital notes.</h2>
+                <p>By automatically preserving instructional writing, PolyCast is designed to assist classroom note documentation and provide an additional reference for students, particularly in computation-heavy subjects such as Mathematics and Engineering, and other technical disciplines.</p>
+            </div>
+            
+            <div class="image-content">
+                <img src="/static/images/index-bg.jpg" alt="Technology Image">
+            </div>
         </div>
 
-        <div class="placeholder">
-            Place Holder
+        <div class="benefits-section">
+            <span class="badge">BENEFITS</span>
+            <h2 class="title">Why PolyCast Helps Students</h2>
+
+            <div class="benefit-item">
+                <button class="benefit-toggle">Note Accessibility</button>
+                <div class="benefit-content">
+                    Easily access saved notes anytime, reducing the risk of missing important lessons.
+                </div>
+            </div>
+
+            <div class="benefit-item">
+                <button class="benefit-toggle">Learning Flexibility</button>
+                <div class="benefit-content">
+                    Review lessons at your own pace, improving understanding of complex topics.
+                </div>
+            </div>
+
+            <div class="benefit-item">
+                <button class="benefit-toggle">Cost Effective</button>
+                <div class="benefit-content">
+                    Minimizes the need for expensive learning tools by combining multiple functions in one device.
+                </div>
+            </div>
+
+            <div class="benefit-item">
+                <button class="benefit-toggle">Portability</button>
+                <div class="benefit-content">
+                    Compact and easy to carry, making it convenient for both classroom and personal use.
+                </div>
+            </div>
         </div>
+    </div>
+    
+    <div class="content-block --about">
+        <div class="about-system">
+                <div class="sys-title">
+                    How the System <span>Works</span>
+                </div>
+                <div class="sys-content"> 
+                    <div class="sys-intro">
+                        PolyCast pairs a <span>custom hardware marker</span> with a synchronized web platform to create a seamless archiving process:
+                    </div>
+                    <div class="admin-block">
+                        <div class="admin-main">
+                            <div class="admin-header">
+                                <div>Class</br>Administrator</div>
+                                <img src="/static/images/icons/class-admin.svg" alt="Admin Icon">
+                            </div>
+                            <div class="admin-role">
+                                An admin can be any designated representative of the class—such as a student president, the instructor, or an assigned 
+                                facilitator.
+                            </div>
+                        </div>
+                        <div class="admin-sub">
+                            <div>
+                                <span>They configure the digital workspace by setting up subject directories and specific session folders.</span> </br></br>
+                            </div>
+                            <div>
+                                Once a live stream is initiated, the physical marker's movements are translated and saved directly into these folders as 
+                                the lecture progresses. Admins retain full control to manage, delete, or recover these archives throughout the academic term.
+                            </div>
+                        </div>
+                    </div>
+                    <div class="student-block">
+                        <div class="student-main">
+                            <div class="student-header">
+                                <div>
+                                    Student</br><span>(Guest User)</span>
+                                </div>
+                                <img src="/static/images/icons/student-guest.svg" alt="Student Icon">
+                            </div>
+                            <div class="student-role">
+                                Students simply visit the platform and wait for the class admin to initiate a session.
+                            </div>
+                        </div>
+                        <div class="student-sub">
+                            <p>
+                                Once live, <span>students can watch the whiteboard notes generate on their own screens.</span> The platform allows students 
+                                to freely navigate past notes in the gallery even while a stream is actively ongoing, and download complete note sequences with 
+                                a single click.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+        </div>  
     </div>
 
 {% endblock %}

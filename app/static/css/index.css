@@ -77,9 +77,9 @@
         display: flex;
         flex-direction: column;
         flex: 1;
-        gap: 5rem;
+        gap: 3rem;
 
-        padding: 5rem 0;
+        padding: 3rem 0;
 
         background: var(--color-background);
         width: 100vw;
@@ -98,22 +98,262 @@
             max-width: 1200px;
             margin: 0 auto;
             padding: 1rem;
+          
             
-            /* temporary - style for placeholder */
-            .placeholder {
-                width: 100%;
-                height: 20rem;
-                border-radius: 1em;
-                background-color: var(--color-muted);
-
-                display: flex;
-                align-items: center;
-                justify-content: center;
-
-                font-size: 1.5rem;
+            /* Goals Section Added by Timothy */   
+            .goals-section {
+                text-align: center;
+                max-width: 700px;
+            }
+        
+            .badge {
+                display: inline-block;
+                padding: 0.5rem 1.2rem;
+                border: 1px solid var(--color-foreground);
+                border-radius: 999px;
+                font-size: 0.75rem;
                 font-weight: 600;
+                color: var(--color-foreground);
+                margin-bottom: 1.25rem;
+                letter-spacing: 0.05rem;
+            }
+        
+            .title {
+                font-size: 1.8rem;
+                font-weight: 700;
+                color: var(--color-foreground);
+                margin-bottom: 1rem;
+                line-height: 1.3;
+            }
+        
+            .description {
+                font-size: 1rem;
+                color: var(--color-secondary);
+                line-height: 1.6;
+            }
+
+            /* --- Problem Section --- */
+            .polycast-problem-section {
+                display: flex;
+                flex-direction: column; /* mobile first */
+                align-items: center;
+                justify-content: space-between;
+                gap: 2rem;
+                width: 100%;
+
+                .text-content {
+                    max-width: 100%;
+                    text-align: left;
+
+                    h2 {
+                        font-size: 1.2rem;
+                        line-height: 1.6;
+                        font-weight: 400;
+                        color: #111;
+
+                        strong {
+                            font-weight: 700;
+                        }
+                    }
+
+                    p {
+                        margin-top: 1rem;
+                        font-size: 0.9rem;
+                        color: #555;
+                        line-height: 1.6;
+                    }
+                }
+
+                .image-content {
+                    width: 100%;
+
+                    img {
+                        width: 100%;
+                        border-radius: 20px;
+                        object-fit: cover;
+                        display: block;
+                    }
+                }
+            }
+
+            /* --- Benefits Section --- */
+            .benefits-section {
+                width: 100%;
+                max-width: 750px;
+                text-align: center;
+                margin: 0 auto;
+
+                .title {
+                    font-size: 1.8rem;
+                    font-weight: 700;
+                    margin-bottom: 2rem;
+                    color: var(--color-foreground);
+                }
+
+                .benefit-item {
+                    background: #ffffff;
+                    border-radius: 16px;
+                    margin-bottom: 1rem;
+                    overflow: hidden;
+                    transition: all 0.3s ease;
+                    border: 1px solid rgba(0,0,0,0.05);
+                }
+
+                .benefit-item:hover {
+                    transform: translateY(-2px);
+                    box-shadow: 0 8px 20px rgba(0,0,0,0.06);
+                }
+
+                .benefit-toggle {
+                    width: 100%;
+                    padding: 1.2rem 1.5rem;
+                    background: none;
+                    border: none;
+                    font-size: 1rem;
+                    font-weight: 600;
+                    text-align: left;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                }
+
+                .benefit-toggle::after {
+                    content: "+";
+                    font-size: 1.2rem;
+                    transition: transform 0.3s ease;
+                }
+
+                .benefit-item.active .benefit-toggle::after {
+                    content: "−";
+                    transform: rotate(180deg);
+                }
+
+                .benefit-content {
+                    max-height: 0;
+                    overflow: hidden;
+                    font-size: 0.9rem;
+                    color: #555;
+                    line-height: 1.6;
+                    padding: 0 1.5rem;
+                    transition: all 0.35s ease;
+                }
+
+                .benefit-item.active .benefit-content {
+                    max-height: 200px;
+                    padding: 0 1.5rem 1.2rem;
+                }
+            }
+
+            /* --- How System Works Section ---  Error: Ayaw gumana kahit same na doon sa about na code HELP!*/
+            .about-system {
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+                font-size: 16px;
+                gap: 3em;
+    
+                .sys-title {
+                    font-size: 36px;
+                    font-weight: 700;
+                    line-height: 1.0;
+    
+                    span {
+                        color: #0084FF;
+                    }
+                }
+    
+                .sys-content {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 2em;
+    
+                        .sys-intro {
+                        font-size: 20px;
+                        font-weight: 500;
+                        font-style: italic;
+                        line-height: 1.3;
+    
+                        span {
+                            font-weight: 700;
+                            color: #2E7CF6;
+                        }
+                    }
+    
+                    .admin-block, .student-block {
+                        display: flex;
+                        flex-direction: column;
+                        gap: 1.5em; 
+    
+                        .admin-main, .student-main {
+                            display: flex;
+                            flex-direction: column;
+                            gap: 2em;
+                            padding: 2em;
+                            color: #F6F9FF;
+                            background-color: #2E7CF6;
+                            border-radius: 1em;
+    
+                            .admin-header, .student-header {
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                font-size: 22px;
+                                font-weight: 800;
+                                text-align: start;
+                                line-height: 1.1;
+    
+                                img {
+                                    width: 60px;
+                                    height: 60px;
+                                }
+    
+                                span {
+                                    font-style: italic;
+                                    font-weight: 700;
+                                }
+                            }
+    
+                            .admin-role, .student-role {
+                                font-size: 18px;
+                                font-weight: 400;
+                                text-align: start;
+                            }
+                        }
+    
+    
+                        .admin-sub, .student-sub {
+                            display: flex;
+                            flex-direction: column;
+                            font-size: 16px;
+                            font-weight: 300;
+                            padding: 2em;
+                            background-color: #E6EEFF;
+                            border-radius: 1em;
+    
+                            span {
+                                font-weight: 600;
+                            }
+                        }
+    
+                        .admin-sub {
+                            margin-left: calc(-50vw + 50%); 
+                            padding-left: calc(50vw - 50% + 2em); 
+                            border-top-left-radius: 0;
+                            border-bottom-left-radius: 0;
+                        }
+    
+                        .student-sub {
+                            margin-right: calc(-50vw + 50%);
+                            padding-right: calc(50vw - 50% + 2em); 
+                            border-top-right-radius: 0;
+                            border-bottom-right-radius: 0;
+                        }
+                    }
+                }
             }
         }
+
     }
 }
 
@@ -145,9 +385,14 @@
         }
 
         section.landing-content {
-            gap: 7rem;
+            gap: 4rem;
         }
     }
+
+    .polycast-problem-section {
+        padding: 3rem;
+    }
+
 }
 
 /* Medium size */
@@ -176,9 +421,18 @@
         }
 
         section.landing-content {
-            gap: 10rem;
+            gap: 5rem;
         }
     }
+
+    .polycast-problem-section {
+        flex-direction: column;
+
+        .text-content h2 {
+            font-size: 1.4rem;
+        }
+    }
+
 }
 
 /* Large size */
@@ -186,28 +440,89 @@
     .landing-container {
         text-align: center;
 
-        .landing-banner {
-            background-size: cover;
-            background-position: center;
+    .landing-container .landing-banner {
+        background-size: cover;
+        background-position: center;
 
-            .landing-banner-content {
-                max-width: 850px;
-                padding: 6rem 1rem;
-                
-                h1 {
-                    font-size: 5rem;
-                }
+        .landing-banner-content {
+            max-width: 850px;
+            padding: 6rem 1rem;
+            
+            h1 {
+                font-size: 5rem;
+            }
 
-                h2 {
-                    width: 100%;
-                    padding-top: 2rem;
-                    font-size: 1.5rem;
+            h2 {
+                width: 100%;
+                padding-top: 2rem;
+                font-size: 1.5rem;
+            }
+        }
+    }
+
+        section.landing-content {
+            gap: 6rem;
+
+            div.content-block.--about {
+                gap: 20rem;
+                margin-bottom: 5rem;
+
+                .about-system {
+                    
+                    .sys-content {
+                        flex-direction: row;
+                        align-items: stretch;
+    
+                        div:nth-child(3) {
+                            margin-left: -1em; 
+                        }
+    
+                        .sys-intro {
+                            text-align: left;
+                            padding-top: 2.5em;
+                        }
+    
+                        .admin-block, .student-block {
+                            gap: 1em;
+                        }
+    
+                        .student-block {
+                            flex-direction: column-reverse;
+                            text-align: left;
+                            
+                            .student-main {
+                                flex: 1;
+                                justify-content: center;
+                            }
+                        }
+    
+                        .admin-block {
+                            text-align: left;
+    
+                            .admin-sub {
+                                padding-left: calc(50vw - 95% + 2em);
+                            }
+                        }
+                    }
                 }
             }
         }
+    }
 
-        section.landing-content {
-            gap: 15rem;
+    .polycast-problem-section {
+        display: flex;
+        flex-direction: row !important; /* force horizontal */
+        align-items: center;
+        justify-content: space-between;
+        gap: 3rem;
+
+        .text-content {
+            max-width: 50%;
+        }
+
+        .image-content {
+            max-width: 45%;
         }
     }
+
 }

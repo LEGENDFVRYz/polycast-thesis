@@ -6,9 +6,11 @@ import re
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-VIRTUAL_COM_PORT = 'COM19'  # The port the replayer sends TO
-BAUD_RATE = 115200
-LOG_FILE = '0s.csv'   # <--- CHANGE THIS to your actual logged file name
+VIRTUAL_COM_PORT    = 'COM19'
+BAUD_RATE           = 921600
+MODE                = "ct"
+TESTNAME            = "square1"
+LOG_FILE            = f'logs/datasets/v2/{MODE}_{TESTNAME}.csv'
 
 # ==============================================================================
 # MAIN REPLAY LOOP

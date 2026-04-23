@@ -440,25 +440,25 @@
     .landing-container {
         text-align: center;
 
-    .landing-container .landing-banner {
-        background-size: cover;
-        background-position: center;
+        .landing-banner {
+            background-size: cover;
+            background-position: center;
 
-        .landing-banner-content {
-            max-width: 850px;
-            padding: 6rem 1rem;
-            
-            h1 {
-                font-size: 5rem;
-            }
+            .landing-banner-content {
+                max-width: 850px;
+                padding: 6rem 1rem;
+                
+                h1 {
+                    font-size: 5rem;
+                }
 
-            h2 {
-                width: 100%;
-                padding-top: 2rem;
-                font-size: 1.5rem;
+                h2 {
+                    width: 100%;
+                    padding-top: 2rem;
+                    font-size: 1.5rem;
+                }
             }
         }
-    }
 
         section.landing-content {
             gap: 6rem;

@@ -552,7 +552,7 @@ class ESKF:
         # Uses raw body-frame jerk (wrist whip) — deliberately NOT the
         # tip-corrected value so rotational dynamics still arm the gate.
         is_turning = self._omega_in_plane_last > ecfg.turn_omega_threshold
-        is_jerky   = current_jerk > 2300.0
+        is_jerky   = current_jerk > 800.0
         if is_turning and is_jerky:
             self._turn_cooldown = ecfg.turn_n_post
 

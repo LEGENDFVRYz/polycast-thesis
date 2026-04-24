@@ -61,7 +61,7 @@ class IMUConfig:
 class ContactConfig:
     force_exit_ratio:     float = 0.70   # exit threshold = force_enter * ratio
     pen_down_debounce_ms: float = 10.0   # reject bumps/spikes (ms of sustained force)
-    pen_up_debounce_ms:   float = 100.0   # reject tremor dips (ms below exit threshold)
+    pen_up_debounce_ms:   float = 30.0   # reject tremor dips (ms below exit threshold)
     min_draw_ms:          float = 30.0   # cumulative CONTACT_DRAWING before session opens
     state_debounce_n:     int   = 5      # N consecutive samples to confirm substate change
 
@@ -89,8 +89,8 @@ class UWBConfig:
     trilat_max_residual: float = 0.15
 
     # Alpha-Beta filter (replaces scalar EMA)
-    pos_alpha: float = 0.25                 # position correction gain
-    pos_beta: float = 0.2                  # velocity correction gain
+    pos_alpha: float = 0.60                 # position correction gain
+    pos_beta: float = 0.05                  # velocity correction gain
 
     # Trilateration stale-guess recovery
     stale_guess_timeout_us: int = 1_000_000 # 1 second gap triggers centroid re-seed
@@ -179,7 +179,7 @@ class FusionESKFConfig:
     # ── Turn detection ────────────────────────────────────────────────────
     # Threshold lowered slightly: cleaner acc signal means real corners are
     # detectable earlier without false positives from noise.
-    turn_omega_threshold: float = 0.8    # rad/s (was 1.85 — ~86 dps)
+    turn_omega_threshold: float = 0.5    # rad/s (was 1.85 — ~86 dps)
     turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
     turn_n_post: int            = 2      # unchanged
 

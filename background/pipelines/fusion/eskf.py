@@ -139,6 +139,7 @@ class ESKF:
         self._last_uwb_residual_rms = 0.0
         self._uwb_accepted = 0
         self._uwb_rejected = 0
+        self._last_lever_arm_m = 0.0
 
         self._board_w = bx
         self._board_h = by
@@ -171,20 +172,24 @@ class ESKF:
         q_raw = ev.get('quat')
         q_new = np.asarray(q_raw, dtype=float) if q_raw is not None else self.q.copy()
         
-        # Grab jerk from the event payload (default to 0.0 if missing)
-        current_jerk = ev.get('jerk', 0.0)
-        self._update_omega_and_turn(q_new, dt_s, current_jerk)
+        # Use precomputed ω from imu.py when available; fall back to quat-diff.
+        current_jerk    = ev.get('jerk', 0.0)
+        omega_world_ev  = ev.get('omega_world')   # None on older recorded events
+        self._update_omega_and_turn(q_new, dt_s, current_jerk, omega_world_ev)
         
         self.q = q_new
 
         # 1. Nominal state propagation (mid-point integration).
-        acc = np.asarray(ev.get('acc_board', (0.0, 0.0)), dtype=float)
+        # Prefer tip-corrected acc (lever-arm kinematics applied in imu.py);
+        # fall back to raw sensor-point acc for compatibility with older recorded events.
+        acc_src = ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0))
+        acc = np.asarray(acc_src, dtype=float)
         a   = acc - self.b_a
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
-        # Velocity drag — damps rotational-acc integration runaway between UWB corrections.
-        # IMU sits 200mm from tip: circular motion generates ~1000 m/s3 apparent acc.
-        # Drag prevents that from accumulating into multi-cm position error per UWB cycle.
+        # Velocity drag — residual damping between UWB corrections.
+        # With rigid-body tip correction in place the main source of rotational-acc
+        # runaway is removed; drag is kept conservatively pending ablation tuning.
         self.v *= max(0.0, 1.0 - cfg.fusion_eskf.velocity_drag_inv_s * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
@@ -247,11 +252,18 @@ class ESKF:
         # Time interpolation: innovation against state at UWB timestamp (Step 4).
         ts_uwb = ev.get('ts_hw', ts)
         interp = self._interpolate_at(ts_uwb)
-        p_ref  = interp[0] if interp is not None else None
+        if interp is not None:
+            p_ref, _, q_ref = interp
+        else:
+            p_ref = None
+            q_ref = self.q  # latest nominal quaternion — ≤5 ms stale at 200 Hz
 
-        # Lever-arm: per bg_rules.md the pen is held perpendicular to the board
-        # (constant offset ≈ 0) — skip rotation-based correction for this iteration.
-        z_tip = z
+        # Step 6: Lever-arm correction — UWB measures the tag (back of pen),
+        # not the tip. Subtract the rotated body-frame offset to get tip position.
+        # At perpendicular hold the correction is ~0; at 30° tilt it is ~10 cm.
+        r_board_offset = self._uwb_lever_arm_board(q_ref)
+        z_tip = z - r_board_offset
+        self._last_lever_arm_m = float(np.linalg.norm(r_board_offset))
 
         # Step 5: NLOS-adaptive R — consume trilateration residual.
         solve_error = float(ev.get('solve_error', 0.0))
@@ -496,14 +508,32 @@ class ESKF:
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
     # ────────────────────────────────────────────────────────────────────────
-    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float, current_jerk: float = 0.0):
-        """Derive in-plane angular velocity from Δquat; update turn flag.
+    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float,
+                               current_jerk: float = 0.0,
+                               omega_world_ev=None):
+        """Derive in-plane angular velocity; update turn flag.
 
-        ω ≈ 2·(q_k ⊗ q_{k-1}⁻¹).xyz / dt  (small-angle approximation).
-        If ω_in_plane exceeds threshold, inflate Q for turn_n_post frames.
+        omega_world_ev — precomputed world-frame ω (3-tuple) from the IMU
+        preprocessor's rigid-body block.  When supplied, the quaternion-diff
+        derivation is skipped (single source of truth, no duplicate math).
+        Falls back to Δquat when the field is absent (e.g. older recordings).
+
+        ω ≈ 2·(q_k ⊗ q_{k-1}⁻¹).xyz / dt  (small-angle, fallback only).
+        If ω_in_plane exceeds threshold AND jerk is high, inflate Q for
+        turn_n_post frames (corner detection).
         """
         ecfg = cfg.fusion_eskf
-        if self._prev_quat is not None and dt_s > 1e-6:
+
+        if omega_world_ev is not None:
+            # Fast path — use precomputed ω from imu.py (avoids duplicate quat diff).
+            omega_world = np.asarray(omega_world_ev, dtype=float)
+            axis_map = {'x': 0, 'y': 1, 'z': 2}
+            ax0 = axis_map[cfg.imu.board_axes[0]]
+            ax1 = axis_map[cfg.imu.board_axes[1]]
+            ω_ip = math.sqrt(float(omega_world[ax0])**2 + float(omega_world[ax1])**2)
+            self._omega_in_plane_last = ω_ip
+        elif self._prev_quat is not None and dt_s > 1e-6:
+            # Fallback path — derive ω from consecutive quaternions.
             q_delta = _quat_multiply(q_new, _quat_conjugate(self._prev_quat))
             if q_delta[3] < 0:           # choose shorter arc
                 q_delta = -q_delta
@@ -514,17 +544,17 @@ class ESKF:
             ax0 = axis_map[cfg.imu.board_axes[0]]
             ax1 = axis_map[cfg.imu.board_axes[1]]
             ω_ip = math.sqrt(omega_world[ax0]**2 + omega_world[ax1]**2)
-
-            # Only trigger a corner if turning fast AND acceleration is violently changing
-            is_turning = ω_ip > ecfg.turn_omega_threshold
-            is_jerky = current_jerk > 2300.0  # You can move 150.0 to config.py later
-            
-            if is_turning and is_jerky:
-                self._turn_cooldown = ecfg.turn_n_post
-                
             self._omega_in_plane_last = ω_ip
         else:
             self._omega_in_plane_last = 0.0
+
+        # Turn detection: corner only when turning fast AND jerk is high.
+        # Uses raw body-frame jerk (wrist whip) — deliberately NOT the
+        # tip-corrected value so rotational dynamics still arm the gate.
+        is_turning = self._omega_in_plane_last > ecfg.turn_omega_threshold
+        is_jerky   = current_jerk > 2300.0
+        if is_turning and is_jerky:
+            self._turn_cooldown = ecfg.turn_n_post
 
         if self._turn_cooldown > 0:
             self._turn_flag_last = True
@@ -590,6 +620,8 @@ class ESKF:
                 'b_a':               (float(self.b_a[0]), float(self.b_a[1])),
                 'uwb_accepted':      self._uwb_accepted,
                 'uwb_rejected':      self._uwb_rejected,
+                # Lever-arm diagnostics (updated on every UWB frame; 0 on IMU frames)
+                'lever_arm_m':       self._last_lever_arm_m,
             },
         }
 
@@ -597,7 +629,7 @@ class ESKF:
 # ==============================================================================
 # LIVE HARDWARE SELF-TEST
 #   SerialStreamer → Normalizer → TimeAlign → (IMU | UWB) → ESKF
-#   Prints a dashboard; Ctrl+C stops and prints a terse summary.
+#   Prints a dashboard; Ctrl+C stops and exports a CSV.
 # ==============================================================================
 if __name__ == '__main__':
     import time
@@ -633,17 +665,17 @@ if __name__ == '__main__':
 
     eskf = ESKF()
 
-    print("=" * 60)
-    print(f"  [TEST] MODULE 7b LIVE: ESKF (skeleton) on {SERIAL_PORT}")
-    print("  Draw strokes. Ctrl+C to stop.")
-    print("=" * 60)
+    print("=" * 64)
+    print(f"  [TEST] ESKF LIVE — lever-arm correction active — {SERIAL_PORT}")
+    print("  Draw strokes. Ctrl+C to stop and export CSV.")
+    print("=" * 64)
 
     last_print_time = 0.0
     latest      = None
-    latest_imu  = None   # most-recent pre-fusion IMU event (for acc_board diagnostic)
+    latest_imu  = None   # most-recent pre-fusion IMU event
     imu_count   = 0
     uwb_count   = 0
-    event_log   = []     # accumulates every fused event for CSV export
+    event_log   = []     # every fused event → CSV on exit
 
     try:
         while True:
@@ -664,9 +696,7 @@ if __name__ == '__main__':
                                 imu_count += 1
                                 latest     = fused
                                 latest_imu = s
-                                # Decorate with is_static before logging so CSV
-                                # has the IMU-side flag alongside fusion state.
-                                fused['_is_static'] = bool(s.get('is_static', False))
+                                fused['_imu_ev'] = s   # keep IMU event for CSV columns
                                 event_log.append(fused)
                     elif ev['sensor'] == 'UWB':
                         for r in range_prep.feed([ev]):
@@ -677,40 +707,65 @@ if __name__ == '__main__':
                                     fused = eskf.process_event(clean)
                                     if fused:
                                         uwb_count += 1
-                                        latest = fused
-                                        fused['_is_static'] = False
+                                        latest    = fused
+                                        fused['_imu_ev'] = None
                                         event_log.append(fused)
 
             now = time.time()
             if latest and (now - last_print_time) >= DISPLAY_RATE:
                 os.system('cls' if os.name == 'nt' else 'clear')
-                e = latest['eskf']
+                e   = latest['eskf']
+                imu = latest_imu  # may be None briefly on startup
 
-                # acc_board magnitude — sanity-check Path-A amplitude (expect ~1–3 m/s² when writing)
-                if latest_imu is not None:
-                    ab = latest_imu.get('acc_board', (0.0, 0.0))
-                    acc_board_mag = math.sqrt(ab[0]**2 + ab[1]**2)
+                # ── Rigid-body / lever-arm diagnostics from the IMU event ──
+                if imu is not None:
+                    ab      = imu.get('acc_board',     (0.0, 0.0))
+                    ab_tip  = imu.get('acc_board_tip', (0.0, 0.0))
+                    ow      = imu.get('omega_world',   (0.0, 0.0, 0.0))
+                    aw      = imu.get('alpha_world',   (0.0, 0.0, 0.0))
+                    jerk    = imu.get('jerk', 0.0)
+                    acc_sensor_mag = math.sqrt(sum(x*x for x in imu.get('acc_sensor', (0,0,0))))
                 else:
-                    acc_board_mag = 0.0
+                    ab = ab_tip = (0.0, 0.0)
+                    ow = aw = (0.0, 0.0, 0.0)
+                    jerk = acc_sensor_mag = 0.0
 
-                print(f"========= LIVE ESKF ({DISPLAY_RATE}s) =========")
-                print(f"  State      : {latest['state']}")
-                print(f"  Stroke ID  : {latest['stroke_id']} (Active: {latest['stroke_active']})")
-                print(f"  Source     : {latest['source']}")
-                print("-" * 50)
-                print(f"  Fused Pos  : X: {latest['fused_x']:6.3f} m | Y: {latest['fused_y']:6.3f} m")
-                print(f"  UWB Anchor : X: {latest['uwb_x']:6.3f} m | Y: {latest['uwb_y']:6.3f} m")
-                print(f"  |acc_board|: {acc_board_mag:.4f} m/s²  (Path-A; expect 1–3 when writing)")
-                print(f"  K_pos_diag : {e['K_pos_diag']:.4f}")
-                print(f"  uwb_resid  : {e['uwb_residual_rms']:.4f} m")
-                print(f"  P_pos_trace: {e['P_pos_trace']:.4f} m")
-                print(f"  Bias b_a   : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
-                print(f"  Last |y|   : {e['innovation_norm']:.4f} m  (UWB innovation)")
-                print(f"  R scale    : {e['r_scale']:.2f}  (1.0=clean, high=NLOS)")
-                turn_str = "TURN" if e['turn_flag'] else "    "
-                print(f"  ω in-plane : {e['omega_in_plane']:6.3f} rad/s  [{turn_str}]")
-                print(f"  IMU / UWB  : {imu_count} / {uwb_count}  (accepted={e['uwb_accepted']} rejected={e['uwb_rejected']})")
-                print("=" * 52)
+                acc_board_mag     = math.sqrt(ab[0]**2     + ab[1]**2)
+                acc_board_tip_mag = math.sqrt(ab_tip[0]**2 + ab_tip[1]**2)
+                omega_world_mag   = math.sqrt(ow[0]**2 + ow[1]**2 + ow[2]**2)
+                alpha_world_mag   = math.sqrt(aw[0]**2 + aw[1]**2 + aw[2]**2)
+
+                lever_arm_m = e.get('lever_arm_m', 0.0)
+                turn_str    = "TURN" if e['turn_flag'] else "----"
+
+                print(f"============= LIVE ESKF  ({DISPLAY_RATE}s refresh) =============")
+                print(f"  State      : {latest['state']:<20}  Source: {latest['source']}")
+                print(f"  Stroke     : ID={latest['stroke_id']}  Active={latest['stroke_active']}")
+                print("─" * 64)
+                print(f"  [POSITION]")
+                print(f"    Fused tip  : X={latest['fused_x']:7.4f} m   Y={latest['fused_y']:7.4f} m")
+                print(f"    UWB tag    : X={latest['uwb_x']:7.4f} m   Y={latest['uwb_y']:7.4f} m")
+                print(f"    Lever-arm  : {lever_arm_m*100:5.1f} cm  (UWB tag→tip offset in board plane)")
+                print("─" * 64)
+                print(f"  [RIGID-BODY TIP CORRECTION]  (rigid_body_enabled={cfg.imu.rigid_body_enabled})")
+                print(f"    |acc_board|         : {acc_board_mag:7.4f} m/s²  (sensor-point, legacy)")
+                print(f"    |acc_board_tip|     : {acc_board_tip_mag:7.4f} m/s²  (tip-corrected ← ESKF uses this)")
+                print(f"    reduction           : {max(0.0, acc_board_mag - acc_board_tip_mag):+6.4f} m/s²")
+                print(f"    |acc_sensor| 3D     : {acc_sensor_mag:7.4f} m/s²")
+                print(f"    jerk (body)         : {jerk:9.1f} m/s³  (raw wrist whip)")
+                print("─" * 64)
+                print(f"  [ANGULAR KINEMATICS]")
+                print(f"    |ω_world|           : {omega_world_mag:7.3f} rad/s  (expect 0–20 during writing)")
+                print(f"    ω in-plane (board)  : {e['omega_in_plane']:7.3f} rad/s  [{turn_str}]")
+                print(f"    |α_world| (EMA)     : {alpha_world_mag:7.1f} rad/s²")
+                print("─" * 64)
+                print(f"  [FILTER HEALTH]")
+                print(f"    P_pos_trace : {e['P_pos_trace']:.4f} m     Innovation |y|: {e['innovation_norm']:.4f} m")
+                print(f"    R scale     : {e['r_scale']:.2f}  (1.0=clean, >3=NLOS)")
+                print(f"    K_pos_diag  : {e['K_pos_diag']:.4f}         UWB resid: {e['uwb_residual_rms']:.4f} m")
+                print(f"    Bias b_a    : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
+                print(f"    IMU / UWB   : {imu_count} / {uwb_count}  (accepted={e['uwb_accepted']}  rejected={e['uwb_rejected']})")
+                print("=" * 64)
                 last_print_time = now
 
             time.sleep(0.005)
@@ -719,8 +774,8 @@ if __name__ == '__main__':
         print("\n\n[STOP] Halting ESKF.")
         streamer.close()
 
-        # ── Terse session summary ────────────────────────────────────────────
-        print("-" * 60)
+        # ── Session summary ──────────────────────────────────────────────────
+        print("-" * 64)
         print(f"  IMU events processed : {imu_count}")
         print(f"  UWB events processed : {uwb_count}")
         if latest:
@@ -728,44 +783,98 @@ if __name__ == '__main__':
             print(f"  Final fused position : ({latest['fused_x']:.3f}, {latest['fused_y']:.3f}) m")
             print(f"  Final P_pos_trace    : {e['P_pos_trace']:.4f} m")
             print(f"  UWB accepted/rejected: {e['uwb_accepted']} / {e['uwb_rejected']}")
-        print("=" * 60)
+            print(f"  Last lever-arm offset: {e.get('lever_arm_m', 0.0)*100:.1f} cm")
+        print("=" * 64)
 
         if not event_log:
             print("No events logged. Exiting.")
             exit()
 
         # ── CSV export ───────────────────────────────────────────────────────
-        # One row per fused event (both IMU and UWB source).
-        # Columns are stable across phases so CSVs can be overlaid for comparison.
+        # Columns are ordered: identity → position → lever-arm → rigid-body
+        # → angular kinematics → filter health → contact/stroke.
+        # Legacy columns keep the same names so old CSVs diff cleanly.
         csv_filename = "eskf_session.csv"
         _CSV_COLS = [
-            'ts_hw', 'source',
+            # Identity
+            'ts_hw', 'source', 'state',
+            # Fused tip position (lever-arm corrected)
             'fused_x', 'fused_y',
+            # Raw UWB tag position (not tip-corrected — for comparison)
             'uwb_x', 'uwb_y',
-            'stroke_id', 'stroke_active', 'is_static', 'state',
+            # Lever-arm
+            'lever_arm_m',
+            # Rigid-body tip correction diagnostics (from IMU event)
+            'acc_board_x', 'acc_board_z',          # sensor-point (legacy)
+            'acc_board_tip_x', 'acc_board_tip_z',  # tip-corrected (canonical)
+            'acc_board_mag', 'acc_board_tip_mag',  # magnitudes for quick diff
+            'acc_sensor_mag',                       # raw 3D sensor magnitude
+            'jerk',                                 # body-frame wrist-whip indicator
+            # Angular kinematics (from IMU event)
+            'omega_world_x', 'omega_world_y', 'omega_world_z', 'omega_world_mag',
+            'omega_body_x',  'omega_body_y',  'omega_body_z',
+            'alpha_world_x', 'alpha_world_y', 'alpha_world_z', 'alpha_world_mag',
+            # Filter health (from eskf sub-dict)
             'P_pos_trace', 'innovation_norm', 'r_scale',
             'K_pos_diag', 'b_a_x', 'b_a_y', 'b_a_norm',
             'omega_in_plane', 'turn_flag',
             'uwb_residual_rms', 'uwb_accepted', 'uwb_rejected',
+            # Contact / stroke
+            'stroke_id', 'stroke_active', 'is_static', 'contact',
         ]
-        print(f"[EXPORT] Writing {len(event_log)} rows to {csv_filename} ...")
+        print(f"[EXPORT] Writing {len(event_log)} rows → {csv_filename} ...")
         with open(csv_filename, mode='w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(_CSV_COLS)
             for ev in event_log:
-                e = ev.get('eskf', {})
-                ba = e.get('b_a', (0.0, 0.0))
+                e   = ev.get('eskf', {})
+                imu = ev.get('_imu_ev')   # attached in the event loop above
+                ba  = e.get('b_a', (0.0, 0.0))
+
+                # IMU-side fields (zero-fill on UWB rows)
+                ab     = imu.get('acc_board',     (0.0, 0.0)) if imu else (0.0, 0.0)
+                ab_tip = imu.get('acc_board_tip', (0.0, 0.0)) if imu else (0.0, 0.0)
+                ow     = imu.get('omega_world',   (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
+                ob     = imu.get('omega_body',    (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
+                aw     = imu.get('alpha_world',   (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
+                asens  = imu.get('acc_sensor',    (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
+                jerk   = imu.get('jerk', 0.0)  if imu else 0.0
+                is_static = bool(imu.get('is_static', False)) if imu else False
+                contact   = bool(imu.get('contact',   False)) if imu else False
+
+                ab_mag     = math.sqrt(ab[0]**2     + ab[1]**2)
+                ab_tip_mag = math.sqrt(ab_tip[0]**2 + ab_tip[1]**2)
+                asens_mag  = math.sqrt(sum(x*x for x in asens))
+                ow_mag     = math.sqrt(ow[0]**2 + ow[1]**2 + ow[2]**2)
+                aw_mag     = math.sqrt(aw[0]**2 + aw[1]**2 + aw[2]**2)
+
                 writer.writerow([
+                    # Identity
                     ev.get('ts_hw'),
                     ev.get('source'),
+                    ev.get('state', ''),
+                    # Fused position
                     round(ev.get('fused_x', 0.0), 6),
                     round(ev.get('fused_y', 0.0), 6),
+                    # UWB tag position
                     round(ev.get('uwb_x', 0.0), 6),
                     round(ev.get('uwb_y', 0.0), 6),
-                    ev.get('stroke_id', 0),
-                    int(ev.get('stroke_active', False)),
-                    int(ev.get('_is_static', False)),
-                    ev.get('state', ''),
+                    # Lever-arm
+                    round(e.get('lever_arm_m', 0.0), 5),
+                    # Rigid-body diagnostics
+                    round(ab[0], 6),
+                    round(ab[1], 6),
+                    round(ab_tip[0], 6),
+                    round(ab_tip[1], 6),
+                    round(ab_mag, 6),
+                    round(ab_tip_mag, 6),
+                    round(asens_mag, 6),
+                    round(jerk, 3),
+                    # Angular kinematics
+                    round(ow[0], 5), round(ow[1], 5), round(ow[2], 5), round(ow_mag, 5),
+                    round(ob[0], 5), round(ob[1], 5), round(ob[2], 5),
+                    round(aw[0], 3), round(aw[1], 3), round(aw[2], 3), round(aw_mag, 3),
+                    # Filter health
                     round(e.get('P_pos_trace', 0.0), 6),
                     round(e.get('innovation_norm', 0.0), 6),
                     round(e.get('r_scale', 1.0), 4),
@@ -778,10 +887,19 @@ if __name__ == '__main__':
                     round(e.get('uwb_residual_rms', 0.0), 6),
                     e.get('uwb_accepted', 0),
                     e.get('uwb_rejected', 0),
+                    # Contact / stroke
+                    ev.get('stroke_id', 0),
+                    int(ev.get('stroke_active', False)),
+                    int(is_static),
+                    int(contact),
                 ])
-        print(f"[EXPORT] Saved to {csv_filename}")
+        print(f"[EXPORT] Saved → {csv_filename}")
         print()
-        print("  Phase comparison tip: rename each run's CSV before the next")
-        print("  session (e.g. eskf_phase2.csv, eskf_phase3.csv) and diff the")
-        print("  P_pos_trace, innovation_norm, and uwb_accepted columns.")
-        print("=" * 60)
+        print("  Verification tips:")
+        print("  - lever_arm_m ≈ 0 when pen perpendicular; ~0.10 m at 30° tilt")
+        print("  - acc_board_tip_mag < acc_board_mag during circular strokes (60–90% drop)")
+        print("  - omega_world_mag: 0–20 rad/s normal; >100 = timestamp glitch")
+        print("  - alpha_world_mag: up to a few hundred rad/s² normal after EMA")
+        print("  - jerk > 7000 m/s³ = wrist whip event (expected, turn detection arms)")
+        print("  Rename before next session: e.g. eskf_with_leverarm.csv")
+        print("=" * 64)

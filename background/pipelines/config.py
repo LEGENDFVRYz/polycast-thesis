@@ -29,7 +29,7 @@ class IMUConfig:
 
     # ZUPT
     zupt_acc_threshold: float = 0.15
-    zupt_jerk_threshold: float = 8.5
+    zupt_jerk_threshold: float = 32.5
     zupt_min_duration_s: float = 0.05
 
     # Contact / force
@@ -49,6 +49,10 @@ class IMUConfig:
     hpf_enabled: bool = True
     hpf_cutoff_hz: float = 1.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
 
+    # Rigid-body tip correction (lever-arm kinematics)
+    rigid_body_enabled: bool = True     # ablation toggle — False reverts to sensor-point acc
+    alpha_ema_alpha: float = 0.7        # EMA weight on α_world (angular accel is noisy 2nd deriv)
+
 
 # ------------------------------------------------------------------------
 # CONTACT STATE DETECTOR
@@ -67,7 +71,8 @@ class ContactConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
-    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
+    range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)
+    # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
     # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
 
@@ -84,8 +89,8 @@ class UWBConfig:
     trilat_max_residual: float = 0.15
 
     # Alpha-Beta filter (replaces scalar EMA)
-    pos_alpha: float = 0.60                 # position correction gain
-    pos_beta: float = 0.10                  # velocity correction gain
+    pos_alpha: float = 0.25                 # position correction gain
+    pos_beta: float = 0.2                  # velocity correction gain
 
     # Trilateration stale-guess recovery
     stale_guess_timeout_us: int = 1_000_000 # 1 second gap triggers centroid re-seed
@@ -137,8 +142,11 @@ class PipelineConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class MarkerConfig:
-    r_imu_body_m: tuple[float, float, float] = (0.0, 0.0, 0.110)   # tip → IMU
-    r_uwb_body_m: tuple[float, float, float] = (0.0, 0.0, 0.200)   # tip → UWB
+    # Changed from (0, 0, Z) to (0, Y, 0)
+    # This means the IMU's Z-axis is pointing perpendicular to the pen shaft, not along it
+    # The pen shaft is actually aligned with the IMU's Y-axis
+    r_imu_body_m: tuple[float, float, float] = (0.110, 0.0, 0.0)   # tip → IMU
+    r_uwb_body_m: tuple[float, float, float] = (0.200, 0.0, 0.0)   # tip → UWB
 
 
 # ------------------------------------------------------------------------
@@ -149,16 +157,17 @@ class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
     # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
     # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 0.6      # m/s² (was 0.15)
-    # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
-    sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
+    sigma_a: float           = 1.1      # m/s² (was 0.15)
+    # sigma_b_a tightened further: prevents b_a from absorbing IMU/UWB disagreement
+    # during CONTACT_DRAWING where ZUPT never fires (was 0.002, was 0.005).
+    sigma_b_a: float         = 0.0001    # m/s²·√Hz
     sigma_zupt: float        = 0.005     # unchanged — already aggressive
 
     # ── Measurement noise ─────────────────────────────────────────────────
     # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
     # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
-    sigma_uwb: float         = 0.05      # m (was 0.12)
-    sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
+    sigma_uwb: float         = 0.035      # m (was 0.12)
+    sigma_trilat: float      = 0.09      # m (was 0.04 — widen velocity-pseudo gate to anchor IMU vel more often)
 
     # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
     k_nlos: float            = 1.5       # (was 0.00)
@@ -191,11 +200,11 @@ class FusionESKFConfig:
 
     # 3b: velocity pseudo-measurement noise when UWB is pristine.
     # Applied when solve_error < sigma_trilat (reliable trilateration).
-    sigma_uwb_vel: float       = 0.08    # m/s
+    sigma_uwb_vel: float       = 0.05    # m/s (was 0.08 — tighter now that gate is wider)
 
     # 3c: sigma_uwb scale factor while pen is actively drawing.
     # Pen physically constrained to board → trust UWB more during strokes.
-    contact_sigma_scale: float = 0.85    # 30 % tighter (multiplicative)
+    contact_sigma_scale: float = 1.25    # 30 % tighter (multiplicative)
 
     # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20

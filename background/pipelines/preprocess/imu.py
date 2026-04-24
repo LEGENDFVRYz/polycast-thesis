@@ -22,15 +22,29 @@ Output (processed IMU event):
         'ts_hw':       int,
         'packet_id':   int,
         'sample_idx':  int,
-        'quat':        (qx, qy, qz, qw),    - normalized unit quaternion
-        'acc_sensor':  (ax, ay, az),        - raw sensor linear acc (in m/s²)
-        'acc_world':   (ax, ay, az),        - rotated & EMA-smoothed (in m/s²)
-        'acc_board':   (bx, bz),            - projected to 2D board plane (Path A EMA)
-        'acc_board_hp': (bx, bz),          - HPF-filtered board acc (Path C, bias-stripped)
-        'jerk':        float,               - computed in BODY frame
-        'is_static':   bool,                - ZUPT decision
-        'contact':     bool,                - pen touching board?
-        'force':       float,               - raw force value (for touch sensitivity)
+        'quat':        (qx, qy, qz, qw),      - normalized unit quaternion
+
+        'acc_sensor':  (ax, ay, az),          - raw sensor linear acc (m/s²)
+
+        # Legacy / diagnostic — sensor-point (back of pen), NOT tip-corrected:
+        'acc_world':    (ax, ay, az),         - sensor-point, world frame, Path-A EMA
+        'acc_board':    (bx, bz),             - sensor-point, 2D board projection
+        'acc_board_hp': (bx, bz),             - sensor-point, HPF bias-stripped (Path C)
+
+        # Canonical ESKF inputs — rigid-body tip-corrected:
+        'acc_tip_world':    (ax, ay, az),     - tip, world frame, Path-A EMA
+        'acc_board_tip':    (bx, bz),         - tip, 2D board projection
+        'acc_board_hp_tip': (bx, bz),         - tip, HPF bias-stripped (Path C)
+
+        # Angular kinematics (exposed for ESKF turn detection):
+        'omega_world': (wx, wy, wz),          - angular velocity, world frame (rad/s)
+        'omega_body':  (wx, wy, wz),          - angular velocity, body frame (rad/s)
+        'alpha_world': (ax, ay, az),          - angular accel, world frame, EMA-filtered (rad/s²)
+
+        'jerk':        float,                 - body-frame Δacc magnitude / dt (m/s³)
+        'is_static':   bool,                  - ZUPT decision
+        'contact':     bool,                  - pen touching board?
+        'force':       float,                 - raw force value
     }
 """
 
@@ -74,6 +88,55 @@ def _project_board_axes(v):
     return (v[axis_map[a0]], v[axis_map[a1]])
 
 
+# --- rigid-body helpers (lever-arm kinematics) ---
+
+def _quat_mul(q1, q2):
+    """Hamilton product q1 ⊗ q2, both [x, y, z, w]."""
+    x1, y1, z1, w1 = q1
+    x2, y2, z2, w2 = q2
+    return (
+        w1*x2 + x1*w2 + y1*z2 - z1*y2,
+        w1*y2 - x1*z2 + y1*w2 + z1*x2,
+        w1*z2 + x1*y2 - y1*x2 + z1*w2,
+        w1*w2 - x1*x2 - y1*y2 - z1*z2,
+    )
+
+def _quat_conj(q):
+    """Conjugate (= inverse for unit quaternion), [x,y,z,w] → [-x,-y,-z,w]."""
+    return (-q[0], -q[1], -q[2], q[3])
+
+def _q_to_R(q):
+    """Quaternion [x,y,z,w] → 3×3 rotation matrix (body→world), as nested tuples."""
+    x, y, z, w = q
+    return (
+        (1 - 2*(y*y + z*z),     2*(x*y - w*z),     2*(x*z + w*y)),
+        (    2*(x*y + w*z), 1 - 2*(x*x + z*z),     2*(y*z - w*x)),
+        (    2*(x*z - w*y),     2*(y*z + w*x), 1 - 2*(x*x + y*y)),
+    )
+
+def _matvec3(R, v):
+    """Multiply 3×3 matrix R (nested tuples) by 3-vector v (tuple)."""
+    return (
+        R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2],
+        R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2],
+        R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2],
+    )
+
+def _vcross(a, b):
+    """3-vector cross product a × b."""
+    return (
+        a[1]*b[2] - a[2]*b[1],
+        a[2]*b[0] - a[0]*b[2],
+        a[0]*b[1] - a[1]*b[0],
+    )
+
+def _vadd(a, b):
+    return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
+
+def _vscale(a, s):
+    return (a[0]*s, a[1]*s, a[2]*s)
+
+
 # --- IMU preprocessor ---
 class IMUPreprocessor:
     def __init__(self):
@@ -81,16 +144,25 @@ class IMUPreprocessor:
         self._prev_acc_body = None
         # History for World-Frame EMA Smoothing (Path A — ESKF feed)
         self._prev_acc_world_clean = None
+        self._prev_acc_tip_clean   = None   # Path A on tip-corrected signal
         # Path B — heavy EMA state for ZUPT only
         self._prev_acc_world_zupt = None
         self._prev_acc_world_zupt_old = None
-        # High-pass filter state (applied on top of Path A, for ESKF bias rejection)
+        # High-pass filter state (sensor-point Path C)
         self._acc_world_hp_prev = None   # last HPF output y[n-1]
         self._acc_world_in_prev = None   # last HPF input  x[n-1]
+        # High-pass filter state (tip-corrected Path C)
+        self._acc_tip_hp_prev = None
+        self._acc_tip_in_prev = None
         # Time and ZUPT state
         self._prev_ts = None
         self._still_streak = 0
         self._zupt_active = False
+
+        # Rigid-body kinematics state (lever-arm tip correction)
+        self._prev_quat_rb      = None   # previous normalized quat — for ω_body derivation
+        self._prev_omega_world  = None   # previous ω_world — for α_world derivation
+        self._ema_alpha_world   = None   # EMA-smoothed α_world (noisy 2nd derivative)
 
         # Minimum samples required for ZUPT_MIN_DURATION_S
         dt_nom_s = 1.0 / cfg.imu.sample_rate_hz
@@ -137,13 +209,74 @@ class IMUPreprocessor:
         acc_world_raw = _quat_rotate(q_norm, acc_ms2)
 
         # ==========================================================
+        # RIGID-BODY TIP CORRECTION (lever-arm kinematics)
+        # Converts sensor-point acceleration → pen-tip acceleration.
+        #
+        #   a_tip = a_sensor − α×r − ω×(ω×r)
+        #
+        # where r = sensor→tip vector in world frame.
+        # Guard: correction is zero for the first two samples (no prev quat/ω).
+        # ==========================================================
+        R_body_to_world = _q_to_R(q_norm)
+
+        # Step 1 — ω_body from consecutive quaternions (small-angle approx).
+        if self._prev_quat_rb is not None and dt_s > 1e-6:
+            q_delta = _quat_mul(q_norm, _quat_conj(self._prev_quat_rb))
+            if q_delta[3] < 0:              # choose shorter arc
+                q_delta = (-q_delta[0], -q_delta[1], -q_delta[2], -q_delta[3])
+            omega_body  = _vscale(q_delta[:3], 2.0 / dt_s)
+            omega_world = _matvec3(R_body_to_world, omega_body)
+        else:
+            omega_body  = (0.0, 0.0, 0.0)
+            omega_world = (0.0, 0.0, 0.0)
+
+        # Step 2 — α_world from consecutive ω_world, EMA-filtered.
+        if self._prev_omega_world is not None and dt_s > 1e-6:
+            alpha_raw = _vscale(_vsub(omega_world, self._prev_omega_world), 1.0 / dt_s)
+        else:
+            alpha_raw = (0.0, 0.0, 0.0)
+
+        a_ema = cfg.imu.alpha_ema_alpha
+        if self._ema_alpha_world is None:
+            alpha_world = alpha_raw
+        else:
+            alpha_world = (
+                a_ema * self._ema_alpha_world[0] + (1.0 - a_ema) * alpha_raw[0],
+                a_ema * self._ema_alpha_world[1] + (1.0 - a_ema) * alpha_raw[1],
+                a_ema * self._ema_alpha_world[2] + (1.0 - a_ema) * alpha_raw[2],
+            )
+
+        # Step 3 — sensor→tip lever arm in world frame.
+        # r_imu_body_m is tip→IMU (positive z_body); negate for sensor→tip.
+        r_imu = cfg.marker.r_imu_body_m
+        r_body_st   = (-r_imu[0], -r_imu[1], -r_imu[2])
+        r_world_st  = _quat_rotate(q_norm, r_body_st)
+
+        # Step 4 — rigid-body correction terms (world frame).
+        tangential  = _vcross(alpha_world, r_world_st)
+        centripetal = _vcross(omega_world, _vcross(omega_world, r_world_st))
+
+        if cfg.imu.rigid_body_enabled:
+            acc_tip_world_raw = (
+                acc_world_raw[0] - tangential[0] - centripetal[0],
+                acc_world_raw[1] - tangential[1] - centripetal[1],
+                acc_world_raw[2] - tangential[2] - centripetal[2],
+            )
+        else:
+            acc_tip_world_raw = acc_world_raw
+
+        # Update rigid-body state for next sample.
+        self._prev_quat_rb     = q_norm
+        self._prev_omega_world = omega_world
+        self._ema_alpha_world  = alpha_world
+
+        # ==========================================================
         # DUAL-PATH EMA ARCHITECTURE
         # ==========================================================
 
-        # PATH A — Light EMA for ESKF: near-raw signal, minimal lag.
-        # alpha=smooth_alpha_eskf keeps one sample of noise rejection while
-        # preserving the true acceleration magnitude the filter needs to integrate.
         eskf_alpha = cfg.imu.smooth_alpha_eskf
+
+        # PATH A (legacy / diagnostic) — light EMA on sensor-point world acc.
         if self._prev_acc_world_clean is None:
             acc_world = acc_world_raw
         else:
@@ -153,6 +286,17 @@ class IMUPreprocessor:
                 eskf_alpha * self._prev_acc_world_clean[2] + (1 - eskf_alpha) * acc_world_raw[2],
             )
         self._prev_acc_world_clean = acc_world
+
+        # PATH A (tip-corrected) — light EMA on tip-corrected world acc.
+        if self._prev_acc_tip_clean is None:
+            acc_tip_world = acc_tip_world_raw
+        else:
+            acc_tip_world = (
+                eskf_alpha * self._prev_acc_tip_clean[0] + (1 - eskf_alpha) * acc_tip_world_raw[0],
+                eskf_alpha * self._prev_acc_tip_clean[1] + (1 - eskf_alpha) * acc_tip_world_raw[1],
+                eskf_alpha * self._prev_acc_tip_clean[2] + (1 - eskf_alpha) * acc_tip_world_raw[2],
+            )
+        self._prev_acc_tip_clean = acc_tip_world
 
         # PATH B — Heavy EMA for ZUPT only: kills micro-tremor, never exported.
         zupt_alpha = 0.95
@@ -167,31 +311,41 @@ class IMUPreprocessor:
         )
         self._prev_acc_world_zupt = acc_world_zupt
 
-        # --- Board Projection (Path A — ESKF feed) ---
-        acc_board = _project_board_axes(acc_world)
+        # --- Board Projection ---
+        acc_board     = _project_board_axes(acc_world)        # legacy diagnostic
+        acc_board_tip = _project_board_axes(acc_tip_world)    # canonical ESKF input
 
-        # PATH C — 1st-order High-Pass Filter on acc_world (ITrackU Step 2).
-        # Strips DC / low-frequency bias drift that would double-integrate into
-        # position runaway. Cutoff f_c = cfg.imu.hpf_cutoff_hz (default 0.5 Hz).
+        # PATH C — 1st-order High-Pass Filter on acc_tip_world (bias rejection).
+        # Runs on the tip-corrected signal so both rotational whip AND bias are removed.
         # Formula: y[n] = α·(y[n-1] + x[n] − x[n-1]),  α = RC/(RC+dt)
         if cfg.imu.hpf_enabled:
             RC      = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
             alpha_h = RC / (RC + dt_s)
             if self._acc_world_in_prev is None:
-                # First sample: output initialised to zero to avoid a transient spike.
-                acc_world_hp = (0.0, 0.0, 0.0)
-                self._acc_world_hp_prev = acc_world_hp
+                acc_world_hp     = (0.0, 0.0, 0.0)
+                acc_tip_world_hp = (0.0, 0.0, 0.0)
+                self._acc_world_hp_prev     = acc_world_hp
+                self._acc_tip_hp_prev       = acc_tip_world_hp
             else:
                 acc_world_hp = (
                     alpha_h * (self._acc_world_hp_prev[0] + acc_world[0] - self._acc_world_in_prev[0]),
                     alpha_h * (self._acc_world_hp_prev[1] + acc_world[1] - self._acc_world_in_prev[1]),
                     alpha_h * (self._acc_world_hp_prev[2] + acc_world[2] - self._acc_world_in_prev[2]),
                 )
+                acc_tip_world_hp = (
+                    alpha_h * (self._acc_tip_hp_prev[0] + acc_tip_world[0] - self._acc_tip_in_prev[0]),
+                    alpha_h * (self._acc_tip_hp_prev[1] + acc_tip_world[1] - self._acc_tip_in_prev[1]),
+                    alpha_h * (self._acc_tip_hp_prev[2] + acc_tip_world[2] - self._acc_tip_in_prev[2]),
+                )
                 self._acc_world_hp_prev = acc_world_hp
+                self._acc_tip_hp_prev   = acc_tip_world_hp
             self._acc_world_in_prev = acc_world
-            acc_board_hp = _project_board_axes(acc_world_hp)
+            self._acc_tip_in_prev   = acc_tip_world
+            acc_board_hp     = _project_board_axes(acc_world_hp)
+            acc_board_hp_tip = _project_board_axes(acc_tip_world_hp)
         else:
-            acc_board_hp = acc_board
+            acc_board_hp     = acc_board
+            acc_board_hp_tip = acc_board_tip
 
         # --- Body-Frame Jerk (raw body acc for sensitivity) ---
         if self._prev_acc_body is not None and dt_s > 0:
@@ -236,9 +390,19 @@ class IMUPreprocessor:
             'sample_idx':  ev.get('sample_idx'),
             'quat':        q_norm,
             'acc_sensor':  acc_ms2,
-            'acc_world':   acc_world,
-            'acc_board':   acc_board,
+            # --- legacy / diagnostic (sensor-point, not tip-corrected) ---
+            'acc_world':    acc_world,
+            'acc_board':    acc_board,
             'acc_board_hp': acc_board_hp,
+            # --- tip-corrected outputs (canonical ESKF inputs) ---
+            'acc_tip_world':    acc_tip_world,
+            'acc_board_tip':    acc_board_tip,
+            'acc_board_hp_tip': acc_board_hp_tip,
+            # --- angular kinematics (consumed by ESKF turn detection) ---
+            'omega_world': omega_world,
+            'omega_body':  omega_body,
+            'alpha_world': alpha_world,
+            # --- contact / motion ---
             'jerk':        round(jerk, 6),
             'is_static':   self._zupt_active,
             'contact':     contact,
@@ -256,6 +420,12 @@ class IMUPreprocessor:
         self._prev_ts = None
         self._still_streak = 0
         self._zupt_active = False
+        self._prev_quat_rb     = None
+        self._prev_omega_world = None
+        self._ema_alpha_world  = None
+        self._prev_acc_tip_clean = None
+        self._acc_tip_hp_prev    = None
+        self._acc_tip_in_prev    = None
 
 
 

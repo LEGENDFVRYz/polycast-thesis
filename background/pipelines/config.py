@@ -42,12 +42,12 @@ class IMUConfig:
     # Board projection
     board_axes: tuple[str, str] = ("x", "z")
     smooth_alpha: float = 0.75          # legacy heavy EMA — superseded by smooth_alpha_eskf
-    smooth_alpha_eskf: float = 0.18     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
+    smooth_alpha_eskf: float = 0.25     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
     acc_is_linear: bool = True
 
     # High-pass filter (Path C) — strips DC bias drift before ESKF integration
     hpf_enabled: bool = True
-    hpf_cutoff_hz: float = 0.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
+    hpf_cutoff_hz: float = 1.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
 
 
 # ------------------------------------------------------------------------

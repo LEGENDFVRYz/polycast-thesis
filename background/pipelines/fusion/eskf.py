@@ -170,7 +170,11 @@ class ESKF:
         # Step 7: Update quaternion first so omega and Q use the current sample.
         q_raw = ev.get('quat')
         q_new = np.asarray(q_raw, dtype=float) if q_raw is not None else self.q.copy()
-        self._update_omega_and_turn(q_new, dt_s)
+        
+        # Grab jerk from the event payload (default to 0.0 if missing)
+        current_jerk = ev.get('jerk', 0.0)
+        self._update_omega_and_turn(q_new, dt_s, current_jerk)
+        
         self.q = q_new
 
         # 1. Nominal state propagation (mid-point integration).
@@ -319,7 +323,26 @@ class ESKF:
         # Phase 3c: pen physically on the board → trust UWB more during active strokes.
         if self._prev_stroke_active:
             sigma *= ecfg.contact_sigma_scale
-        R = (sigma * sigma) * r_scale * np.eye(2)
+        
+        # --- ADAPTIVE TRUST LOGIC ---
+        current_speed = float(np.linalg.norm(self.v)) # Speed from IMU (m/s)
+        is_bad_uwb = r_scale > 1.05                    # UWB geometry is degrading
+        is_fast_move = current_speed > 0.08            # Pen moving faster than 40 cm/s
+        
+        if not is_bad_uwb:
+            # Good UWB: Keep standard tight noise (90% UWB / 10% IMU)
+            adaptive_multiplier = 1.0
+        else:
+            if is_fast_move:
+                # Bad UWB + Fast: Penalize UWB. Glide on IMU momentum (25% UWB / 75% IMU)
+                adaptive_multiplier = 4.0 
+            else:
+                # Bad UWB + Slow: Moderately penalize UWB. (60% UWB / 40% IMU)
+                adaptive_multiplier = 1.8 
+
+        # Apply the multiplier to the Measurement Noise Matrix (R)
+        R = ((sigma * adaptive_multiplier) ** 2) * r_scale * np.eye(2)
+        # ----------------------------
 
         # Innovation  y = z − p_ref  (time-aligned)
         p_nom = p_ref if p_ref is not None else self.p
@@ -473,7 +496,7 @@ class ESKF:
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
     # ────────────────────────────────────────────────────────────────────────
-    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float):
+    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float, current_jerk: float = 0.0):
         """Derive in-plane angular velocity from Δquat; update turn flag.
 
         ω ≈ 2·(q_k ⊗ q_{k-1}⁻¹).xyz / dt  (small-angle approximation).
@@ -492,8 +515,13 @@ class ESKF:
             ax1 = axis_map[cfg.imu.board_axes[1]]
             ω_ip = math.sqrt(omega_world[ax0]**2 + omega_world[ax1]**2)
 
-            if ω_ip > ecfg.turn_omega_threshold:
+            # Only trigger a corner if turning fast AND acceleration is violently changing
+            is_turning = ω_ip > ecfg.turn_omega_threshold
+            is_jerky = current_jerk > 2300.0  # You can move 150.0 to config.py later
+            
+            if is_turning and is_jerky:
                 self._turn_cooldown = ecfg.turn_n_post
+                
             self._omega_in_plane_last = ω_ip
         else:
             self._omega_in_plane_last = 0.0

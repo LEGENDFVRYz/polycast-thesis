@@ -364,10 +364,14 @@ class IMUPreprocessor:
         self._prev_acc_world_zupt_old = acc_world_zupt
 
         # --- ZUPT (motion detector — uses Path B only) ---
+        # Rule 1: true stillness requires |a| ≈ 0, jerk ≈ 0, AND |ω| ≈ 0.
+        # omega_world already computed above; its board-plane magnitude is sufficient.
         lin_mag_zupt = _vmag(acc_world_zupt)
+        omega_mag    = _vmag(omega_world) if omega_world is not None else 0.0
         still_now = (
             lin_mag_zupt < cfg.imu.zupt_acc_threshold and
-            zupt_jerk    < cfg.imu.zupt_jerk_threshold
+            zupt_jerk    < cfg.imu.zupt_jerk_threshold and
+            omega_mag    < cfg.imu.zupt_omega_threshold
         )
 
         if still_now:
@@ -403,10 +407,11 @@ class IMUPreprocessor:
             'omega_body':  omega_body,
             'alpha_world': alpha_world,
             # --- contact / motion ---
-            'jerk':        round(jerk, 6),
-            'is_static':   self._zupt_active,
-            'contact':     contact,
-            'force':       force,
+            'jerk':           round(jerk, 6),
+            'omega_mag_world': round(omega_mag, 6),
+            'is_static':      self._zupt_active,
+            'contact':        contact,
+            'force':          force,
         }
 
     def reset(self):

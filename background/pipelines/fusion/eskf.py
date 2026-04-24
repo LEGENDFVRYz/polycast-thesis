@@ -127,8 +127,15 @@ class ESKF:
         self._zupt_hard_count = 0
 
         # ── Phase 3b — UWB-velocity pseudo-measurement buffer ────────────────
-        # Stores (ts_hw, pos) of the last N accepted pristine UWB corrections.
-        self._uwb_vel_buf: deque[tuple[int, np.ndarray]] = deque(maxlen=5)
+        # Stores (ts_hw, pos, solve_error) of the last N accepted UWB corrections.
+        self._uwb_vel_buf: deque[tuple[int, np.ndarray, float]] = deque(maxlen=5)
+
+        # ── Sliding-window safeguard (Rule 3) ────────────────────────────────
+        # Tracks when the last UWB velocity anchor happened.
+        self._last_uwb_reset_ts: int | None = None
+        self._last_stale_s: float = 0.0
+        self._last_stale_factor: float = 1.0
+        self._last_sigma_v_eff: float = 0.0
 
         # ── Book-keeping ────────────────────────────────────────────────────
         self.last_ts: int | None = None
@@ -179,6 +186,20 @@ class ESKF:
         
         self.q = q_new
 
+        # Sliding-window safeguard (Rule 3): track how long since the last UWB
+        # velocity anchor.  When stale, inflate Q and tighten velocity drag so
+        # IMU dead-reckoning can't accumulate unbounded error.
+        ecfg = cfg.fusion_eskf
+        stale_s = 0.0
+        if self._last_uwb_reset_ts is not None:
+            stale_s = max(0.0, (ts - self._last_uwb_reset_ts) / 1_000_000.0)
+        stale_factor = 1.0
+        if stale_s > ecfg.uwb_window_s:
+            over = (stale_s - ecfg.uwb_window_s) / ecfg.uwb_window_s
+            stale_factor = 1.0 + min(ecfg.uwb_stale_max_k, over * ecfg.uwb_stale_k)
+        self._last_stale_s = stale_s
+        self._last_stale_factor = stale_factor
+
         # 1. Nominal state propagation (mid-point integration).
         # Prefer tip-corrected acc (lever-arm kinematics applied in imu.py);
         # fall back to raw sensor-point acc for compatibility with older recorded events.
@@ -187,15 +208,14 @@ class ESKF:
         a   = acc - self.b_a
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
-        # Velocity drag — residual damping between UWB corrections.
-        # With rigid-body tip correction in place the main source of rotational-acc
-        # runaway is removed; drag is kept conservatively pending ablation tuning.
-        self.v *= max(0.0, 1.0 - cfg.fusion_eskf.velocity_drag_inv_s * dt_s)
+        # Velocity drag — scaled by stale_factor when UWB has been silent too long.
+        drag_inv_s = ecfg.velocity_drag_inv_s * stale_factor
+        self.v *= max(0.0, 1.0 - drag_inv_s * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
-        #    Q is now turn-aware — σ_a is inflated during sharp-stroke windows.
+        #    Q is turn-aware; also inflated by stale_factor² when UWB is silent.
         F = self._build_F(dt_s)
-        Q = self._build_Q(dt_s)
+        Q = self._build_Q(dt_s) * (stale_factor ** 2)
         self.P = F @ self.P @ F.T + Q
 
         # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
@@ -273,20 +293,31 @@ class ESKF:
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
         self._uwb_accepted += 1
+        # Any accepted UWB position fix keeps the sliding-window clock alive,
+        # even when geometry isn't clean enough for a velocity pseudo-update.
+        self._last_uwb_reset_ts = ts_uwb
 
-        # Phase 3b: UWB-velocity pseudo-measurement on pristine trilateration.
-        # When solve_error < sigma_trilat the geometry is well-conditioned; two
-        # consecutive clean positions give a reliable velocity estimate that
-        # prevents IMU velocity from drifting between UWB fixes.
-        self._uwb_vel_buf.append((ts_uwb, z_tip.copy()))
-        if solve_error < cfg.fusion_eskf.sigma_trilat and len(self._uwb_vel_buf) >= 2:
-            t1, p1 = self._uwb_vel_buf[-2]
-            t2, p2 = self._uwb_vel_buf[-1]
-            dt_vel = (t2 - t1) / 1_000_000.0
-            if 0.01 < dt_vel < 0.5:                       # guard against stale/duplicate ts
-                v_uwb = (p2 - p1) / dt_vel
-                if float(np.linalg.norm(v_uwb)) < 2.0:   # clamp to physical pen-speed limit
-                    self._velocity_pseudo_update(v_uwb, cfg.fusion_eskf.sigma_uwb_vel)
+        # Phase 3b: UWB-velocity pseudo-measurement (Rule 2 — UWB Sync).
+        # Always push to buffer (solve_error stored so bad samples are detectable).
+        self._uwb_vel_buf.append((ts_uwb, z_tip.copy(), solve_error))
+        ecfg_v = cfg.fusion_eskf
+        if len(self._uwb_vel_buf) >= 3:
+            (t0, p0, e0), (t1, p1, e1), (t2, p2, e2) = (
+                self._uwb_vel_buf[-3], self._uwb_vel_buf[-2], self._uwb_vel_buf[-1]
+            )
+            # All three samples must have clean geometry.
+            if max(e0, e1, e2) < ecfg_v.sigma_trilat:
+                dt_vel = (t2 - t0) / 1_000_000.0          # span of central difference
+                if 0.02 < dt_vel < 0.5:                   # guard stale / duplicate ts
+                    v_uwb = (p2 - p0) / dt_vel            # central difference at t1
+                    if float(np.linalg.norm(v_uwb)) < 2.0:
+                        # Adaptive sigma: tighter when geometry is cleaner.
+                        e_avg   = (e0 + e1 + e2) / 3.0
+                        ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
+                        sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
+                        self._last_sigma_v_eff = sigma_v
+                        self._velocity_pseudo_update(v_uwb, sigma_v)
+                        self._last_uwb_reset_ts = ts_uwb
 
         self._clamp_to_board()
 
@@ -622,6 +653,10 @@ class ESKF:
                 'uwb_rejected':      self._uwb_rejected,
                 # Lever-arm diagnostics (updated on every UWB frame; 0 on IMU frames)
                 'lever_arm_m':       self._last_lever_arm_m,
+                # Sliding-window diagnostics
+                'uwb_stale_s':       round(self._last_stale_s, 4),
+                'stale_factor':      round(self._last_stale_factor, 4),
+                'sigma_v_eff':       round(self._last_sigma_v_eff, 5),
             },
         }
 

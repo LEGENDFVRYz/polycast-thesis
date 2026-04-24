@@ -31,6 +31,7 @@ class IMUConfig:
     zupt_acc_threshold: float = 0.15
     zupt_jerk_threshold: float = 32.5
     zupt_min_duration_s: float = 0.05
+    zupt_omega_threshold: float = 0.08  # rad/s — gyro stillness gate (~4.6 dps)
 
     # Contact / force
     force_contact_threshold: float = 100.0
@@ -201,10 +202,19 @@ class FusionESKFConfig:
     # 3b: velocity pseudo-measurement noise when UWB is pristine.
     # Applied when solve_error < sigma_trilat (reliable trilateration).
     sigma_uwb_vel: float       = 0.05    # m/s (was 0.08 — tighter now that gate is wider)
+    # Floor scale for adaptive sigma: at solve_error→0, sigma shrinks to min_scale * sigma_uwb_vel.
+    sigma_uwb_vel_min_scale: float = 0.2  # dimensionless (0.2 → 0.01 m/s minimum)
 
     # 3c: sigma_uwb scale factor while pen is actively drawing.
     # Pen physically constrained to board → trust UWB more during strokes.
     contact_sigma_scale: float = 1.25    # 30 % tighter (multiplicative)
+
+    # ── Sliding-window safeguard (Rule 3) ────────────────────────────────────
+    # Bounds how long IMU dead-reckoning runs without a UWB velocity anchor.
+    # After uwb_window_s of UWB silence, Q inflates and velocity drag increases.
+    uwb_window_s: float     = 0.30   # s — matches paper's sub-cm threshold (t < 0.3 s)
+    uwb_stale_k: float      = 2.0    # ramp slope per window-length of over-run
+    uwb_stale_max_k: float  = 5.0    # max stale factor (Q inflates ≤25×, drag ≤5×)
 
     # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20

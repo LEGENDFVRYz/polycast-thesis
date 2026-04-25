@@ -312,7 +312,7 @@ def main():
 
     # Artists
     line_draw, = ax.plot([], [], '-', color='royalblue', lw=2.0,
-                         label='EKF position (writing)', zorder=4)
+                         label='Pen tip (writing)', zorder=4)
     scat_lift, = ax.plot([], [], '.', color='#888888', ms=4, alpha=0.5,
                          label='Lifted (tracked, not drawn)', zorder=3)
     scat_rej,  = ax.plot([], [], 'x', color='orange', ms=8,

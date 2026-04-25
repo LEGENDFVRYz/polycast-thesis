@@ -236,6 +236,7 @@ class ESKF:
         acc_src = ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0))
         acc = np.asarray(acc_src, dtype=float)
         a   = acc - self.b_a
+        _rts_P_prev = self.P.copy()   # P before propagation → used for P_pred below
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
         # Velocity drag — scaled by stale_factor when UWB has been silent too long.
@@ -246,7 +247,14 @@ class ESKF:
         #    Q is turn-aware; also inflated by stale_factor² when UWB is silent.
         F = self._build_F(dt_s)
         Q = self._build_Q(dt_s) * (stale_factor ** 2)
-        self.P = F @ self.P @ F.T + Q
+        self.P = F @ _rts_P_prev @ F.T + Q
+
+        # RTS pre-update snapshot: state and covariance after propagation, before ZUPT.
+        # x_pred and P_pred represent the predicted state for this step.
+        _rts_p_pred  = self.p.copy()
+        _rts_v_pred  = self.v.copy()
+        _rts_ba_pred = self.b_a.copy()
+        _rts_P_pred  = self.P.copy()   # P after propagation, before any ZUPT update
 
         # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
         #    flags the pen as still.
@@ -274,6 +282,10 @@ class ESKF:
 
         # RTS history snapshot — stored in a parallel deque so the UWB
         # time-interpolation path above is completely unaffected.
+        # x_pred / P_pred are the post-propagation snapshots taken after step 2 but
+        # before ZUPT updates. The RTS backward pass reads history[k+1]['x_pred'] and
+        # ['P_pred'] directly, avoiding the F @ x_post_k approximation that fails for
+        # nonlinear propagation (acc input term not captured by F alone).
         if _rts_enabled():
             sid_now = int(ev.get('stroke_id', 0))
             # Clear buffer on every new stroke so the slice stays contiguous.
@@ -282,6 +294,8 @@ class ESKF:
                 self._rts_current_sid = sid_now
             self._rts_buf.append({
                 'ts':        ts,
+                'x_pred':    np.concatenate([_rts_p_pred, _rts_v_pred, _rts_ba_pred]),
+                'P_pred':    _rts_P_pred,
                 'x_post':    np.concatenate([self.p, self.v, self.b_a]),
                 'P_post':    self.P.copy(),
                 'F':         F,

@@ -3,8 +3,9 @@
 
 After the RTS backward pass corrects coordinate drift, raw points are still
 bound to the 200 Hz IMU sampling grid.  Slow hand motion → clustered points;
-fast motion → sparse points.  CubicSpline arc-length reparameterization
-produces a visually uniform curve regardless of drawing speed.
+fast motion → sparse points.  A smoothing spline (splprep, s > 0) removes
+residual noise and arc-length resampling produces visually uniform spacing
+regardless of drawing speed.
 
 Public API:
     NoteSmoother.smooth_stroke(stroke, history_slice) -> dict
@@ -14,7 +15,8 @@ Public API:
                     Only metadata fields are used (stroke_id, start_ts, end_ts).
                     Position geometry comes entirely from history_slice.
     history_slice — list[dict] from ESKF._rts_buf for this stroke_id
-                    each entry: {'ts', 'x_post', 'P_post', 'F', 'Q', 'stroke_id'}
+                    each entry: {'ts', 'x_pred', 'P_pred', 'x_post', 'P_post',
+                                 'F', 'Q', 'stroke_id'}
                     Contains ALL Kalman samples with no deduplication.
 
 Returns a copy of stroke with:
@@ -25,9 +27,8 @@ Returns a copy of stroke with:
 
 from __future__ import annotations
 
-import warnings
 import numpy as np
-from scipy.interpolate import CubicSpline
+from scipy.interpolate import splprep, splev
 
 from background.pipelines.config import cfg
 from background.pipelines.postprocess.rts_smoother import rts_smooth_history
@@ -70,9 +71,8 @@ class NoteSmoother:
             result['smoothed'] = False
             return result
 
-        # ── 3. Spline construction ───────────────────────────────────────────
-        # Collapse duplicate arc positions (zero-movement steps) so CubicSpline
-        # doesn't receive repeated knots.
+        # ── 3. Smoothing spline ──────────────────────────────────────────────
+        # Collapse duplicate arc positions so splprep doesn't receive repeated knots.
         unique_mask = np.concatenate([[True], np.diff(arc) > 1e-9])
         arc_u = arc[unique_mask]
         pts_u = pts_rts[unique_mask]
@@ -85,10 +85,28 @@ class NoteSmoother:
             result['smoothed'] = True
             return result
 
-        with warnings.catch_warnings():
-            warnings.simplefilter('ignore')
-            cs_x = CubicSpline(arc_u, pts_u[:, 0])
-            cs_y = CubicSpline(arc_u, pts_u[:, 1])
+        # splprep with s > 0 fits a smoothing (not interpolating) spline.
+        # s scales with n_unique * noise variance; the config factor lets the user
+        # tune aggressiveness without touching this code.
+        n_u = len(arc_u)
+        s_factor = cfg.postprocess.spline_smoothing_factor
+        s_val = s_factor * n_u
+
+        u_norm = arc_u / total_arc   # normalised parameter 0..1
+        try:
+            tck, _ = splprep(
+                [pts_u[:, 0], pts_u[:, 1]],
+                u=u_norm,
+                s=s_val,
+                k=min(3, n_u - 1),
+            )
+        except Exception:
+            # Degenerate geometry — fall back to RTS-only output.
+            raw_pts = [(float(pts_rts[i, 0]), float(pts_rts[i, 1]), int(ts_rts[i]))
+                       for i in range(n)]
+            result['points']   = raw_pts
+            result['smoothed'] = True
+            return result
 
         # ── 4. Uniform resample at ds_m intervals ────────────────────────────
         ds  = cfg.postprocess.spline_resample_ds_m
@@ -97,8 +115,8 @@ class NoteSmoother:
         if s_q[-1] < total_arc - 1e-9:
             s_q = np.append(s_q, total_arc)
 
-        x_q = cs_x(s_q)
-        y_q = cs_y(s_q)
+        u_q      = s_q / total_arc
+        x_q, y_q = splev(u_q, tck)
 
         # Timestamps: linearly interpolate arc-length → µs timestamp.
         ts_q = np.interp(s_q, arc, ts_rts.astype(float)).astype(int)
@@ -152,6 +170,8 @@ if __name__ == '__main__':
         x_st = np.array([x_raw[i], y_raw[i], 0.0, 0.0, 0.0, 0.0])
         history_slice.append({
             'ts':        int(ts_hw[i]),
+            'x_pred':    x_st.copy(),   # identity propagation in synthetic test
+            'P_pred':    I6 * 0.01,
             'x_post':    x_st,
             'P_post':    I6 * 0.01,
             'F':         I6.copy(),

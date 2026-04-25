@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM20"
+    port: str = "COM3"
     baud: int = 921600
 
 
@@ -72,8 +72,8 @@ class ContactConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
-    range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)
-    # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
+    # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)
+    range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
     # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
 
@@ -227,10 +227,13 @@ class FusionESKFConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PostprocessConfig:
-    rts_enabled:            bool  = True
-    rts_max_stroke_samples: int   = 5000    # hard cap ~20 s at 200 Hz
-    spline_resample_ds_m:   float = 0.001    # 1 mm arc-length step
-    spline_min_points:      int   = 5       # skip spline below this count
+    rts_enabled:             bool  = True
+    rts_max_stroke_samples:  int   = 5000    # hard cap ~20 s at 200 Hz
+    spline_resample_ds_m:    float = 0.001   # 1 mm arc-length step
+    spline_min_points:       int   = 5       # skip spline below this count
+    # splprep smoothing factor per unique knot: s = spline_smoothing_factor * n_unique
+    # 0.0 → interpolating (no smoothing), ~0.002–0.005 → light smoothing for handwriting.
+    spline_smoothing_factor: float = 0.00000125
 
 
 # ------------------------------------------------------------------------

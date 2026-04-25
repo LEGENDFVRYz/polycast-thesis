@@ -6,10 +6,12 @@ history for one completed stroke and returns smoothed state estimates.
 
 Input: list of per-step dicts (oldest → newest), each containing:
     ts        : int            hardware timestamp (µs)
-    x_post    : ndarray (6,)   posterior state  [δp_x, δp_y, δv_x, δv_y, δb_a_x, δb_a_y]
+    x_pred    : ndarray (6,)   predicted state before measurement update for this step
+    P_pred    : ndarray (6,6)  predicted covariance before measurement update
+    x_post    : ndarray (6,)   posterior state  [p_x, p_y, v_x, v_y, b_ax, b_ay]
     P_post    : ndarray (6,6)  posterior covariance
-    F         : ndarray (6,6)  state-transition Jacobian used in this step
-    Q         : ndarray (6,6)  process-noise used in this step
+    F         : ndarray (6,6)  state-transition Jacobian used to reach this step (k-1 → k)
+    Q         : ndarray (6,6)  process-noise used to reach this step
 
 Output: list of dicts (same length, same order):
     ts         : int
@@ -17,7 +19,10 @@ Output: list of dicts (same length, same order):
     P_smoothed : ndarray (6,6)
 
 Notes:
-  - The last sample's smoothed state == its posterior (nothing to pull from).
+  - x_pred / P_pred at step k+1 are the true prediction residuals, not F @ x_post_k.
+    This matters because ESKF nominal propagation is nonlinear (includes acc input).
+  - F[k+1] is the Jacobian that drove step k → k+1, so the backward pass reads
+    history[k+1]['F'] for the k → k+1 transition.
   - np.linalg.solve is used for G_k instead of explicit matrix inversion
     (numerically stable, ~2x faster on 6x6 systems).
   - A small ridge (1e-9 * I) is added to P_pred before solve to guard
@@ -57,24 +62,24 @@ def rts_smooth_history(history: list[dict]) -> list[dict]:
 
     # Backward sweep: k runs from N-2 down to 0.
     for k in range(n - 2, -1, -1):
-        h  = history[k]
-        Fk = h['F']           # (6,6)
-        Qk = h['Q']           # (6,6)
-        xk = h['x_post']     # (6,)
-        Pk = h['P_post']     # (6,6)
+        xk = history[k]['x_post']      # (6,)  posterior at step k
+        Pk = history[k]['P_post']      # (6,6)
 
-        # Prior covariance predicted from step k → k+1
-        P_pred = Fk @ Pk @ Fk.T + Qk  # (6,6)
+        # history[k+1] holds the prediction that produced step k+1 FROM step k.
+        # F[k+1] is the Jacobian for k → k+1; x_pred[k+1] and P_pred[k+1] are
+        # the pre-update predicted state and covariance for step k+1.
+        h_next      = history[k + 1]
+        F_k_to_kp1  = h_next['F']       # Jacobian k → k+1
+        x_pred_kp1  = h_next['x_pred']  # true predicted state at k+1 (not F @ x_k)
+        P_pred_kp1  = h_next['P_pred']  # predicted covariance at k+1
 
-        # Smoother gain: G_k = P_k * F_k^T * P_pred^{-1}
-        # Solved as (P_pred^T \ (F_k * P_k^T)^T)^T to avoid explicit inv.
-        # G_k^T = solve(P_pred, F_k @ P_k)  →  shape (6,6)
-        P_pred_reg = P_pred + _RIDGE
-        G_k = np.linalg.solve(P_pred_reg.T, (Fk @ Pk).T).T  # (6,6)
+        # Smoother gain: G_k = P_k * F_{k→k+1}^T * P_pred_{k+1}^{-1}
+        P_pred_reg = P_pred_kp1 + _RIDGE
+        G_k = np.linalg.solve(P_pred_reg.T, (F_k_to_kp1 @ Pk).T).T  # (6,6)
 
         # Smoothed state and covariance
-        xs[k] = xk + G_k @ (xs[k + 1] - Fk @ xk)
-        dP    = Ps[k + 1] - P_pred
+        xs[k] = xk + G_k @ (xs[k + 1] - x_pred_kp1)
+        dP    = Ps[k + 1] - P_pred_kp1
         Ps[k] = Pk + G_k @ dP @ G_k.T
 
     return [
@@ -139,13 +144,19 @@ if __name__ == '__main__':
         a_noise = np.random.randn(2) * sigma_a * math.sqrt(dt)
         a_in    = np.array([0.0, 0.0]) + a_noise
 
+        # Predicted state and covariance (before "measurement update" = the noisy input)
+        x_pred = x.copy()
+        P_pred = F @ P @ F.T + Q
+
         x[0:2] += x[2:4] * dt + 0.5 * a_in * dt * dt
         x[2:4] += a_in * dt
 
-        P = F @ P @ F.T + Q
+        P = P_pred.copy()
 
         history.append({
             'ts':     int(k * dt * 1e6),
+            'x_pred': x_pred,
+            'P_pred': P_pred,
             'x_post': x.copy(),
             'P_post': P.copy(),
             'F':      F,

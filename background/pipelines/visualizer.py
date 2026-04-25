@@ -6,8 +6,9 @@ Renderer: PyQtGraph (Qt-native, ~10× faster than matplotlib ion-mode).
 Falls back gracefully: if PyQtGraph is unavailable the script prints an
 error and exits instead of silently producing a broken window.
 
-Four stroke layers:
+Five stroke layers:
     Black  (solid, z=5)  — fused stroke in CONTACT_DRAWING state (actual ink)
+    Green  (solid, z=5)  — RTS-smoothed overlay added on pen-lift
     Gray   (α=0.55, z=4) — fused position in non-contact / air movement
     Orange (α=0.55, z=3) — UWB clean positions (pos_clean from position.py)
     Blue   (α=0.55, z=2) — IMU dead-reckoning only (forward Euler integrator)
@@ -57,6 +58,7 @@ from background.pipelines.preprocess.uwb.position      import UWBPositionFilter
 from background.pipelines.fusion.eskf                  import ESKF
 from background.pipelines.fusion.baseline              import FusionEngine
 from background.pipelines.reconstruct                  import StrokeReconstructor
+from background.pipelines.postprocess                  import StrokePostProcessor
 
 
 # ── Layout / rolling-buffer constants ────────────────────────────────────────
@@ -76,12 +78,13 @@ _ANCHOR_XS = [p[0] for p in cfg.anchors.positions]
 _ANCHOR_YS = [p[1] for p in cfg.anchors.positions]
 
 # PyQtGraph colour helpers (R, G, B, A  0–255)
-_C_INK    = (10,  10,  10,  255)
-_C_AIR    = (130, 130, 130, 140)
-_C_UWB    = (230, 140,  20, 140)
-_C_IMU    = (80,  130, 220, 140)
+_C_INK    = (10,  10,  10,  75)
+_C_AIR    = (130, 130, 130, 101)
+_C_UWB    = (230, 140,  20, 101)
+_C_IMU    = (80,  130, 220, 101)
 _C_ANCHOR = (220,  30,  30, 255)
 _C_BOARD  = (60,   60,  60, 200)
+_C_RTS    = (0,   102,  0, 255)   # RTS-smoothed stroke overlay (green)
 
 
 # ── IMU dead-reckoning integrator (blue layer) ────────────────────────────────
@@ -232,14 +235,24 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.imu_trk    = _IMUTrack()
         self.fusion     = ESKF() if fusion_mode == 'eskf' else FusionEngine(fusion_alpha=0.15)
 
+        # RTS post-processor: only wired when fusion is ESKF (needs _rts_buf).
+        self.post_proc = (
+            StrokePostProcessor(self.fusion)
+            if fusion_mode == 'eskf'
+            else None
+        )
+
         # ── Data accumulators ─────────────────────────────────────────────────
         self.air_x = deque(maxlen=AIR_TRAIL); self.air_y = deque(maxlen=AIR_TRAIL)
         self.imu_x = deque(maxlen=IMU_TRAIL); self.imu_y = deque(maxlen=IMU_TRAIL)
         self.uwb_x = deque(maxlen=UWB_TRAIL); self.uwb_y = deque(maxlen=UWB_TRAIL)
 
-        self.ink_strokes   = []   # list of completed np arrays [(x,y), ...]
+        self.ink_strokes   = []   # list of completed pts lists [(x,y), ...]
         self.cur_ink_x     = []
         self.cur_ink_y     = []
+
+        # RTS-smoothed stroke overlays (green, added alongside ink strokes).
+        self._rts_items: list = []
 
         self.latest_fused     = None
         self.latest_uwb_fused = None   # last fused event produced by a UWB correction
@@ -412,6 +425,12 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                     self.cur_ink_y.clear()
                     self.closed_count += 1
 
+                    # RTS overlay: run backward pass + spline and add a green stroke.
+                    if self.post_proc is not None:
+                        dry = self.post_proc.process_closed_stroke(closed)
+                        if dry and dry.get('smoothed'):
+                            self._add_rts_stroke(dry['points'])
+
                 self._write_csv_row(fused, p, 'IMU')
 
             elif ev['sensor'] == 'UWB':
@@ -470,10 +489,21 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         ys = [p[1] for p in pts]
         item = self._plot_widget.plot(
             xs, ys,
-            pen=pg.mkPen(color=_C_INK, width=2.2),
+            pen=pg.mkPen(color=_C_INK, width=1.7),
         )
         self._ink_items.append(item)
         self.ink_strokes.append(pts)
+
+    def _add_rts_stroke(self, smoothed_pts: list):
+        if not smoothed_pts:
+            return
+        xs = [p[0] for p in smoothed_pts]
+        ys = [p[1] for p in smoothed_pts]
+        item = self._plot_widget.plot(
+            xs, ys,
+            pen=pg.mkPen(color=_C_RTS, width=2.2),
+        )
+        self._rts_items.append(item)
 
     def _write_csv_row(self, fused: dict, imu_ev: dict, source: str):
         e  = fused.get('eskf', {})
@@ -518,8 +548,12 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         # Flush open stroke
         tail = self.rec.flush()
         if tail:
-            pts = [(pt[0], pt[1]) for pt in tail['points']]
+            pts  = [(pt[0], pt[1]) for pt in tail['points']]
             self._add_ink_stroke(pts)
+            if self.post_proc is not None:
+                dry = self.post_proc.process_closed_stroke(tail)
+                if dry and dry.get('smoothed'):
+                    self._add_rts_stroke(dry['points'])
             self.closed_count += 1
 
         self.streamer.close()

@@ -62,7 +62,7 @@ class IMUConfig:
 class ContactConfig:
     force_exit_ratio:     float = 0.70   # exit threshold = force_enter * ratio
     pen_down_debounce_ms: float = 10.0   # reject bumps/spikes (ms of sustained force)
-    pen_up_debounce_ms:   float = 30.0   # reject tremor dips (ms below exit threshold)
+    pen_up_debounce_ms:   float = 174.0   # reject tremor dips (ms below exit threshold)
     min_draw_ms:          float = 30.0   # cumulative CONTACT_DRAWING before session opens
     state_debounce_n:     int   = 5      # N consecutive samples to confirm substate change
 
@@ -158,7 +158,7 @@ class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
     # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
     # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 1.1      # m/s² (was 0.15)
+    sigma_a: float           = 1.10      # m/s² (was 0.15)
     # sigma_b_a tightened further: prevents b_a from absorbing IMU/UWB disagreement
     # during CONTACT_DRAWING where ZUPT never fires (was 0.002, was 0.005).
     sigma_b_a: float         = 0.0001    # m/s²·√Hz
@@ -223,18 +223,30 @@ class FusionESKFConfig:
 
 
 # ------------------------------------------------------------------------
+# POSTPROCESS (RTS smoother + spline resample)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class PostprocessConfig:
+    rts_enabled:            bool  = True
+    rts_max_stroke_samples: int   = 5000    # hard cap ~20 s at 200 Hz
+    spline_resample_ds_m:   float = 0.001    # 1 mm arc-length step
+    spline_min_points:      int   = 5       # skip spline below this count
+
+
+# ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Config:
-    serial:  SerialConfig  = field(default_factory=SerialConfig)
-    imu:     IMUConfig     = field(default_factory=IMUConfig)
-    contact: ContactConfig = field(default_factory=ContactConfig)
-    uwb:     UWBConfig     = field(default_factory=UWBConfig)
-    anchors: AnchorConfig = field(default_factory=AnchorConfig)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
-    marker: MarkerConfig = field(default_factory=MarkerConfig)
-    fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
+    serial:      SerialConfig      = field(default_factory=SerialConfig)
+    imu:         IMUConfig         = field(default_factory=IMUConfig)
+    contact:     ContactConfig     = field(default_factory=ContactConfig)
+    uwb:         UWBConfig         = field(default_factory=UWBConfig)
+    anchors:     AnchorConfig      = field(default_factory=AnchorConfig)
+    pipeline:    PipelineConfig    = field(default_factory=PipelineConfig)
+    marker:      MarkerConfig      = field(default_factory=MarkerConfig)
+    fusion_eskf: FusionESKFConfig  = field(default_factory=FusionESKFConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 
 
 cfg = Config()

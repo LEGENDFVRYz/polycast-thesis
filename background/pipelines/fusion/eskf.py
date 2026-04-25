@@ -41,6 +41,16 @@ import numpy as np
 
 from background.pipelines.config import cfg
 
+# Resolved at first ESKF instantiation to avoid a circular-import at module load.
+_postprocess_cfg_rts_enabled: bool | None = None
+
+
+def _rts_enabled() -> bool:
+    global _postprocess_cfg_rts_enabled
+    if _postprocess_cfg_rts_enabled is None:
+        _postprocess_cfg_rts_enabled = bool(cfg.postprocess.rts_enabled)
+    return _postprocess_cfg_rts_enabled
+
 
 def _q_to_rotation(q: np.ndarray) -> np.ndarray:
     """Quaternion [x, y, z, w] → 3×3 rotation matrix (body → world)."""
@@ -114,6 +124,16 @@ class ESKF:
             deque(maxlen=ecfg.state_buffer_size)
         )
 
+        # ── Parallel RTS history buffer (separate from _state_buf so UWB     ──
+        # ── time-interpolation logic is untouched).  Each entry stores the   ──
+        # ── full posterior + matrices needed for the backward pass.           ──
+        if _rts_enabled():
+            _rts_maxlen = cfg.postprocess.rts_max_stroke_samples
+        else:
+            _rts_maxlen = 1   # minimal footprint when disabled
+        self._rts_buf: deque[dict] = deque(maxlen=_rts_maxlen)
+        self._rts_current_sid: int | None = None   # stroke_id being buffered
+
         # ── Step-7 turn tracking ────────────────────────────────────────────
         self._prev_quat: np.ndarray | None = None
         self._turn_cooldown = 0
@@ -168,6 +188,16 @@ class ESKF:
 
     def reset(self):
         self.__init__()
+
+    def get_rts_history_slice(self, stroke_id: int) -> list[dict]:
+        """Return the buffered per-step RTS data for the given stroke_id.
+
+        Called by StrokePostProcessor immediately after the stroke closes.
+        Returns an empty list when RTS is disabled or no matching data exists.
+        """
+        if not _rts_enabled():
+            return []
+        return [e for e in self._rts_buf if e['stroke_id'] == stroke_id]
 
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
@@ -241,6 +271,23 @@ class ESKF:
 
         # Snapshot for UWB time interpolation (Step 4 consumes this).
         self._state_buf.append((ts, self.p.copy(), self.v.copy(), self.q.copy()))
+
+        # RTS history snapshot — stored in a parallel deque so the UWB
+        # time-interpolation path above is completely unaffected.
+        if _rts_enabled():
+            sid_now = int(ev.get('stroke_id', 0))
+            # Clear buffer on every new stroke so the slice stays contiguous.
+            if sid_now != self._rts_current_sid:
+                self._rts_buf.clear()
+                self._rts_current_sid = sid_now
+            self._rts_buf.append({
+                'ts':        ts,
+                'x_post':    np.concatenate([self.p, self.v, self.b_a]),
+                'P_post':    self.P.copy(),
+                'F':         F,
+                'Q':         Q,
+                'stroke_id': sid_now,
+            })
 
         self._clamp_to_board()
 

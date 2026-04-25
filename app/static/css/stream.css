@@ -43,7 +43,7 @@
         animation: fadeInUp 0.4s ease-out forwards;
 
         .header-title {
-            font-family: 'Poppins';
+            font-family: 'Poppins', sans-serif;
             font-weight: 600;
             font-size: 1.25rem;
             color: #1E293B;
@@ -73,7 +73,7 @@
         
             #status-state {
                 color: #6366F1;
-                font-family: 'Poppins';
+                font-family: 'Poppins', sans-serif;
                 font-weight: 600;
             }
             

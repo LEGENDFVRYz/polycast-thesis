@@ -1,3 +1,5 @@
+from lzma import MODE_FAST
+
 import serial
 import time
 import os
@@ -6,9 +8,11 @@ import re
 # ==============================================================================
 # CONFIGURATION
 # ==============================================================================
-VIRTUAL_COM_PORT = 'COM19'  # The port the replayer sends TO
-BAUD_RATE = 115200
-LOG_FILE = '0s.csv'   # <--- CHANGE THIS to your actual logged file name
+VIRTUAL_COM_PORT    = 'COM19'
+BAUD_RATE           = 921600
+MODE                = "abc"
+TESTNAME            = "force_test"
+LOG_FILE            = f'logs/{TESTNAME}.csv'
 
 # ==============================================================================
 # MAIN REPLAY LOOP

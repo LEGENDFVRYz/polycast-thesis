@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM3"
+    port: str = "COM20"
     baud: int = 921600
 
 
@@ -307,7 +307,7 @@ class FusionESKFConfig:
     k_nlos: float = 0.5     # tuner Stage-4 winner: less aggressive NLOS scaling on current datasets
     r_scale_max: float = 10.0  # tuner Stage-4 winner: cap R inflation earlier
     hard_reject_mult: float = 3.0  # tighter hard rejection for bad trilateration periods
-    innov_hard_reject_m: float = 0.25  # UWB innovation magnitude hard reject (m); >25 cm UWB↔IMU disagreement is non-physical in board writing
+    innov_hard_reject_m: float = 0.50  # UWB innovation magnitude hard reject (m); >25 cm UWB↔IMU disagreement is non-physical in board writing
 
     # Turn detection.
     # For handwriting, avoid making TURN fire too often.

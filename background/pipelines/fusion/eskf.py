@@ -147,6 +147,7 @@ class ESKF:
         self._last_uwb_residual_rms = 0.0
         self._uwb_accepted = 0
         self._uwb_rejected = 0
+        self._have_imu_attitude = False
         self._last_lever_arm_m = 0.0
         self._last_lever_r_world = np.zeros(3, dtype=float)
         self._last_z_uwb_raw     = np.zeros(2, dtype=float)
@@ -247,6 +248,7 @@ class ESKF:
         self._update_omega_and_turn(q_new, dt_s, current_jerk, omega_world_ev)
         
         self.q = q_new
+        self._have_imu_attitude = True
 
         # Sliding-window safeguard (Rule 3): track how long since the last UWB
         # velocity anchor.  When stale, inflate Q and tighten velocity drag so
@@ -414,6 +416,24 @@ class ESKF:
                 z_tip[1] < -_margin or z_tip[1] > self._board_h + _margin):
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_BOARD_MARGIN_REJECT', 0, False)
+
+        if not self._have_imu_attitude:
+            self._uwb_rejected += 1
+            return self._emit(ts, 'POSITION', 'UWB_WAIT_IMU_INIT', 0, False)
+
+        # First valid UWB lock: snap ESKF position to UWB before normal innovation gating.
+        if self._uwb_accepted == 0:
+            if solve_error <= cfg.uwb.trilat_max_residual:
+                self.p[:] = z_tip
+                self.v[:] = 0.0
+                self._last_innovation_norm = 0.0
+                self._last_K_pos = 1.0
+                self._last_uwb_reset_ts = ts_uwb
+                self._last_z_tip = z_tip.copy()
+                self._last_z_tip_ts = ts_uwb
+                self._uwb_accepted += 1
+                self._clamp_to_board()
+                return self._emit(ts, 'POSITION', 'UWB_BOOTSTRAP', 0, False)
 
         accepted = self._uwb_update(z_tip, p_ref, solve_error, ev.get('uwb_quality'))
         if not accepted:

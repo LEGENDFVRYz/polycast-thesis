@@ -35,6 +35,8 @@ Rules:
   - Consecutive identical (x, y) points are deduped (keeps first timestamp).
 """
 
+import math
+
 from background.pipelines.config import cfg
 
 
@@ -98,7 +100,10 @@ class StrokeReconstructor:
 
     # ── Internals ─────────────────────────────────────────────────────────────
     def _start_stroke(self, sid: int, ev: dict):
-        pt = (float(ev['fused_x']), float(ev['fused_y']), int(ev['ts_hw']))
+        x, y = float(ev['fused_x']), float(ev['fused_y'])
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return
+        pt = (x, y, int(ev['ts_hw']))
         self._current = {
             'stroke_id': sid,
             'points':    [pt],
@@ -109,6 +114,8 @@ class StrokeReconstructor:
     def _append_point(self, ev: dict):
         x  = float(ev['fused_x'])
         y  = float(ev['fused_y'])
+        if not (math.isfinite(x) and math.isfinite(y)):
+            return
         ts = int(ev['ts_hw'])
 
         last_x, last_y, _ = self._current['points'][-1]

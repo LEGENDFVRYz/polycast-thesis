@@ -163,6 +163,7 @@ class ESKF:
 
         # ── dt jitter tracking ──────────────────────────────────────────────
         self._dt_clamps = 0          # cumulative count of dt-jitter clamps
+        self._cov_resets = 0         # cumulative covariance reset events (NaN recovery)
 
         # ── DRAWING_FAST mode tracking ───────────────────────────────────────
         self._fast_arm_count: int   = 0    # consecutive frames at/above speed threshold
@@ -283,8 +284,9 @@ class ESKF:
         F = self._build_F(dt_s)
         Q = self._build_Q(dt_s) * (stale_factor ** 2)
         self.P = F @ self.P @ F.T + Q
-        
+        self._sanitize_covariance()
         self._apply_covariance_floor()
+        self._sanitize_state()
 
         # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
         #    flags the pen as still.
@@ -511,6 +513,13 @@ class ESKF:
         self._last_innovation_norm = float(np.linalg.norm(y))
         self._last_uwb_residual_rms = solve_error
 
+        # Hard reject on large UWB↔IMU position disagreement before it can
+        # destabilise K or P (a clean trilateration can still disagree with
+        # the integrated IMU state after long dead-reckoning).
+        if self._last_innovation_norm > ecfg.innov_hard_reject_m:
+            self._uwb_rejected += 1
+            return False
+
         # --- ADAPTIVE TRUST LOGIC ---
         current_speed = float(np.linalg.norm(self.v))
         is_bad_uwb    = r_scale > 1.05
@@ -545,6 +554,11 @@ class ESKF:
         self._last_K_pos = float(K[0, 0])
 
         dx = K @ y
+        if not np.all(np.isfinite(dx)):
+            return False
+        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
+        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
+        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
         self.p   += dx[0:2]
         self.v   += dx[2:4]
         self.b_a += dx[4:6]
@@ -552,9 +566,10 @@ class ESKF:
         I = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        
+        self._sanitize_covariance()
         self._apply_covariance_floor()
-        
+        self._sanitize_state()
+
         return True
 
     def _interpolate_at(self, ts_uwb: int):
@@ -602,6 +617,35 @@ class ESKF:
 
         for i in [2, 3]:
             self.P[i, i] = max(self.P[i, i], vel_floor)
+
+    def _reset_covariance(self):
+        ecfg = cfg.fusion_eskf
+        diag = np.array([
+            ecfg.p0_pos,  ecfg.p0_pos,
+            ecfg.p0_vel,  ecfg.p0_vel,
+            ecfg.p0_bias, ecfg.p0_bias,
+        ]) ** 2
+        self.P = np.diag(diag)
+        self._cov_resets += 1
+        print(f"[ESKF] P became non-finite — covariance reset (total: {self._cov_resets})")
+
+    def _sanitize_covariance(self):
+        if not np.all(np.isfinite(self.P)):
+            self._reset_covariance()
+            return
+        # Force symmetry to counteract float accumulation drift
+        self.P = 0.5 * (self.P + self.P.T)
+        # Clamp bias-block diagonal — nothing else constrains it when sigma_b_a is tiny
+        for i in [4, 5]:
+            self.P[i, i] = max(1e-10, min(self.P[i, i], 0.25))
+
+    def _sanitize_state(self):
+        if not np.all(np.isfinite(self.b_a)):
+            self.b_a[:] = 0.0
+        if not np.all(np.isfinite(self.v)):
+            self.v[:] = 0.0
+        if not np.all(np.isfinite(self.p)):
+            self.p[:] = np.array([self._board_w * 0.5, self._board_h * 0.5])
 
     # ────────────────────────────────────────────────────────────────────────
     # Filter math
@@ -667,6 +711,11 @@ class ESKF:
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
 
         dx = K @ y                                # 6-vec
+        if not np.all(np.isfinite(dx)):
+            return
+        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
+        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
+        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
         self.p   += dx[0:2]
         self.v   += dx[2:4]
         self.b_a += dx[4:6]
@@ -675,8 +724,9 @@ class ESKF:
         I  = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        
+        self._sanitize_covariance()
         self._apply_covariance_floor()
+        self._sanitize_state()
         
         
     def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
@@ -696,7 +746,12 @@ class ESKF:
         S   = H @ self.P @ H.T + R
         K   = self.P @ H.T @ np.linalg.inv(S)
 
-        dx       = K @ y
+        dx = K @ y
+        if not np.all(np.isfinite(dx)):
+            return
+        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
+        dx[2:4] = np.clip(dx[2:4], -1.50, 1.50)
+        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
         self.p   += dx[0:2]
         self.v   += dx[2:4]
         self.b_a += dx[4:6]
@@ -704,8 +759,9 @@ class ESKF:
         I   = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        
+        self._sanitize_covariance()
         self._apply_covariance_floor()
+        self._sanitize_state()
 
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
@@ -856,6 +912,7 @@ class ESKF:
                 'turn_arm_count':    self._turn_arm_count,
                 'pos_cap_used':      round(self._last_pos_cap_used, 6),
                 'zupt_fires':        self._zupt_fires,
+                'cov_resets':        self._cov_resets,
                 # Mode statistics — counters for per-regime tuning
                 'frames_contact':    self._frames_contact,
                 'frames_air':        self._frames_air,

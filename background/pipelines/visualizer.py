@@ -397,12 +397,14 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 self.latest_fused = fused
                 self._dirty       = True
 
-                if fused.get('stroke_active', False):
-                    self.cur_ink_x.append(fused['fused_x'])
-                    self.cur_ink_y.append(fused['fused_y'])
-                else:
-                    self.air_x.append(fused['fused_x'])
-                    self.air_y.append(fused['fused_y'])
+                fx, fy = fused['fused_x'], fused['fused_y']
+                if math.isfinite(fx) and math.isfinite(fy):
+                    if fused.get('stroke_active', False):
+                        self.cur_ink_x.append(fx)
+                        self.cur_ink_y.append(fy)
+                    else:
+                        self.air_x.append(fx)
+                        self.air_y.append(fy)
 
                 closed = self.rec.process_event(fused)
                 if closed:

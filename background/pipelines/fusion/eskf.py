@@ -226,13 +226,13 @@ class ESKF:
         # fall back to raw sensor-point acc for compatibility with older recorded events.
         acc_src = ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0))
         acc = np.asarray(acc_src, dtype=float)
-        a   = acc - self.b_a
-        self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
-        self.v += a * dt_s
-        # Velocity drag — read from mode table.
-        # Both modes are further scaled by stale_factor when UWB is silent.
+        # Mode table lookup here so acc_scale is available before integration.
         mode_p = (ecfg.modes.drawing if self._prev_stroke_active
                   else ecfg.modes.air)
+        a   = (acc - self.b_a) * mode_p.acc_scale
+        self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
+        self.v += a * dt_s
+        # Velocity drag — further scaled by stale_factor when UWB is silent.
         drag_inv_s = mode_p.drag_inv_s * stale_factor
         self.v *= max(0.0, 1.0 - drag_inv_s * dt_s)
 
@@ -304,9 +304,14 @@ class ESKF:
     def _on_uwb(self, ev: dict, ts: int) -> dict:
         self._advance_clock(ts)
 
-        # Use pos_raw — position.py's EMA would double-smooth what ESKF already manages.
-        # Fall back to pos_clean if raw is absent (shouldn't happen in normal flow).
-        uwb = ev.get('pos_raw') or ev.get('pos_clean')
+        # Prefer the board-clamped, alpha-beta smoothed position so the position
+        # filter's protection actually reaches the Kalman update. Only fall back to
+        # pos_raw when neither mapped_position nor pos_clean is present.
+        mapped = ev.get('mapped_position')
+        if mapped:
+            uwb = (mapped['board_width_x'], mapped['board_height_y'])
+        else:
+            uwb = ev.get('pos_clean') or ev.get('pos_raw')
         if uwb is None:
             return self._emit(ts, 'POSITION', 'UWB_DROPPED', 0, False)
 
@@ -347,7 +352,25 @@ class ESKF:
                 self._uwb_rejected += 1
                 return self._emit(ts, 'POSITION', 'UWB_JUMP_REJECT', 0, False)
 
-        accepted = self._uwb_update(z_tip, p_ref, solve_error)
+        # In air, low-confidence UWB (warning band) provides almost no useful
+        # correction while K_air is already near zero. Rejecting it prevents
+        # the alpha-beta tail from nudging the state toward a bad measurement.
+        quality = ev.get('uwb_quality', {})
+        stroke_active = ev.get('stroke_active', False)
+        if quality.get('low_confidence') and not stroke_active:
+            self._uwb_rejected += 1
+            return self._emit(ts, 'POSITION', 'UWB_LOW_CONF_REJECT', 0, False)
+
+        # Board-margin gate: reject positions that are physically outside the board
+        # with a small tolerance. Catches bad trilateration solves that slip past
+        # the residual threshold after lever-arm correction.
+        _margin = 0.03
+        if (z_tip[0] < -_margin or z_tip[0] > self._board_w + _margin or
+                z_tip[1] < -_margin or z_tip[1] > self._board_h + _margin):
+            self._uwb_rejected += 1
+            return self._emit(ts, 'POSITION', 'UWB_BOARD_MARGIN_REJECT', 0, False)
+
+        accepted = self._uwb_update(z_tip, p_ref, solve_error, ev.get('uwb_quality'))
         if not accepted:
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
@@ -393,7 +416,8 @@ class ESKF:
     def _uwb_update(self,
                     z:           np.ndarray,
                     p_ref:       np.ndarray | None = None,
-                    solve_error: float = 0.0) -> bool:
+                    solve_error: float = 0.0,
+                    uwb_quality: dict | None = None) -> bool:
         """Kalman update with H = [I 0 0].
 
         p_ref        — time-interpolated tip position at UWB ts (Step 4).
@@ -427,7 +451,14 @@ class ESKF:
         mode_p = (ecfg.modes.drawing if self._prev_stroke_active
                   else ecfg.modes.air)
 
-        sigma = ecfg.sigma_uwb * mode_p.sigma_scale
+        quality = uwb_quality or {}
+        uwb_quality_mult = 1.0
+        if quality.get('was_clamped'):
+            uwb_quality_mult *= 4.0
+        if quality.get('low_confidence'):
+            uwb_quality_mult *= 3.0
+
+        sigma = ecfg.sigma_uwb * mode_p.sigma_scale * uwb_quality_mult
 
         # Innovation  y = z − p_ref  (time-aligned) — computed early so direction
         # check can use it before building R.

@@ -76,6 +76,18 @@ class UWBPositionFilter:
             self._vel_x = self._vel_x + (self._beta * err_x) / dt_s
             self._vel_y = self._vel_y + (self._beta * err_y) / dt_s
 
+        # When geometry is bad or the point was clamped, the velocity the
+        # alpha-beta filter learned is unreliable. Decay it so the filter
+        # doesn't coast on a phantom trajectory between UWB corrections.
+        low_confidence = ev.get('low_confidence', False)
+        was_clamped_early = (
+            max(0.0, min(self.board_width,  raw_x)) != raw_x or
+            max(0.0, min(self.board_height, raw_y)) != raw_y
+        )
+        if low_confidence or was_clamped_early:
+            self._vel_x *= 0.2
+            self._vel_y *= 0.2
+
         clean_x, clean_y = self._est_x, self._est_y
 
         self._prev_pos = (clamped_x, clamped_y)
@@ -85,7 +97,7 @@ class UWBPositionFilter:
         # We keep 'pos_clean' untouched so your hardware plotting script doesn't break
         ev['pos_clean']  = (round(clean_x, 4), round(clean_y, 4))
         ev['speed_flag'] = speed_flag
-        
+
         # We add explicitly labeled axes for Module 7 (The Fusion Node)
         ev['mapped_position'] = {
             'board_width_x': round(clean_x, 4),
@@ -93,6 +105,15 @@ class UWBPositionFilter:
             'depth_z': 0.07  # The physical offset of the anchors from the whiteboard
         }
         ev['coordinate_frame'] = 'UWB_BOARD_XY'
+
+        # Quality metadata propagated to ESKF for adaptive R inflation
+        was_clamped = (clamped_x != raw_x) or (clamped_y != raw_y)
+        ev['uwb_quality'] = {
+            'solve_error':    ev.get('solve_error', 0.0),
+            'speed_flag':     speed_flag,
+            'was_clamped':    was_clamped,
+            'low_confidence': ev.get('low_confidence', False),
+        }
         
         return ev
 

@@ -33,7 +33,7 @@ class IMUConfig:
     # original values never fired.  The hard reset (N=20 consecutive samples)
     # still guards against spurious mid-stroke v[:]=0.
     zupt_acc_threshold: float = 0.25   # 0.15 → 0.25
-    zupt_jerk_threshold: float = 200.0  # 32.5 → 200.0
+    zupt_jerk_threshold: float = 120.0  # 32.5 → 200.0
     zupt_min_duration_s: float = 0.05
     zupt_omega_threshold: float = 0.25  # 0.08 → 0.25 rad/s
 
@@ -91,7 +91,7 @@ class UWBConfig:
     drop_speed_outliers: bool = True
     num_anchors: int = 4
     pos_ema_alpha: float = 0.75             # legacy — kept for reference, superseded by pos_alpha
-    trilat_max_residual: float = 0.15
+    trilat_max_residual: float = 0.12
 
     # Alpha-Beta filter (replaces scalar EMA)
     pos_alpha: float = 0.60                 # position correction gain
@@ -163,7 +163,7 @@ class MarkerConfig:
 class FusionModeParams:
     # UWB sigma scale applied on top of sigma_uwb.
     # Lower  → trust UWB more (stronger pull toward measured position).
-    sigma_scale: float      = 1.0
+    sigma_scale: float      = 0.55
 
     # Velocity drag  s⁻¹.  Higher → IMU integration shrinks faster.
     drag_inv_s: float       = 0.4
@@ -180,6 +180,10 @@ class FusionModeParams:
     # Lower in air so AIR_MOVE doesn't artificially inflate P.
     pos_floor: float        = 0.010
 
+    # IMU acceleration scale applied before integration.
+    # Reduce in air to suppress dead-reckoning drift between UWB fixes.
+    acc_scale: float        = 1.0
+
 
 @dataclass(frozen=True)
 class FusionModeTable:
@@ -192,10 +196,11 @@ class FusionModeTable:
     ))
     air: FusionModeParams = field(default_factory=lambda: FusionModeParams(
         sigma_scale=1.6,       # 1.8→1.6: slightly more UWB authority on re-entry
-        drag_inv_s=1.2,        # 0.4→1.2: 3× stronger drag caps air drift between UWB samples
+        drag_inv_s=2.0,        # 1.2→2.0: stronger drag clamps IMU dead-reckoning drift in air
         dir_penalty=3.0,
         jump_speed_max=1.4,    # 1.2→1.4: small/fast strokes legitimately exceed 1.2 m/s briefly
         pos_floor=0.015,       # 0.010→0.015: higher floor in air → more K authority on re-entry
+        acc_scale=0.20,        # suppress IMU integration during air to reduce drift
     ))
     static: FusionModeParams = field(default_factory=lambda: FusionModeParams(
         sigma_scale   = 2.0,    # heavily distrust UWB when pen is still

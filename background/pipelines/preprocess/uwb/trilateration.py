@@ -84,16 +84,19 @@ class UWBSolver:
             rms_error = float(np.sqrt(np.mean(unweighted ** 2)))
             if rms_error > cfg.uwb.trilat_max_residual:
                 return None  # Math converged, but to a garbage location
-            
+
+            low_confidence = rms_error > 0.08  # warning band: 0.08–0.12 m
+
             self._guess = res.x
             self._last_valid_ts = ts
 
             return {
-                'sensor':      'POSITION',
-                'ts_hw':       ev['ts_hw'],
-                'packet_id':   ev['packet_id'],
-                'pos_raw':     (round(raw_x, 4), round(raw_y, 4)),
-                'solve_error': round(rms_error, 6)
+                'sensor':          'POSITION',
+                'ts_hw':           ev['ts_hw'],
+                'packet_id':       ev['packet_id'],
+                'pos_raw':         (round(raw_x, 4), round(raw_y, 4)),
+                'solve_error':     round(rms_error, 6),
+                'low_confidence':  low_confidence,
             }
 
         except Exception:

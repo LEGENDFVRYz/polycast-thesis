@@ -148,6 +148,8 @@ class ESKF:
         self._uwb_accepted = 0
         self._uwb_rejected = 0
         self._last_lever_arm_m = 0.0
+        self._last_lever_r_world = np.zeros(3, dtype=float)
+        self._last_z_uwb_raw     = np.zeros(2, dtype=float)
 
         # ── Adaptive trust tracking ─────────────────────────────────────────
         self._last_z_tip: np.ndarray | None = None   # last accepted tip position (jump gate)
@@ -161,6 +163,11 @@ class ESKF:
 
         # ── dt jitter tracking ──────────────────────────────────────────────
         self._dt_clamps = 0          # cumulative count of dt-jitter clamps
+
+        # ── DRAWING_FAST mode tracking ───────────────────────────────────────
+        self._fast_arm_count: int   = 0    # consecutive frames at/above speed threshold
+        self._fast_burst_count: int = 0    # hold-down counter after trigger fires
+        self._in_fast_mode: bool    = False
 
         # ── Mode statistics (accelerate per-regime tuning) ───────────────────
         self._frames_contact = 0     # CONTACT_DRAWING IMU frames
@@ -189,6 +196,39 @@ class ESKF:
 
     def reset(self):
         self.__init__()
+
+    def _resolve_mode(self):
+        """Return the FusionModeParams for the current filter state.
+
+        DRAWING_FAST arms after drawing_fast_min_frames consecutive frames where
+        tip speed >= drawing_fast_speed_thresh, then holds for drawing_fast_burst_frames
+        additional IMU frames before returning to DRAWING.  This gives IMU a bounded
+        authority window on short fast strokes without letting it drift indefinitely.
+        Resets immediately on pen-up.
+        """
+        ecfg = cfg.fusion_eskf
+        if self._prev_stroke_active:
+            speed = float(np.linalg.norm(self.v))
+            if speed >= ecfg.drawing_fast_speed_thresh:
+                self._fast_arm_count += 1
+            else:
+                self._fast_arm_count = max(0, self._fast_arm_count - 1)
+
+            triggered = self._fast_arm_count >= ecfg.drawing_fast_min_frames
+            if triggered:
+                # Re-arm the burst hold-down every time the trigger condition holds.
+                self._fast_burst_count = ecfg.drawing_fast_burst_frames
+            elif self._fast_burst_count > 0:
+                self._fast_burst_count -= 1
+
+            self._in_fast_mode = self._fast_burst_count > 0
+            if self._in_fast_mode:
+                return ecfg.modes.drawing_fast
+            return ecfg.modes.drawing
+        self._fast_arm_count = 0
+        self._fast_burst_count = 0
+        self._in_fast_mode = False
+        return ecfg.modes.air
 
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
@@ -224,11 +264,13 @@ class ESKF:
         # 1. Nominal state propagation (mid-point integration).
         # Prefer tip-corrected acc (lever-arm kinematics applied in imu.py);
         # fall back to raw sensor-point acc for compatibility with older recorded events.
-        acc_src = ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0))
+        acc_src = (
+            ev.get('acc_board_hp_tip')
+            or ev.get('acc_board_tip')
+            or ev.get('acc_board', (0.0, 0.0))
+        )
         acc = np.asarray(acc_src, dtype=float)
-        # Mode table lookup here so acc_scale is available before integration.
-        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
-                  else ecfg.modes.air)
+        mode_p = self._resolve_mode()
         a   = (acc - self.b_a) * mode_p.acc_scale
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
@@ -330,9 +372,11 @@ class ESKF:
         # Step 6: Lever-arm correction — UWB measures the tag (back of pen),
         # not the tip. Subtract the rotated body-frame offset to get tip position.
         # At perpendicular hold the correction is ~0; at 30° tilt it is ~10 cm.
-        r_board_offset = self._uwb_lever_arm_board(q_ref)
+        r_board_offset, lever_r_world = self._uwb_lever_arm_board(q_ref)
         z_tip = z - r_board_offset
-        self._last_lever_arm_m = float(np.linalg.norm(r_board_offset))
+        self._last_lever_arm_m   = float(np.linalg.norm(r_board_offset))
+        self._last_lever_r_world = lever_r_world
+        self._last_z_uwb_raw     = z.copy()
 
         # Step 5: NLOS-adaptive R — consume trilateration residual.
         solve_error = float(ev.get('solve_error', 0.0))
@@ -341,8 +385,7 @@ class ESKF:
         # limits AND IMU velocity doesn't confirm the fast move.
         # Ceiling is mode-dependent: drawing allows faster legitimate strokes.
         ecfg_j   = cfg.fusion_eskf
-        mode_j   = (ecfg_j.modes.drawing if self._prev_stroke_active
-                    else ecfg_j.modes.air)
+        mode_j   = self._resolve_mode()
         if (self._last_z_tip is not None and self._last_z_tip_ts is not None):
             dt_uwb_j  = max((ts_uwb - self._last_z_tip_ts) / 1_000_000.0, 1e-6)
             uwb_speed = float(np.linalg.norm(z_tip - self._last_z_tip)) / dt_uwb_j
@@ -384,24 +427,27 @@ class ESKF:
         # Phase 3b: UWB-velocity pseudo-measurement (Rule 2 — UWB Sync).
         # Always push to buffer (solve_error stored so bad samples are detectable).
         self._uwb_vel_buf.append((ts_uwb, z_tip.copy(), solve_error))
-        ecfg_v = cfg.fusion_eskf
-        if len(self._uwb_vel_buf) >= 3:
-            (t0, p0, e0), (t1, p1, e1), (t2, p2, e2) = (
-                self._uwb_vel_buf[-3], self._uwb_vel_buf[-2], self._uwb_vel_buf[-1]
-            )
-            # All three samples must have clean geometry.
-            if max(e0, e1, e2) < ecfg_v.sigma_trilat:
-                dt_vel = (t2 - t0) / 1_000_000.0          # span of central difference
-                if 0.02 < dt_vel < 0.5:                   # guard stale / duplicate ts
-                    v_uwb = (p2 - p0) / dt_vel            # central difference at t1
-                    if float(np.linalg.norm(v_uwb)) < 2.0:
-                        # Adaptive sigma: tighter when geometry is cleaner.
-                        e_avg   = (e0 + e1 + e2) / 3.0
-                        ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
-                        sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
-                        self._last_sigma_v_eff = sigma_v
-                        self._velocity_pseudo_update(v_uwb, sigma_v)
-                        self._last_uwb_reset_ts = ts_uwb
+        # Skip velocity anchor during DRAWING_FAST — anchoring v to UWB geometry
+        # would cancel the IMU shape authority the mode is designed to grant.
+        if not self._in_fast_mode:
+            ecfg_v = cfg.fusion_eskf
+            if len(self._uwb_vel_buf) >= 3:
+                (t0, p0, e0), (t1, p1, e1), (t2, p2, e2) = (
+                    self._uwb_vel_buf[-3], self._uwb_vel_buf[-2], self._uwb_vel_buf[-1]
+                )
+                # All three samples must have clean geometry.
+                if max(e0, e1, e2) < ecfg_v.sigma_trilat:
+                    dt_vel = (t2 - t0) / 1_000_000.0          # span of central difference
+                    if 0.02 < dt_vel < 0.5:                   # guard stale / duplicate ts
+                        v_uwb = (p2 - p0) / dt_vel            # central difference at t1
+                        if float(np.linalg.norm(v_uwb)) < 2.0:
+                            # Adaptive sigma: tighter when geometry is cleaner.
+                            e_avg   = (e0 + e1 + e2) / 3.0
+                            ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
+                            sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
+                            self._last_sigma_v_eff = sigma_v
+                            self._velocity_pseudo_update(v_uwb, sigma_v)
+                            self._last_uwb_reset_ts = ts_uwb
 
         self._clamp_to_board()
 
@@ -447,9 +493,7 @@ class ESKF:
         H[0, 0] = 1.0
         H[1, 1] = 1.0
 
-        # Mode table lookup — all per-mode params come from here.
-        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
-                  else ecfg.modes.air)
+        mode_p = self._resolve_mode()
 
         quality = uwb_quality or {}
         uwb_quality_mult = 1.0
@@ -546,8 +590,7 @@ class ESKF:
 
     def _apply_covariance_floor(self):
         ecfg  = cfg.fusion_eskf
-        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
-                  else ecfg.modes.air)
+        mode_p = self._resolve_mode()
         pos_floor = mode_p.pos_floor ** 2
         pos_cap   = (mode_p.pos_floor * ecfg.pos_cap_mult) ** 2
         vel_floor = ecfg.vel_floor ** 2
@@ -728,21 +771,22 @@ class ESKF:
 
         self._prev_quat = q_new.copy()
 
-    def _uwb_lever_arm_board(self, q: np.ndarray) -> np.ndarray:
-        """Return the 2D board-plane offset from tip to UWB tag.
+    def _uwb_lever_arm_board(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return (2D board-plane offset, full 3-vector r_world) from tip to UWB tag.
 
-        r_UWB_body (along pen z-axis) is rotated to world frame via q, then
-        projected onto the board plane defined by cfg.imu.board_axes.
-        For a perpendicular pen the offset is ~0; for a tilted pen it is real.
+        r_UWB_body is rotated to world frame via q, then projected onto the board
+        plane defined by cfg.imu.board_axes.  For a perpendicular pen the 2D offset
+        is ~0; for a tilted pen it is real.  The full r_world is returned for
+        diagnostics (log lever_r_world to verify perpendicular-hold assumption).
         """
-        r_body = np.asarray(cfg.marker.r_uwb_body_m, dtype=float)
-        R      = _q_to_rotation(q)
+        r_body  = np.asarray(cfg.marker.r_uwb_body_m, dtype=float)
+        R       = _q_to_rotation(q)
         r_world = R @ r_body
 
         axis_map = {'x': 0, 'y': 1, 'z': 2}
         ax0 = axis_map[cfg.imu.board_axes[0]]
         ax1 = axis_map[cfg.imu.board_axes[1]]
-        return np.array([r_world[ax0], r_world[ax1]], dtype=float)
+        return np.array([r_world[ax0], r_world[ax1]], dtype=float), r_world
 
     def _advance_clock(self, ts: int) -> float:
         """Returns dt (s) since the previous event; handles gaps and init."""
@@ -788,11 +832,16 @@ class ESKF:
                 'uwb_residual_rms':  self._last_uwb_residual_rms,
                 'omega_in_plane':    self._omega_in_plane_last,
                 'turn_flag':         self._turn_flag_last,
+                'drawing_fast':      self._in_fast_mode,
+                'fast_arm_count':    self._fast_arm_count,
+                'fast_burst_count':  self._fast_burst_count,
                 'b_a':               (float(self.b_a[0]), float(self.b_a[1])),
                 'uwb_accepted':      self._uwb_accepted,
                 'uwb_rejected':      self._uwb_rejected,
-                # Lever-arm diagnostics (updated on every UWB frame; 0 on IMU frames)
+                # Lever-arm diagnostics (updated on every UWB frame; 0/zeros on IMU frames)
                 'lever_arm_m':       self._last_lever_arm_m,
+                'lever_r_world':     tuple(float(v) for v in self._last_lever_r_world),
+                'z_uwb_raw':         tuple(float(v) for v in self._last_z_uwb_raw),
                 # Sliding-window diagnostics
                 'uwb_stale_s':       round(self._last_stale_s, 4),
                 'stale_factor':      round(self._last_stale_factor, 4),

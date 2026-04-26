@@ -25,13 +25,17 @@ class SerialConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class IMUConfig:
-    sample_rate_hz: float = 200.0
+    sample_rate_hz: float = 180.0
 
     # ZUPT
-    zupt_acc_threshold: float = 0.15
-    zupt_jerk_threshold: float = 32.5
+    # Thresholds raised for fast writing regime (abc4/5/6): median jerk is
+    # 600–760 m/s³ and ω rarely drops below 0.08 rad/s mid-stroke, so the
+    # original values never fired.  The hard reset (N=20 consecutive samples)
+    # still guards against spurious mid-stroke v[:]=0.
+    zupt_acc_threshold: float = 0.25   # 0.15 → 0.25
+    zupt_jerk_threshold: float = 200.0  # 32.5 → 200.0
     zupt_min_duration_s: float = 0.05
-    zupt_omega_threshold: float = 0.08  # rad/s — gyro stillness gate (~4.6 dps)
+    zupt_omega_threshold: float = 0.25  # 0.08 → 0.25 rad/s
 
     # Contact / force
     force_contact_threshold: float = 100.0
@@ -151,74 +155,132 @@ class MarkerConfig:
 
 
 # ------------------------------------------------------------------------
+# FUSION — per-mode parameter table
+# One row per operating mode: DRAWING / AIR / STATIC.
+# All conditional `if drawing:` branches in the filter read from here.
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class FusionModeParams:
+    # UWB sigma scale applied on top of sigma_uwb.
+    # Lower  → trust UWB more (stronger pull toward measured position).
+    sigma_scale: float      = 1.0
+
+    # Velocity drag  s⁻¹.  Higher → IMU integration shrinks faster.
+    drag_inv_s: float       = 0.4
+
+    # Direction-disagreement penalty multiplier on sigma.
+    # Lower during drawing — handwriting has legitimate backward curves.
+    dir_penalty: float      = 3.0
+
+    # UWB jump-gate ceiling (m/s implied tip speed).
+    # Higher during drawing — fast strokes are physically plausible.
+    jump_speed_max: float   = 1.2
+
+    # Position covariance floor (m std).
+    # Lower in air so AIR_MOVE doesn't artificially inflate P.
+    pos_floor: float        = 0.010
+
+
+@dataclass(frozen=True)
+class FusionModeTable:
+    drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
+        sigma_scale=0.55,      # 0.42→0.55: pulls K off 0.50 ceiling toward 0.12–0.22 target
+        drag_inv_s=1.15,
+        dir_penalty=1.8,
+        jump_speed_max=1.8,
+        pos_floor=0.020,       # 0.025→0.020: lets P shrink so K is floor-driven less often
+    ))
+    air: FusionModeParams = field(default_factory=lambda: FusionModeParams(
+        sigma_scale=1.6,       # 1.8→1.6: slightly more UWB authority on re-entry
+        drag_inv_s=1.2,        # 0.4→1.2: 3× stronger drag caps air drift between UWB samples
+        dir_penalty=3.0,
+        jump_speed_max=1.4,    # 1.2→1.4: small/fast strokes legitimately exceed 1.2 m/s briefly
+        pos_floor=0.015,       # 0.010→0.015: higher floor in air → more K authority on re-entry
+    ))
+    static: FusionModeParams = field(default_factory=lambda: FusionModeParams(
+        sigma_scale   = 2.0,    # heavily distrust UWB when pen is still
+        drag_inv_s    = 0.4,
+        dir_penalty   = 3.0,
+        jump_speed_max= 1.2,
+        pos_floor     = 0.010,
+    ))
+
+
+# ------------------------------------------------------------------------
 # FUSION (ESKF)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
-    # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
-    # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 1.1      # m/s² (was 0.15)
-    # sigma_b_a tightened further: prevents b_a from absorbing IMU/UWB disagreement
-    # during CONTACT_DRAWING where ZUPT never fires (was 0.002, was 0.005).
-    sigma_b_a: float         = 0.0001    # m/s²·√Hz
-    sigma_zupt: float        = 0.005     # unchanged — already aggressive
+    sigma_a: float           = 2.2      # m/s²
+    sigma_b_a: float         = 0.0001   # m/s²·√Hz
+    sigma_zupt: float        = 0.005
 
     # ── Measurement noise ─────────────────────────────────────────────────
-    # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
-    # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
-    sigma_uwb: float         = 0.035      # m (was 0.12)
-    sigma_trilat: float      = 0.09      # m (was 0.04 — widen velocity-pseudo gate to anchor IMU vel more often)
+    sigma_uwb: float         = 0.06     # m — base; mode table scales this
+    sigma_trilat: float      = 0.09     # m — velocity-pseudo gate
 
-    # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
-    k_nlos: float            = 1.5       # (was 0.00)
-    r_scale_max: float       = 25.0      # (was 100.0 — tighter ceiling, avoids completely freezing updates)
-
-    # Hard-reject threshold tightened back to intended value.
-    hard_reject_mult: float  = 7.5       # (was 15.0 — comment said 6.0, now actually enforced)
+    # NLOS-adaptive R
+    k_nlos: float            = 1.5
+    r_scale_max: float       = 25.0
+    hard_reject_mult: float  = 7.5
 
     # ── Turn detection ────────────────────────────────────────────────────
-    # Threshold lowered slightly: cleaner acc signal means real corners are
-    # detectable earlier without false positives from noise.
-    turn_omega_threshold: float = 0.5    # rad/s (was 1.85 — ~86 dps)
-    turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
-    turn_n_post: int            = 2      # unchanged
+    turn_omega_threshold: float = 0.5   # rad/s
+    turn_k_q: float             = 8.0
+    turn_n_post: int            = 5
 
     # ── Ring buffer ───────────────────────────────────────────────────────
-    # Enlarged for 200 Hz IMU: covers a ~0.3 s window for robust UWB time-interpolation.
-    state_buffer_size: int      = 75     # (was 20)
-
-    # ── Velocity drag ─────────────────────────────────────────────────────
-    # Reduced: BUG-1 lag was masking the need for heavy drag. With near-raw
-    # Path-A acc, lighter drag still suppresses lever-arm runaway without
-    # artificially killing real pen velocity.
-    velocity_drag_inv_s: float  = 2.5   # s⁻¹ (was 5.0)
+    state_buffer_size: int      = 75
 
     # ── ITrackU-style hybrid reset (Phase 3) ─────────────────────────────
-    # 3a: after this many consecutive static IMU samples, hard-zero velocity.
-    # At 200 Hz, 20 samples = 100 ms of confirmed stillness.
     zupt_hard_reset_n: int     = 20
 
-    # 3b: velocity pseudo-measurement noise when UWB is pristine.
-    # Applied when solve_error < sigma_trilat (reliable trilateration).
-    sigma_uwb_vel: float       = 0.05    # m/s (was 0.08 — tighter now that gate is wider)
-    # Floor scale for adaptive sigma: at solve_error→0, sigma shrinks to min_scale * sigma_uwb_vel.
-    sigma_uwb_vel_min_scale: float = 0.2  # dimensionless (0.2 → 0.01 m/s minimum)
+    # 3b: velocity pseudo-measurement noise
+    sigma_uwb_vel: float           = 0.05
+    sigma_uwb_vel_min_scale: float = 0.2
 
-    # 3c: sigma_uwb scale factor while pen is actively drawing.
-    # Pen physically constrained to board → trust UWB more during strokes.
-    contact_sigma_scale: float = 1.25    # 30 % tighter (multiplicative)
+    # ── Sliding-window safeguard (Rule 3) ─────────────────────────────────
+    uwb_window_s: float     = 0.30
+    uwb_stale_k: float      = 2.0
+    uwb_stale_max_k: float  = 5.0
 
-    # ── Sliding-window safeguard (Rule 3) ────────────────────────────────────
-    # Bounds how long IMU dead-reckoning runs without a UWB velocity anchor.
-    # After uwb_window_s of UWB silence, Q inflates and velocity drag increases.
-    uwb_window_s: float     = 0.30   # s — matches paper's sub-cm threshold (t < 0.3 s)
-    uwb_stale_k: float      = 2.0    # ramp slope per window-length of over-run
-    uwb_stale_max_k: float  = 5.0    # max stale factor (Q inflates ≤25×, drag ≤5×)
+    # ── Innovation direction gate (mode-independent thresholds) ───────────
+    dir_check_v_min: float      = 0.03  # m/s
+    dir_check_y_min: float      = 0.02  # m
+    dir_check_cos_thresh: float = -0.3  # ≈107°
+
+    # ── UWB jump gate (mode-independent IMU confirmation threshold) ───────
+    uwb_jump_imu_speed_min: float = 0.5  # m/s
+
+    # ── Velocity floor ────────────────────────────────────────────────────
+    vel_floor: float = 0.08             # m/s std — same across all modes
+
+    # ── Stroke-end hard-reset ─────────────────────────────────────────────
+    stroke_end_v_decay: float     = 0.0
+    stroke_end_p_vel_scale: float = 0.5
+
+    # ── dt jitter clamp ───────────────────────────────────────────────────
+    # IMU timestamps occasionally spike 8–10× nominal (30+ ms at 180 Hz).
+    # Clamping to N× nominal bounds dead-reckoning error per spike to O(dt_max²).
+    imu_dt_max_mult: float = 3.0
+
+    # ── Turn gate ─────────────────────────────────────────────────────────
+    # Raised from hardcoded 800 m/s³ — fast writing has median jerk 600–760 m/s³
+    # so the old threshold was effectively always tripped.
+    turn_jerk_threshold: float = 1500.0
+    turn_arm_n: int            = 3       # consecutive samples before TURN arms
+
+    # ── Position covariance cap ───────────────────────────────────────────
+    # Prevents K≈1 snap on first UWB after long pen-up; cap = mult × pos_floor std
+    pos_cap_mult: float = 6.0
+
+    # ── Per-mode parameter table ──────────────────────────────────────────
+    modes: FusionModeTable = field(default_factory=FusionModeTable)
 
     # ── Initial covariance ────────────────────────────────────────────────
-    p0_pos: float    = 0.20
-    p0_vel: float    = 0.10
+    p0_pos: float    = 0.35
+    p0_vel: float    = 0.25
     p0_bias: float   = 0.05
 
 

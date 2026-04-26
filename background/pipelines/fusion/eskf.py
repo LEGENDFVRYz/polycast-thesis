@@ -117,6 +117,7 @@ class ESKF:
         # ── Step-7 turn tracking ────────────────────────────────────────────
         self._prev_quat: np.ndarray | None = None
         self._turn_cooldown = 0
+        self._turn_arm_count = 0       # consecutive samples meeting turn+jerk gate
         self._omega_in_plane_last = 0.0
         self._turn_flag_last = False
 
@@ -147,6 +148,26 @@ class ESKF:
         self._uwb_accepted = 0
         self._uwb_rejected = 0
         self._last_lever_arm_m = 0.0
+
+        # ── Adaptive trust tracking ─────────────────────────────────────────
+        self._last_z_tip: np.ndarray | None = None   # last accepted tip position (jump gate)
+        self._last_z_tip_ts: int | None = None        # timestamp of _last_z_tip
+        self._uwb_jump_rejected = 0                   # cumulative jump-gate rejects
+        self._last_dir_factor: float = 1.0            # last direction-disagreement penalty
+        self._last_pos_floor_used: float = 0.025 ** 2 # last position floor value (m²)
+        self._last_pos_cap_used: float = (0.025 * 6.0) ** 2  # last position cap value (m²)
+        self._dir_penalty_count = 0                   # frames where dir_factor > 1
+        self._zupt_fires = 0                           # cumulative _zupt_update invocations
+
+        # ── dt jitter tracking ──────────────────────────────────────────────
+        self._dt_clamps = 0          # cumulative count of dt-jitter clamps
+
+        # ── Mode statistics (accelerate per-regime tuning) ───────────────────
+        self._frames_contact = 0     # CONTACT_DRAWING IMU frames
+        self._frames_air = 0         # AIR_MOVE IMU frames
+        self._frames_static = 0      # IDLE / CONTACT_STATIC IMU frames
+        self._k_contact_sum = 0.0    # sum of K_pos_diag during contact frames
+        self._k_air_sum = 0.0        # sum of K_pos_diag during air frames
 
         self._board_w = bx
         self._board_h = by
@@ -208,8 +229,11 @@ class ESKF:
         a   = acc - self.b_a
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
-        # Velocity drag — scaled by stale_factor when UWB has been silent too long.
-        drag_inv_s = ecfg.velocity_drag_inv_s * stale_factor
+        # Velocity drag — read from mode table.
+        # Both modes are further scaled by stale_factor when UWB is silent.
+        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
+                  else ecfg.modes.air)
+        drag_inv_s = mode_p.drag_inv_s * stale_factor
         self.v *= max(0.0, 1.0 - drag_inv_s * dt_s)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
@@ -217,6 +241,8 @@ class ESKF:
         F = self._build_F(dt_s)
         Q = self._build_Q(dt_s) * (stale_factor ** 2)
         self.P = F @ self.P @ F.T + Q
+        
+        self._apply_covariance_floor()
 
         # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
         #    flags the pen as still.
@@ -227,17 +253,35 @@ class ESKF:
             # b_a is deliberately kept so bias convergence is not disrupted.
             self._zupt_hard_count += 1
             if self._zupt_hard_count >= cfg.fusion_eskf.zupt_hard_reset_n:
-                self.v[:] = 0.0
+                self.v[:] = 0
         else:
             self._zupt_hard_count = 0
 
-        # 4. Contact rising-edge soft ZUPT: tip just pressed on board →
-        #    tip velocity should be near zero (pen end may still wiggle, but
-        #    the tip is constrained). Looser sigma than normal ZUPT.
+        # 4. Contact edge handling.
+        #    Rising edge (inactive → active): soft ZUPT — tip velocity near zero.
+        #    Falling edge (active → inactive): damp lingering momentum so it
+        #    doesn't leak into the next stroke.
         stroke_active_now = bool(ev.get('stroke_active', False))
         if stroke_active_now and not self._prev_stroke_active:
             self._zupt_soft_update(sigma=0.05)
+        elif (not stroke_active_now) and self._prev_stroke_active:
+            ecfg_se = cfg.fusion_eskf
+            self.v *= ecfg_se.stroke_end_v_decay
+            self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
+            self.P[3, 3] *= ecfg_se.stroke_end_p_vel_scale
+            self._apply_covariance_floor()
         self._prev_stroke_active = stroke_active_now
+
+        # Mode statistics — accumulate per-frame counters for tuning diagnostics.
+        stroke_state = ev.get('stroke_state', 'UNKNOWN')
+        if stroke_state == 'CONTACT_DRAWING':
+            self._frames_contact += 1
+            self._k_contact_sum  += self._last_K_pos
+        elif stroke_state == 'AIR_MOVE':
+            self._frames_air += 1
+            self._k_air_sum  += self._last_K_pos
+        else:
+            self._frames_static += 1
 
         # Snapshot for UWB time interpolation (Step 4 consumes this).
         self._state_buf.append((ts, self.p.copy(), self.v.copy(), self.q.copy()))
@@ -247,7 +291,7 @@ class ESKF:
         return self._emit(
             ts       = ts,
             source   = 'IMU',
-            state    = ev.get('stroke_state', 'UNKNOWN'),
+            state    = stroke_state,
             sid      = ev.get('stroke_id', 0),
             active   = ev.get('stroke_active', False),
         )
@@ -288,6 +332,21 @@ class ESKF:
         # Step 5: NLOS-adaptive R — consume trilateration residual.
         solve_error = float(ev.get('solve_error', 0.0))
 
+        # UWB jump gate: reject when UWB-implied tip speed far exceeds physical pen
+        # limits AND IMU velocity doesn't confirm the fast move.
+        # Ceiling is mode-dependent: drawing allows faster legitimate strokes.
+        ecfg_j   = cfg.fusion_eskf
+        mode_j   = (ecfg_j.modes.drawing if self._prev_stroke_active
+                    else ecfg_j.modes.air)
+        if (self._last_z_tip is not None and self._last_z_tip_ts is not None):
+            dt_uwb_j  = max((ts_uwb - self._last_z_tip_ts) / 1_000_000.0, 1e-6)
+            uwb_speed = float(np.linalg.norm(z_tip - self._last_z_tip)) / dt_uwb_j
+            imu_speed = float(np.linalg.norm(self.v))
+            if uwb_speed > mode_j.jump_speed_max and imu_speed < ecfg_j.uwb_jump_imu_speed_min:
+                self._uwb_jump_rejected += 1
+                self._uwb_rejected += 1
+                return self._emit(ts, 'POSITION', 'UWB_JUMP_REJECT', 0, False)
+
         accepted = self._uwb_update(z_tip, p_ref, solve_error)
         if not accepted:
             self._uwb_rejected += 1
@@ -296,6 +355,8 @@ class ESKF:
         # Any accepted UWB position fix keeps the sliding-window clock alive,
         # even when geometry isn't clean enough for a velocity pseudo-update.
         self._last_uwb_reset_ts = ts_uwb
+        self._last_z_tip = z_tip.copy()
+        self._last_z_tip_ts = ts_uwb
 
         # Phase 3b: UWB-velocity pseudo-measurement (Rule 2 — UWB Sync).
         # Always push to buffer (solve_error stored so bad samples are detectable).
@@ -362,36 +423,47 @@ class ESKF:
         H[0, 0] = 1.0
         H[1, 1] = 1.0
 
-        sigma = ecfg.sigma_uwb
-        # Phase 3c: pen physically on the board → trust UWB more during active strokes.
-        if self._prev_stroke_active:
-            sigma *= ecfg.contact_sigma_scale
-        
-        # --- ADAPTIVE TRUST LOGIC ---
-        current_speed = float(np.linalg.norm(self.v)) # Speed from IMU (m/s)
-        is_bad_uwb = r_scale > 1.05                    # UWB geometry is degrading
-        is_fast_move = current_speed > 0.08            # Pen moving faster than 40 cm/s
-        
-        if not is_bad_uwb:
-            # Good UWB: Keep standard tight noise (90% UWB / 10% IMU)
-            adaptive_multiplier = 1.0
-        else:
-            if is_fast_move:
-                # Bad UWB + Fast: Penalize UWB. Glide on IMU momentum (25% UWB / 75% IMU)
-                adaptive_multiplier = 4.0 
-            else:
-                # Bad UWB + Slow: Moderately penalize UWB. (60% UWB / 40% IMU)
-                adaptive_multiplier = 1.8 
+        # Mode table lookup — all per-mode params come from here.
+        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
+                  else ecfg.modes.air)
 
-        # Apply the multiplier to the Measurement Noise Matrix (R)
-        R = ((sigma * adaptive_multiplier) ** 2) * r_scale * np.eye(2)
-        # ----------------------------
+        sigma = ecfg.sigma_uwb * mode_p.sigma_scale
 
-        # Innovation  y = z − p_ref  (time-aligned)
+        # Innovation  y = z − p_ref  (time-aligned) — computed early so direction
+        # check can use it before building R.
         p_nom = p_ref if p_ref is not None else self.p
         y = z - p_nom
         self._last_innovation_norm = float(np.linalg.norm(y))
         self._last_uwb_residual_rms = solve_error
+
+        # --- ADAPTIVE TRUST LOGIC ---
+        current_speed = float(np.linalg.norm(self.v))
+        is_bad_uwb    = r_scale > 1.05
+        is_fast_move  = current_speed > 0.08
+
+        if not is_bad_uwb:
+            adaptive_multiplier = 1.0
+        elif is_fast_move:
+            adaptive_multiplier = 4.0
+        else:
+            adaptive_multiplier = 1.8
+
+        # Direction-disagreement gate — penalty comes from mode table.
+        # Relaxed during drawing (handwriting has legitimate backward curves).
+        v_norm = current_speed
+        y_norm = self._last_innovation_norm
+        dir_factor = 1.0
+        if v_norm > ecfg.dir_check_v_min and y_norm > ecfg.dir_check_y_min:
+            cosang = float(np.dot(self.v, y) / (v_norm * y_norm))
+            if cosang < ecfg.dir_check_cos_thresh:
+                dir_factor = mode_p.dir_penalty
+        adaptive_multiplier *= dir_factor
+        self._last_dir_factor = dir_factor
+        if dir_factor > 1.0:
+            self._dir_penalty_count += 1
+
+        R = ((sigma * adaptive_multiplier) ** 2) * r_scale * np.eye(2)
+        # ----------------------------
 
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
@@ -405,6 +477,9 @@ class ESKF:
         I = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        
+        self._apply_covariance_floor()
+        
         return True
 
     def _interpolate_at(self, ts_uwb: int):
@@ -437,6 +512,22 @@ class ESKF:
 
         # ts_uwb is newer than all buffered states — caller uses current p.
         return None
+
+    def _apply_covariance_floor(self):
+        ecfg  = cfg.fusion_eskf
+        mode_p = (ecfg.modes.drawing if self._prev_stroke_active
+                  else ecfg.modes.air)
+        pos_floor = mode_p.pos_floor ** 2
+        pos_cap   = (mode_p.pos_floor * ecfg.pos_cap_mult) ** 2
+        vel_floor = ecfg.vel_floor ** 2
+        self._last_pos_floor_used = pos_floor
+        self._last_pos_cap_used   = pos_cap
+
+        for i in [0, 1]:
+            self.P[i, i] = min(max(self.P[i, i], pos_floor), pos_cap)
+
+        for i in [2, 3]:
+            self.P[i, i] = max(self.P[i, i], vel_floor)
 
     # ────────────────────────────────────────────────────────────────────────
     # Filter math
@@ -484,6 +575,7 @@ class ESKF:
 
     def _zupt_update(self):
         """Kalman update for the zero-velocity pseudo-measurement (z = 0)."""
+        self._zupt_fires += 1
         self._zupt_soft_update(sigma=cfg.fusion_eskf.sigma_zupt)
 
     def _zupt_soft_update(self, sigma: float):
@@ -509,7 +601,10 @@ class ESKF:
         I  = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-
+        
+        self._apply_covariance_floor()
+        
+        
     def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
         """Kalman update for a UWB-derived velocity pseudo-measurement.
 
@@ -535,6 +630,8 @@ class ESKF:
         I   = np.eye(6)
         IKH = I - K @ H
         self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        
+        self._apply_covariance_floor()
 
     # ────────────────────────────────────────────────────────────────────────
     # Helpers
@@ -579,13 +676,18 @@ class ESKF:
         else:
             self._omega_in_plane_last = 0.0
 
-        # Turn detection: corner only when turning fast AND jerk is high.
-        # Uses raw body-frame jerk (wrist whip) — deliberately NOT the
-        # tip-corrected value so rotational dynamics still arm the gate.
+        # Turn detection: corner only when turning fast AND jerk is high,
+        # sustained for turn_arm_n consecutive samples.  The arm counter
+        # de-noises single-sample vibration spikes that plagued fast writing
+        # (median jerk 600–760 m/s³ was tripping the old hardcoded 800 threshold).
         is_turning = self._omega_in_plane_last > ecfg.turn_omega_threshold
-        is_jerky   = current_jerk > 800.0
+        is_jerky   = current_jerk > ecfg.turn_jerk_threshold
         if is_turning and is_jerky:
-            self._turn_cooldown = ecfg.turn_n_post
+            self._turn_arm_count += 1
+            if self._turn_arm_count >= ecfg.turn_arm_n:
+                self._turn_cooldown = ecfg.turn_n_post
+        else:
+            self._turn_arm_count = max(0, self._turn_arm_count - 1)
 
         if self._turn_cooldown > 0:
             self._turn_flag_last = True
@@ -613,15 +715,22 @@ class ESKF:
 
     def _advance_clock(self, ts: int) -> float:
         """Returns dt (s) since the previous event; handles gaps and init."""
+        dt_nom = 1.0 / cfg.imu.sample_rate_hz
         if self.last_ts is None:
             self.last_ts = ts
-            return 1.0 / cfg.imu.sample_rate_hz
+            return dt_nom
 
         dt_s = (ts - self.last_ts) / 1_000_000.0
         self.last_ts = ts
         if dt_s <= 0.0 or dt_s > 0.5:
             # Monotonicity / long-gap guard: treat as nominal step.
-            return 1.0 / cfg.imu.sample_rate_hz
+            return dt_nom
+        # Soft cap: IMU timestamps can spike 8–10× nominal (hardware jitter).
+        # Clamping prevents 0.5·a·dt² from blowing up on those frames.
+        dt_max = cfg.fusion_eskf.imu_dt_max_mult * dt_nom
+        if dt_s > dt_max:
+            self._dt_clamps += 1
+            return dt_max
         return dt_s
 
     def _clamp_to_board(self):
@@ -657,6 +766,26 @@ class ESKF:
                 'uwb_stale_s':       round(self._last_stale_s, 4),
                 'stale_factor':      round(self._last_stale_factor, 4),
                 'sigma_v_eff':       round(self._last_sigma_v_eff, 5),
+                # Adaptive trust diagnostics
+                'uwb_jump_rejected': self._uwb_jump_rejected,
+                'dir_factor':        round(self._last_dir_factor, 3),
+                'dir_penalty_count': self._dir_penalty_count,
+                'pos_floor_used':    round(self._last_pos_floor_used, 6),
+                # New diagnostics (abc4/5/6 regression fixes)
+                'dt_clamps':         self._dt_clamps,
+                'turn_arm_count':    self._turn_arm_count,
+                'pos_cap_used':      round(self._last_pos_cap_used, 6),
+                'zupt_fires':        self._zupt_fires,
+                # Mode statistics — counters for per-regime tuning
+                'frames_contact':    self._frames_contact,
+                'frames_air':        self._frames_air,
+                'frames_static':     self._frames_static,
+                'avg_K_contact':     round(
+                    self._k_contact_sum / self._frames_contact
+                    if self._frames_contact > 0 else 0.0, 5),
+                'avg_K_air':         round(
+                    self._k_air_sum / self._frames_air
+                    if self._frames_air > 0 else 0.0, 5),
             },
         }
 

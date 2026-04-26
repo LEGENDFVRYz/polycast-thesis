@@ -71,7 +71,7 @@ def analyse(csv_path: Path, force_contact: bool = False) -> LayerResult:
         # Diagnostic override: make ForceContactDetector always report contact=1
         # so LIFTED_VEL_DAMP never fires. Isolates the hover-damping hypothesis.
         _orig_contact = engine._contact.process
-        engine._contact.process = lambda f: (1, _orig_contact(f)[1])
+        engine._contact.process = lambda f, ts=None, dt=None: (1, _orig_contact(f, ts=ts, dt=dt)[1])
     imu_pre = IMUPreprocessor()
     uwb_pre = UWBPreprocessor(offsets=tuple(UWB_OFFSETS))
 

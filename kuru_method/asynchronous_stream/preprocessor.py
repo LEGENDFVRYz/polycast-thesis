@@ -26,6 +26,18 @@ IMUPreprocessor:
 import numpy as np
 from collections import deque
 
+from config import UWB_HZ
+
+# Visualisation-path median window expressed in seconds and translated into
+# samples via RATE_PROFILE.UWB_HZ (Priority 1). 0.7 s @ ~50 Hz = 35 samples,
+# matching the previous hardcoded value while staying invariant to rate
+# changes.
+_VIS_SPIKE_WINDOW_S = 0.70
+# AnchorQualityTracker rolling-variance window. 1.5 s of UWB samples is long
+# enough to characterise an anchor's noise floor without smoothing across a
+# whole writing stroke.
+_QUALITY_WINDOW_S   = 1.50
+
 
 # -------------------------------------------------------------------------
 #  PER-ANCHOR QUALITY TRACKER
@@ -35,52 +47,85 @@ from collections import deque
 # -------------------------------------------------------------------------
 class AnchorQualityTracker:
     """
-    Maintains a rolling variance window and an expected-distance
-    prediction from the last solved position.  Combines both into a
-    scalar quality weight in [0.1, 1.0]:
-        1.0  ->  clean LOS, low variance, consistent with prediction
-        0.1  ->  NLOS suspect, high variance or large jump
+    Per-anchor NLOS quality (Priority 3 — residual-based variance).
+
+    The previous design scored an anchor by the variance of its raw range
+    over a rolling window. That penalised fast strokes the same way it
+    penalised genuine multipath: a clean anchor watching a 1 m/s pen
+    looked just as "noisy" as a flapping anchor on a stationary marker.
+
+    The fix is to compute variance over the *residual* `r = raw − pred`,
+    where `pred = ‖p_post − a_i‖` from the most recent EKF posterior.
+    Real motion shows up symmetrically in raw and pred and cancels in the
+    residual, while genuine multipath / NLOS does not.
+
+    During cold-start (before the EKF has a posterior) we fall back to
+    raw-range variance — labelled in `last_used_metric` so verifiers can
+    audit the regime.
+
+    Returns a scalar weight in [_MIN_WEIGHT, 1.0]:
+        1.0  ->  clean LOS, low residual variance, small innovation
+        0.05 ->  NLOS suspect, high residual variance or large jump
     """
 
     # Tuning constants
-    _VAR_SCALE    = 120.0  # sigma^2 penalty slope (120 -> weight ~ 0.45 at sigma^2=0.01 m^2)
-    _INNOV_SIGMA  = 0.08   # Innovation sigma (m); 8 cm -> half-weight at innovation = 8 cm
-    _MIN_WEIGHT   = 0.05   # Floor — near-zero gain for chronically bad anchors
+    # _VAR_SCALE retuned to residual scale (LOS residual sigma ~ 0.05 m
+    # gives variance ~ 0.0025 m^2 -> weight ~ 0.77; multipath bursts at
+    # sigma ~ 0.20 m give variance ~ 0.04 -> weight ~ 0.17).
+    _VAR_SCALE    = 120.0
+    _INNOV_SIGMA  = 0.08   # innovation sigma (m); half-weight at |innov|=8 cm
+    _MIN_WEIGHT   = 0.05   # floor — near-zero gain for chronically bad anchors
 
-    def __init__(self, window: int = 75):
-        self._window    = deque(maxlen=window)
-        self._predicted = None          # Expected distance fed back from FusionEngine
+    def __init__(self, window: int | None = None):
+        if window is None:
+            window = max(8, int(round(_QUALITY_WINDOW_S * UWB_HZ)))
+        # Two parallel windows: one for residuals (used when we have a
+        # prediction), one for raw (cold-start fallback). Same length.
+        self._resid_buf = deque(maxlen=window)
+        self._raw_buf   = deque(maxlen=window)
+        self._predicted = None          # latest predicted distance (m)
+        # Diagnostic — which metric drove the last weight() call.
+        self.last_used_metric = 'cold_start_raw'
 
     # -- public API --------------------------------------------------------
 
     def push(self, distance: float) -> None:
-        self._window.append(distance)
+        """Push a fresh raw range. Residual is appended too iff we have
+        a prediction; otherwise only raw is recorded."""
+        self._raw_buf.append(float(distance))
+        if self._predicted is not None:
+            self._resid_buf.append(float(distance) - float(self._predicted))
 
     def set_prediction(self, dist: float) -> None:
-        self._predicted = dist
+        self._predicted = float(dist) if np.isfinite(dist) else None
 
     def weight(self, raw_dist: float) -> float:
         """Return combined quality weight for the current raw measurement."""
         var_w   = self._variance_weight()
         innov_w = self._innovation_weight(raw_dist)
-
-        # Geometric mean: both must be good for the anchor to score high
         combined = float(np.sqrt(var_w * innov_w))
         return max(self._MIN_WEIGHT, min(1.0, combined))
 
     # -- internals ---------------------------------------------------------
 
     def _variance_weight(self) -> float:
-        if len(self._window) < 4:
-            return 1.0                          # not enough data -> optimistic
-        var = float(np.var(self._window))
+        # Prefer residual variance (motion cancels). Fall back to raw
+        # variance only during cold-start when no prediction is available.
+        if len(self._resid_buf) >= 4:
+            var = float(np.var(self._resid_buf))
+            self.last_used_metric = 'residual'
+        elif len(self._raw_buf) >= 4:
+            var = float(np.var(self._raw_buf))
+            self.last_used_metric = 'cold_start_raw'
+        else:
+            self.last_used_metric = 'insufficient'
+            return 1.0
         return 1.0 / (1.0 + self._VAR_SCALE * var)
 
     def _innovation_weight(self, raw_dist: float) -> float:
         if self._predicted is None:
-            return 1.0                          # no prediction yet -> neutral
+            return 1.0
         innov = abs(raw_dist - self._predicted)
-        # Gaussian-shaped penalty centred on zero innovation
         return float(np.exp(-0.5 * (innov / self._INNOV_SIGMA) ** 2))
 
 
@@ -106,7 +151,11 @@ class UWBPreprocessor:
     _EMA_FAST  = 0.70   # Fast-movement EMA coefficient (large step detected)
     _STEP_THR  = 0.024   # Distance change (m) that triggers fast mode
 
-    def __init__(self, spike_window: int = 35, max_range: float = 6.0, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
+    def __init__(self, spike_window: int | None = None,
+                 max_range: float = 6.0,
+                 offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
+        if spike_window is None:
+            spike_window = max(5, int(round(_VIS_SPIKE_WINDOW_S * UWB_HZ)))
         self.max_range = max_range
         self.n         = 4
         self.offsets   = offsets
@@ -142,18 +191,23 @@ class UWBPreprocessor:
         for i, raw in enumerate([d0, d1, d2, d3]):
             # -- Stage 1: validity gate (shared) ---------------------------
             raw_with_offset = raw + self.offsets[i]
-            if (raw_with_offset <= 0.05 or raw_with_offset > self.max_range
-                    or not np.isfinite(raw_with_offset)):
-                cooked = self._last_ekf[i]      # replay last valid
+            valid = (np.isfinite(raw_with_offset)
+                     and 0.05 < raw_with_offset <= self.max_range)
+            if valid:
+                cooked = float(raw_with_offset)
+                self._last_ekf[i] = cooked          # cache for VIS hold-last
             else:
-                cooked = raw_with_offset
-                self._last_ekf[i] = cooked
+                cooked = float('nan')               # Priority 2: NO replay
 
-            # -- EKF path: NO median, NO EMA (Fix A) -----------------------
+            # -- EKF path: emit NaN on invalid (Priority 2) ----------------
+            # The EKF must see missing data explicitly so it can skip the
+            # update (no innovation, no NIS, no Joseph step). The per-anchor
+            # range Kalman handles NaN by running predict only.
             ekf_dists.append(cooked)
 
-            # -- Vis path: median despike + variable-rate EMA --------------
-            self._med_bufs[i].append(cooked)
+            # -- Vis path: hold-last on invalid is fine (display only) -----
+            vis_val = cooked if valid else self._last_ekf[i]
+            self._med_bufs[i].append(vis_val)
             median_val = float(np.median(self._med_bufs[i]))
 
             if self._ema[i] is None:
@@ -167,8 +221,14 @@ class UWBPreprocessor:
             self._last[i] = smooth
 
             # -- NLOS quality scoring --------------------------------------
-            self._trackers[i].push(median_val)
-            w = self._trackers[i].weight(cooked)
+            # On dropout, neither push nor weight uses NaN — the tracker
+            # simply does not advance this cycle, and the previous weight
+            # is reused. The EKF will skip this anchor's update anyway.
+            if valid:
+                self._trackers[i].push(median_val)
+                w = self._trackers[i].weight(cooked)
+            else:
+                w = self._trackers[i].weight(self._last_ekf[i])
 
             filtered.append(smooth)
             weights.append(w)

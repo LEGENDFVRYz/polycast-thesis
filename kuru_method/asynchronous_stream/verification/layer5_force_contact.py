@@ -32,7 +32,7 @@ def analyse(csv_path: Path) -> LayerResult:
     smooth_seq: list[float] = []
     state_seq: list[int] = []
     for p in imu_pkts:
-        state, smooth = det.process(p['force'])
+        state, smooth = det.process(p['force'], ts=p.get('ts'))
         raw_seq.append(p['force'])
         smooth_seq.append(smooth)
         state_seq.append(int(state))
@@ -62,9 +62,14 @@ def analyse(csv_path: Path) -> LayerResult:
     mean_ep_samples = float(ep.mean()) if len(ep) else 0.0
     min_ep_samples  = int(ep.min())   if len(ep) else 0
 
-    # Glitch: episode shorter than DEBOUNCE_OFF + 1 (should be rare/zero)
-    glitch_count = int(np.sum(ep < (ForceContactDetector.DEBOUNCE_ON +
-                                    ForceContactDetector.DEBOUNCE_OFF)))
+    # Glitch: episode shorter than the combined debounce envelope (should be
+    # rare/zero). Convert the time-based debounce thresholds into a sample
+    # count using the rate_profile FSR cadence.
+    from config import FSR_DT_NOM_S as _FSR_DT_NOM_S
+    debounce_envelope_samples = int(np.ceil(
+        (ForceContactDetector.DEBOUNCE_ON_S
+         + ForceContactDetector.DEBOUNCE_OFF_S) / max(_FSR_DT_NOM_S, 1e-6)))
+    glitch_count = int(np.sum(ep < debounce_envelope_samples))
 
     metrics = {
         'imu_count':           len(imu_pkts),

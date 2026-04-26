@@ -35,7 +35,11 @@ from collections import deque
 
 import numpy as np
 from config import (ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M,
-                    ENABLE_ITEM_C_FEEDBACK)
+                    ENABLE_ITEM_C_FEEDBACK, IMU_HZ,
+                    ALPHA_R_HOVER, R_TOUCHDOWN_SCALE, GATE_CHI2_TOUCHDOWN,
+                    NU_CLIP_M, LAMBDA_R_ADAPT,
+                    calibration_get)
+from pen_mode import PenMode
 from imu_integrator import IMUIntegrator, quat_to_rotmat
 from force_detector import ForceContactDetector
 from range_kf       import PerAnchorRangeKFBank
@@ -57,10 +61,22 @@ class TightlyCoupledEKF:
     # -- Tuning -------------------------------------------------------------
 
     # Process noise
-    SIGMA_ACC  = 1.5     # m/s^2  — direction reversals during writing can exceed
-                         # 2–3 m/s^2 on big characters; lower values under-sized
-                         # the process noise and caused shrunken-curve tracking.
-    SIGMA_BIAS = 0.0005  # m/s^2/sqrt(s)  (was 0.002 — slower bias drift)
+    SIGMA_ACC  = 2.0     # m/s^2  — IMU DR diagnostic on 50 Hz datasets shows
+                         # 0.4–1.1 m drift in 2 s on curves/characters (imu_validator
+                         # PNGs + layer4 metrics). The IMU's effective accel noise
+                         # on motion is larger than 1.5 m/s^2; raising Q here lets
+                         # the EKF downweight noisy IMU predictions and trust UWB
+                         # more during strokes. Stationary behavior is unaffected
+                         # because ZUPT + bias estimation dominate there.
+                         # Kept as constant — see derive_calibration.py docstring
+                         # for why the measured stationary σ is *not* used here
+                         # (this is process noise, not sensor noise).
+    # Phase 8 Step 2: σ_bias is *not* taken from the calibration profile
+    # because the simple Allan-style estimator over-estimates the random
+    # walk rate when the dataset includes hand handling / placement noise.
+    # The legacy 0.0005 m/s²/√s remains the default; revisit when a clean
+    # stationary dataset (no marker handling) is available for σ_bias.
+    SIGMA_BIAS = 0.0005
 
     # Measurement noise
     SIGMA_UWB      = 0.08   # m — Kalman-update R (quality-weighted, was 0.15)
@@ -70,7 +86,10 @@ class TightlyCoupledEKF:
     GATE_CHI2  = 3.841   # 95% CL  (was 6.635 / 99% — tighter outlier rejection)
 
     # Hard absolute innovation clamp (state-independent safety net)
-    MAX_INNOV_M = 0.30   # m — reject any |innov| > 30 cm regardless of P
+    # Lower hard innovation clamp: reject any |innov| beyond 18 cm. A tighter
+    # bound prevents rare large UWB spikes from yanking the state, which was
+    # observed to cause "teleporting" artefacts when running live at 50 Hz.
+    MAX_INNOV_M = 0.18   # m — reject any |innov| > 18 cm regardless of P
 
     # Per-anchor NLOS muting
     NLOS_MUTE_THRESH = 25    # consecutive rejections before muting
@@ -88,23 +107,30 @@ class TightlyCoupledEKF:
     SLOW_SPEED_THRESH = 0.04   # m/s
     SLOW_VEL_DECAY    = 0.85
 
-    # Hard velocity cap (pen writing never exceeds this). Natural handwriting
-    # peaks at 0.5–1.5 m/s on big characters; 0.50 was clipping fast strokes.
-    MAX_WRITING_SPEED = 1.50   # m/s
+    # Hard velocity cap. Natural pen-on-board writing peaks at 0.5–1.0 m/s
+    # even on big characters. 1.50 let pen-lift/relocate velocities leak into
+    # the EKF state and triggered runaway re-inits mid-session.
+    MAX_WRITING_SPEED = 1.00   # m/s
 
     # Zero-velocity update (ZUPT) — Fix B: bias-independent raw-accel variance
-    # ZUPT triggers when the *variance* of the raw (pre-bias-subtraction)
-    # whiteboard-frame acceleration stays below threshold across a window.
-    # Using variance rather than magnitude makes ZUPT robust to any residual
-    # DC offset (including drifting bias or tilt-induced gravity leakage).
-    ZUPT_WINDOW        = 6          # samples @ 200 Hz ≈ 30 ms of stillness
-    ZUPT_VAR_THRESH    = 0.0025     # (m/s^2)^2  — σ ≈ 0.05 m/s^2 per axis
+    # Priority 1: window expressed in seconds, not samples. The deque length
+    # is computed from RATE_PROFILE.IMU_HZ at construction time so the same
+    # threshold means the same wall-clock duration whether the stream is
+    # 100 Hz or 200 Hz.
+    ZUPT_WINDOW_S      = 0.030      # 30 ms of stillness
+    # Phase 8 Step 2: ZUPT_VAR_THRESH is *not* read from the calibration
+    # profile. The measured p99 of 30 ms-window stationary acc variance
+    # came out at 0.18 (m/s²)² — too loose: it includes hand handling
+    # spikes and overlaps with real writing motion, so ZUPT fires during
+    # strokes and crushes the rendered letter shapes. The legacy 0.0025
+    # (m/s²)² is conservative but rejects writing motion correctly.
+    ZUPT_VAR_THRESH    = 0.0025
     ZUPT_R_VEL         = 0.0005     # (m/s)^2
 
-    # Bias runaway safeguard: if ZUPT has not fired for this many consecutive
-    # IMU samples while pen is in contact, the bias state is suspect. Reset
-    # it to zero and inflate P[4:6] to let UWB re-learn it.
-    ZUPT_STALL_SAMPLES = 1000       # ≈ 5.0 s @ 200 Hz
+    # Bias runaway safeguard: if ZUPT has not fired for this long while pen
+    # is in contact, the bias state is suspect. Reset to zero and inflate
+    # P[4:6] to let UWB re-learn it.
+    ZUPT_STALL_S       = 5.0        # seconds
     BIAS_RESET_P       = 0.04       # (m/s^2)^2 — matches initial P_bias
 
     # Fix C: observability-aware bias freeze. Freezing only on raw speed
@@ -122,8 +148,15 @@ class TightlyCoupledEKF:
     # force a soft re-init (snap to IRLS, zero v/b, inflate P). This breaks
     # the feedback loop where large innovations -> all rejected -> NLOS mute
     # -> IMU-only drift -> even larger innovations.
-    RUNAWAY_DIST_M = 0.50     # m — EKF vs IRLS discrepancy
-    RUNAWAY_HOLD   = 10       # consecutive UWB cycles to confirm
+    RUNAWAY_DIST_M   = 0.50   # m — EKF vs IRLS discrepancy
+    RUNAWAY_HOLD     = 10     # consecutive UWB cycles to confirm
+    # Strictness of the IRLS sanity check for runaway re-init: IRLS must be
+    # within this distance of the anchor-defined board to be used as reset
+    # target. Tighter than COLD_MARGIN (0.25) because mid-session we know
+    # the pen has been on the board; an off-board IRLS is garbage, not a
+    # fresh start. 0.10 m tolerates small overshoot (pen at board edge,
+    # slight IRLS bias) without accepting wild jumps below y=0.
+    RUNAWAY_MARGIN_M = 0.10   # m
 
     # -- init ---------------------------------------------------------------
 
@@ -155,9 +188,26 @@ class TightlyCoupledEKF:
         self._innov_var   = np.ones(len(anchors)) * 0.005
         self._innov_alpha = 0.20   # EMA smoothing for innovation variance
 
+        # Phase 8 Step 2 attempted to use per-anchor R_i,0 from
+        # calibration_profile.json (audit recommendation R = max(σ_LOS²,
+        # 0.05²)). On the post-Step-4b verifier sweep the per-anchor
+        # tightening produced 21–45% WORSE Layer-6 RMSE across all 40
+        # datasets — the conservative global SIGMA_UWB was masking a real
+        # bias in the UWB anchor offsets / positions. Calibration profile
+        # is preserved on disk for diagnostics, but the EKF reads from the
+        # global SIGMA_UWB until the underlying bias is fixed.
+        # See verification/out/report_baseline.md for the comparison data.
+        self._R_per_anchor = np.full(len(anchors), self.SIGMA_UWB ** 2)
+
         # Per-anchor NLOS muting state
         self._consec_reject = np.zeros(len(anchors), dtype=int)
         self._mute_remain   = np.zeros(len(anchors), dtype=int)
+
+        # Priority 2: per-anchor dropout counter (samples where the raw
+        # measurement was missing/NaN). Surfaced via verifier metrics so
+        # Layer 0 / Layer 6 can audit transport health.
+        self._dropout_count = np.zeros(len(anchors), dtype=int)
+        self._uwb_cycles    = 0
 
         # RTS smoother history (offline CSV mode only)
         self.record_history   = False
@@ -178,15 +228,19 @@ class TightlyCoupledEKF:
         # Fix B: raw-accel ring buffer for variance-based ZUPT.  Stores
         # whiteboard-frame acceleration *before* bias subtraction so a
         # drifting bias cannot keep ZUPT silent (self-referential failure).
-        self._zupt_accel_buf   = deque(maxlen=self.ZUPT_WINDOW)
-        # Bias-stall safeguard: counts IMU predicts since ZUPT last fired
-        # while the pen is in contact.  If it runs too long, velocity is
+        # Priority 1: maxlen sized from RATE_PROFILE so 30 ms is 30 ms.
+        zupt_maxlen = max(2, int(round(self.ZUPT_WINDOW_S * IMU_HZ)))
+        self._zupt_accel_buf   = deque(maxlen=zupt_maxlen)
+        # Bias-stall safeguard: cumulative seconds since ZUPT last fired
+        # while the pen is in contact. If it runs > ZUPT_STALL_S, velocity is
         # assumed non-trivial and bias is reset so UWB can re-learn.
-        self._zupt_stall_count = 0
+        self._zupt_stall_s     = 0.0
 
         # Fix C: short velocity-direction window for observability-aware
-        # bias freeze.  Unit vectors of velocity over the last ~0.5 s.
-        self._vel_dir_buf      = deque(maxlen=120)  # ≈0.6 s @ 200 Hz
+        # bias freeze. Unit vectors of velocity over BIAS_FREEZE_DIR_WIN.
+        vel_dir_maxlen = max(10,
+                             int(round(self.BIAS_FREEZE_DIR_WIN * IMU_HZ)))
+        self._vel_dir_buf      = deque(maxlen=vel_dir_maxlen)
 
         # Cached bias-freeze flag — updated every predict so that both
         # Q_bias (Fix H) and the UWB Kalman gain (Fix C) share one truth.
@@ -194,7 +248,8 @@ class TightlyCoupledEKF:
 
     # -- predict step (IMU) -------------------------------------------------
 
-    def predict(self, a_wb: np.ndarray, dt: float, is_contact: bool = True):
+    def predict(self, a_wb: np.ndarray, dt: float, is_contact: bool = True,
+                mode: 'PenMode' = PenMode.PEN_DOWN):
         """
         IMU-driven predict step.
 
@@ -288,24 +343,29 @@ class TightlyCoupledEKF:
         # This keeps ZUPT detection independent of the bias estimate, so a
         # drifting bias cannot silence the trigger.
         self._zupt_accel_buf.append((ax_wb, ay_wb))
-        if is_contact:
+        # Priority 5: ZUPT and bias-stall safeguard run in PEN_DOWN only.
+        # In any hover mode the marker is moving in 3D and acceleration
+        # variance no longer means "stationary on board", so ZUPT would
+        # fire spuriously and freeze hover velocity.
+        run_zupt = is_contact and (mode == PenMode.PEN_DOWN)
+        if run_zupt:
             self.check_zupt()
-            # Runaway safeguard: if ZUPT has not fired for ZUPT_STALL_SAMPLES
-            # in a row while in contact, the bias is suspect — reset it and
+            # Runaway safeguard: if ZUPT has not fired for ZUPT_STALL_S in a
+            # row while in contact, the bias is suspect — reset it and
             # re-inflate the bias covariance so UWB can drive re-learning.
-            self._zupt_stall_count += 1
-            if self._zupt_stall_count >= self.ZUPT_STALL_SAMPLES:
+            self._zupt_stall_s += dt
+            if self._zupt_stall_s >= self.ZUPT_STALL_S:
                 self._x[4] = 0.0
                 self._x[5] = 0.0
                 self._P[4, 4] = self.BIAS_RESET_P
                 self._P[5, 5] = self.BIAS_RESET_P
                 self._P[4, 5] = 0.0
                 self._P[5, 4] = 0.0
-                self._zupt_stall_count = 0
+                self._zupt_stall_s = 0.0
                 print("[EKF] Bias-stall safeguard fired — reset bias to 0")
         else:
-            self._zupt_count       = 0
-            self._zupt_stall_count = 0
+            self._zupt_count   = 0
+            self._zupt_stall_s = 0.0
 
         # RTS history: save state after each predict step
         if self.record_history:
@@ -347,14 +407,14 @@ class TightlyCoupledEKF:
         (Wahlström & Skog 2021; Ren et al. 2018) for pedestrian / hand-held
         dead reckoning where the IMU bias is unknown at rest.
         """
-        if len(self._zupt_accel_buf) < self.ZUPT_WINDOW:
+        if len(self._zupt_accel_buf) < self._zupt_accel_buf.maxlen:
             return
         arr = np.asarray(self._zupt_accel_buf, dtype=float)
         var_total = float(np.var(arr[:, 0]) + np.var(arr[:, 1]))
         if var_total < self.ZUPT_VAR_THRESH:
             self._zupt_count += 1
             self._zupt_update()
-            self._zupt_stall_count = 0
+            self._zupt_stall_s = 0.0
         else:
             self._zupt_count = 0
 
@@ -385,7 +445,8 @@ class TightlyCoupledEKF:
     # -- update step (UWB) --------------------------------------------------
 
     def update_uwb(self, raw_dists, quality_weights=None, marker_axis_wb=None,
-                   ts=None):
+                   ts=None, mode: 'PenMode' = PenMode.PEN_DOWN,
+                   touchdown_reacq: bool = False):
         """
         UWB range measurement update (tightly coupled, one anchor at a time).
 
@@ -395,11 +456,19 @@ class TightlyCoupledEKF:
         quality_weights : array-like (4,)  per-anchor quality [0.1, 1.0] or None
         marker_axis_wb  : array-like (3,)  unit vector of the marker long axis
                                            in WHITEBOARD frame (tip -> rear).
-                                           If None, assumes neutral pose
-                                           (perpendicular to board).  The
-                                           tag's wb-Z is derived from this
-                                           so tilted markers no longer bias
-                                           the projected range (Item A).
+        mode            : PenMode          Priority 5 — drives R inflation and
+                                           skip semantics:
+                                             PEN_DOWN     -> normal R, normal gate
+                                             HOVER_SHORT  -> R *= ALPHA_R_HOVER
+                                             HOVER_LONG   -> hard skip; returns ([],[])
+                                             HOVER_H      -> currently same path as
+                                               HOVER_SHORT (full 7-state branch
+                                               is feature-flagged stub for now)
+        touchdown_reacq : bool             True for the first few updates after a
+                                           long-hover → pen-down transition; widens
+                                           the χ² gate and inflates R by
+                                           R_TOUCHDOWN_SCALE so a stale state can
+                                           catch the first valid range.
 
         Returns
         -------
@@ -408,6 +477,21 @@ class TightlyCoupledEKF:
         """
         if self._x is None:
             return [], []
+
+        # Priority 5: HOVER_LONG skips the entire UWB path. The IMU predict
+        # has already advanced state and inflated covariance; that is the
+        # intended behaviour for sustained hover.
+        if mode == PenMode.HOVER_LONG:
+            return [], []
+
+        # Per-mode R / gate scales — combined later with adaptive R.
+        r_mode_scale = 1.0
+        gate_chi2    = self.GATE_CHI2
+        if mode == PenMode.HOVER_SHORT or mode == PenMode.HOVER_H:
+            r_mode_scale = float(ALPHA_R_HOVER)
+        if touchdown_reacq:
+            r_mode_scale = max(r_mode_scale, float(R_TOUCHDOWN_SCALE))
+            gate_chi2    = float(GATE_CHI2_TOUCHDOWN)
 
         n_anchors = len(self.anchors)
         if quality_weights is None:
@@ -440,8 +524,17 @@ class TightlyCoupledEKF:
         accepted, rejected = [], []
         px, py = self._x[0], self._x[1]
         n_currently_muted = int(np.sum(self._mute_remain > 0))
+        self._uwb_cycles += 1
 
         for i in range(min(n_anchors, len(raw_dists))):
+            # -- Priority 2: hard skip on missing/NaN ----------------------
+            # No innovation, no chi^2 gate, no NLOS counter, no Joseph
+            # update — a missing measurement must look missing to the EKF.
+            raw_in = float(raw_dists[i]) if i < len(raw_dists) else float('nan')
+            if not np.isfinite(raw_in):
+                self._dropout_count[i] += 1
+                continue
+
             # -- NLOS muting: skip anchors in mute cooldown ----------------
             if self._mute_remain[i] > 0:
                 self._mute_remain[i] -= 1
@@ -453,7 +546,10 @@ class TightlyCoupledEKF:
             d_raw = float(filtered_ranges[i])
             qw    = float(quality_weights[i])
 
+            # filtered_ranges[i] is also NaN if the per-anchor KF skipped
+            # update this cycle — same hard skip applies.
             if not np.isfinite(d_raw) or d_raw < 0.05:
+                self._dropout_count[i] += 1
                 continue
 
             ax_i, ay_i, az_i = (self.anchors[i, 0],
@@ -497,7 +593,7 @@ class TightlyCoupledEKF:
             S_gate = HPHT + R_gate
             mahal_sq = (innov * innov) / S_gate
 
-            if mahal_sq > self.GATE_CHI2:
+            if mahal_sq > gate_chi2:
                 self._n_uwb_rejected += 1
                 self._consec_reject[i] += 1
                 if (self._consec_reject[i] >= self.NLOS_MUTE_THRESH
@@ -510,20 +606,31 @@ class TightlyCoupledEKF:
                 continue
 
             # -- Accepted: update adaptive noise from clean innovation -----
+            # Phase 8 Step 3 attempted the audit's capped-innovation EMA
+            # (clip ν² to NU_CLIP_M² before the EMA, λ=0.80). Combined
+            # with the per-anchor R it regressed Layer-6 RMSE; the legacy
+            # uncapped EMA at α=0.20 wins until the underlying bias is
+            # addressed. Keeping the constants imported in case a future
+            # experiment wants them.
             self._innov_var[i] = ((1 - self._innov_alpha) * self._innov_var[i]
                                   + self._innov_alpha * innov * innov)
+            _ = NU_CLIP_M, LAMBDA_R_ADAPT   # noqa — preserved for future use
             self._consec_reject[i] = 0
 
-            # -- Kalman update uses quality-weighted R ---------------------
+            # -- Kalman update uses quality-weighted R, scaled per pen mode
+            # (Priority 5: ALPHA_R_HOVER for short hover; R_TOUCHDOWN_SCALE
+            # for the first few updates after a long-hover touchdown).
             R_base = (self.SIGMA_UWB / max(qw, 0.1)) ** 2
-            R_eff  = max(R_base, self._innov_var[i])
+            R_eff  = r_mode_scale * max(R_base, self._innov_var[i])
             S = HPHT + R_eff
 
             # Kalman gain (6x1)
             K = (self._P @ H.T) / S
 
-            # Fix C: observability-aware bias freeze (computed once in predict)
-            if self._bias_freeze:
+            # Bias freeze — applied during pen-down only. In any hover
+            # mode, freeze the bias unconditionally (the tag is moving in
+            # 3D, not just XY, so persistence cannot grant observability).
+            if self._bias_freeze or mode != PenMode.PEN_DOWN:
                 K[4] = 0.0
                 K[5] = 0.0
 
@@ -666,25 +773,42 @@ class TightlyCoupledEKF:
         -------
         smoothed_positions : np.ndarray (N, 2)
         """
-        n = len(self._history)
-        if n < 2:
-            return np.array([h['x'][:2] for h in self._history])
+        return rts_smooth_history(self._history)
 
-        xs = [h['x'].copy() for h in self._history]
-        Ps = [h['P'].copy() for h in self._history]
 
-        for k in range(n - 2, -1, -1):
-            F = self._history[k + 1]['F']
-            Q = self._history[k + 1]['Q']
-            P_pred = F @ Ps[k] @ F.T + Q
-            try:
-                G = Ps[k] @ F.T @ np.linalg.inv(P_pred)
-            except np.linalg.LinAlgError:
-                continue
-            xs[k] = xs[k] + G @ (xs[k + 1] - F @ xs[k])
-            Ps[k] = Ps[k] + G @ (Ps[k + 1] - P_pred) @ G.T
+def rts_smooth_history(history):
+    """
+    Free-function RTS smoother — runs over an arbitrary slice of EKF
+    history records (each {'x', 'P', 'F', 'Q'} from predict()).
 
-        return np.array([x[:2] for x in xs])
+    Priority 6: extracted so `note_smoother.NoteSmoother` can run RTS on
+    per-stroke slices without depending on a live EKF instance.
+
+    Returns
+    -------
+    smoothed_positions : np.ndarray shape (N, 2)
+    """
+    n = len(history)
+    if n == 0:
+        return np.zeros((0, 2))
+    if n < 2:
+        return np.array([history[0]['x'][:2]])
+
+    xs = [h['x'].copy() for h in history]
+    Ps = [h['P'].copy() for h in history]
+
+    for k in range(n - 2, -1, -1):
+        F = history[k + 1]['F']
+        Q = history[k + 1]['Q']
+        P_pred = F @ Ps[k] @ F.T + Q
+        try:
+            G = Ps[k] @ F.T @ np.linalg.inv(P_pred)
+        except np.linalg.LinAlgError:
+            continue
+        xs[k] = xs[k] + G @ (xs[k + 1] - F @ xs[k])
+        Ps[k] = Ps[k] + G @ (Ps[k + 1] - P_pred) @ G.T
+
+    return np.array([x[:2] for x in xs])
 
 
 # -------------------------------------------------------------------------
@@ -725,6 +849,11 @@ class AsyncEKFFusionEngine:
         self._imu     = IMUIntegrator()
         self._contact = ForceContactDetector()
 
+        # Priority 5: pen-up state machine (hybrid A→B). Drives R inflation,
+        # update skipping, and touchdown reacquisition.
+        from pen_mode import PenModeManager
+        self._pen_mode = PenModeManager()
+
         self._last_imu_ts = None
         self._is_writing  = False
         self._prev_writing = False
@@ -732,7 +861,16 @@ class AsyncEKFFusionEngine:
         # Latest marker-axis unit vector in whiteboard frame (tip -> rear).
         # Updated every IMU packet; consumed by UWB update and tip-position
         # readout so the 3D measurement residual stays tilt-correct.
+        #
+        # Two copies: the raw per-IMU-sample value is used by the UWB update
+        # path (slerp-interpolated, accurate per-timestamp). A low-pass-filtered
+        # copy is exposed for display / pen-tip readout so BNO085 quaternion
+        # sample noise doesn't translate into a wobbly pen-tip trail. Natural
+        # pen tilt changes are <10 Hz; 100 ms EMA smooths sensor noise without
+        # lagging real tilt changes.
         self._latest_marker_axis_wb = _NEUTRAL_MARKER_AXIS_WB.copy()
+        self._display_marker_axis_wb = _NEUTRAL_MARKER_AXIS_WB.copy()
+        self._marker_axis_alpha      = 0.05   # ~20-sample EMA @ 200 Hz ≈ 100 ms
         self._latest_quat           = None
 
         # Fix D: short ring of (ts_us, quat) pairs from IMU packets so UWB
@@ -751,7 +889,10 @@ class AsyncEKFFusionEngine:
         # Robust cold-start: collect several IRLS solutions and use their
         # median.  A single IRLS packet can land way outside the board.
         self._cold_buf       = []
-        self._COLD_N         = 5     # packets to median-average (~100 ms @ 50 Hz)
+        self._COLD_N         = 7     # ≥3-anchor IRLS solves to median-average
+                                     # (Priority 4: bumped from 5 because some
+                                     # raw cycles will now be skipped if any
+                                     # anchor is missing/NaN)
         self._COLD_MARGIN    = 0.25  # m — reject IRLS fixes outside board+margin
 
         # IRLS speed tracking (for LIFTED_VEL_DAMP gating)
@@ -785,23 +926,47 @@ class AsyncEKFFusionEngine:
             # Still in cold-start — process contact but skip predict.  Keep
             # caching attitude history so the first warm UWB update has a
             # populated quaternion ring for slerp interpolation (Fix D).
-            state, _ = self._contact.process(imu_pkt['force'])
+            state, _ = self._contact.process(imu_pkt['force'], ts=imu_pkt.get('ts'))
             self._is_writing = bool(state)
             q = np.asarray(imu_pkt['quat'], dtype=float)
             self._latest_quat           = q
             self._latest_marker_axis_wb = self._imu.get_marker_axis_wb(q)
+            # During cold-start, seed the display axis directly (no smoothing)
+            # so the very first frame after init shows correct pen tilt.
+            self._display_marker_axis_wb = self._latest_marker_axis_wb.copy()
             ts_cold = imu_pkt.get('ts')
             if ts_cold is not None:
                 self._quat_hist.append((int(ts_cold), q.copy()))
             return None, None, self._is_writing
 
-        # Compute dt from per-packet microsecond timestamps
-        dt = 0.005   # default 5ms (200 Hz) — only used if ts is absent
+        # Compute dt from per-packet microsecond timestamps.  Default to
+        # nominal 5 ms (~200 Hz) when no timestamp is provided.  Guard
+        # against negative or zero dt_us (out-of-order or duplicate
+        # packets) by skipping the predict step entirely.  Large dt
+        # anomalies (often due to serial buffering) are clamped to 10 ms
+        # to avoid huge dead‑reckoning jumps.
+        dt = 0.005
         ts = imu_pkt.get('ts')
+        # Flag indicating whether to bypass the predict for this sample.
+        skip_predict = False
+        dt_us = None
         if ts is not None and self._last_imu_ts is not None:
             dt_us = ts - self._last_imu_ts
-            if 0 < dt_us < 2_000_000:
+            # Negative or zero delta means this packet is stale or
+            # duplicate.  Update the last timestamp but do not advance
+            # the state.
+            if dt_us <= 0:
+                skip_predict = True
+                # update last ts to the new value so future samples use it as base
+                self._last_imu_ts = ts
+            else:
+                # Convert microseconds to seconds
                 dt = dt_us / 1_000_000.0
+                # Clamp abnormally large dt to 10 ms (twice nominal period)
+                if dt > 0.010:
+                    print(f"[EKF] Warning: IMU dt {dt:.3f}s too large; clamping to 0.010s")
+                    dt = 0.010
+        # Always record the timestamp for next iteration if available
         if ts is not None:
             self._last_imu_ts = ts
 
@@ -816,14 +981,30 @@ class AsyncEKFFusionEngine:
         self._latest_marker_axis_wb = self._imu.get_marker_axis_wb(
             self._latest_quat)
 
+        # Low-pass the marker axis for display / pen-tip readout. Natural pen
+        # tilt varies slowly (<10 Hz); BNO085 quaternion sample noise gets
+        # amplified 21 cm by the tip projection. Smoothing here keeps the
+        # displayed pen-tip trail stable without lagging real tilt changes.
+        a = self._marker_axis_alpha
+        blended = ((1.0 - a) * self._display_marker_axis_wb
+                   + a * self._latest_marker_axis_wb)
+        norm = float(np.linalg.norm(blended))
+        if norm > 1e-9:
+            self._display_marker_axis_wb = blended / norm
+
         # Fix D: accumulate attitude history so UWB updates can interpolate
         # to their own timestamp instead of using the freshest quaternion.
         if ts is not None:
             self._quat_hist.append((int(ts), self._latest_quat.copy()))
 
         # Contact detection
-        state, _ = self._contact.process(imu_pkt['force'])
+        state, _ = self._contact.process(imu_pkt['force'], ts=imu_pkt.get('ts'))
         self._is_writing = bool(state)
+
+        # Priority 5: drive the pen-mode state machine (touchdowns, lifts,
+        # short→long hover promotions).
+        cur_mode = self._pen_mode.update_imu(self._is_writing,
+                                             imu_pkt.get('ts'))
 
         # Zero velocity on pen touchdown (transition lifting -> writing)
         if self._is_writing and not self._prev_writing:
@@ -832,8 +1013,15 @@ class AsyncEKFFusionEngine:
 
         self._prev_writing = self._is_writing
 
-        # EKF predict
-        self._ekf.predict(a_wb, dt, is_contact=self._is_writing)
+        # EKF predict (mode-aware: ZUPT and bias-stall safeguard fire only
+        # in PEN_DOWN; LIFTED_VEL_DAMP / hover behaviour is handled by the
+        # existing is_contact branch).  When skip_predict is True (dt_us
+        # <= 0), we bypass the state propagation but still return the
+        # current state.  This prevents out‑of‑order or duplicate IMU
+        # packets from corrupting the EKF history.
+        if not skip_predict:
+            self._ekf.predict(a_wb, dt,
+                              is_contact=self._is_writing, mode=cur_mode)
 
         return self._ekf.position, self._ekf.velocity, self._is_writing
 
@@ -859,14 +1047,19 @@ class AsyncEKFFusionEngine:
         rejected : list[int]
         """
         # -- Cold-start: buffer IRLS solutions until stable fix ------------
+        # Priority 4: every buffered solution must be a true ≥3-anchor solve
+        # (`last_solve_ok=True`). A 2-anchor 2D solve is geometrically
+        # ambiguous — refuse it, even at the cost of a slightly slower init.
         if not self._ekf.initialized:
             pos_xyz, _ = self._irls.solve(filtered_dists)
+            n_valid = self._irls.last_solve_n_valid
+            ok      = self._irls.last_solve_ok
             px, py = float(pos_xyz[0]), float(pos_xyz[1])
 
-            # Accept only positions within board bounds + margin
             board_max = float(np.max(self.anchors[:, :2])) + self._COLD_MARGIN
-            if (-self._COLD_MARGIN <= px <= board_max and
-                    -self._COLD_MARGIN <= py <= board_max):
+            in_bounds = (-self._COLD_MARGIN <= px <= board_max and
+                         -self._COLD_MARGIN <= py <= board_max)
+            if ok and in_bounds:
                 self._cold_buf.append((px, py))
 
             if len(self._cold_buf) >= self._COLD_N:
@@ -874,10 +1067,16 @@ class AsyncEKFFusionEngine:
                 init_y = float(np.median([p[1] for p in self._cold_buf]))
                 self._ekf.initialize(init_x, init_y)
                 self._cold_buf.clear()
+                # Priority 5: pen-mode leaves COLD_START on first valid init.
+                self._pen_mode.mark_initialized()
             else:
                 n = len(self._cold_buf)
-                print(f"[EKF] Cold-start: buffering IRLS solution "
-                      f"{n}/{self._COLD_N}  raw=({px:.3f},{py:.3f})")
+                if not ok:
+                    print(f"[EKF] Cold-start: insufficient anchors "
+                          f"({n_valid}<3) — waiting  buffered={n}/{self._COLD_N}")
+                else:
+                    print(f"[EKF] Cold-start: buffering IRLS solution "
+                          f"{n}/{self._COLD_N}  raw=({px:.3f},{py:.3f})")
                 return (np.array([px, py]), np.zeros(2), [], [])
 
         # -- Fix D: time-align attitude to the UWB packet timestamp --------
@@ -890,12 +1089,30 @@ class AsyncEKFFusionEngine:
             q_at_ts = self._slerp_quat_at(int(ts))
             marker_axis_for_update = self._imu.get_marker_axis_wb(q_at_ts)
 
+        # -- Priority 5: per-mode UWB policy --------------------------------
+        # Resolve the effective mode using current anchor count + quality
+        # gate. The manager may downgrade HOVER_SHORT → HOVER_LONG (skip)
+        # when quality is too low, or promote HOVER_LONG → HOVER_H when
+        # the feature flag is on and anchors are clean.
+        n_valid = sum(1 for d in filtered_dists if np.isfinite(d) and d >= 0.05)
+        if quality_weights is None:
+            q_mean = 1.0
+        else:
+            qs = [float(quality_weights[i]) for i, d in enumerate(filtered_dists)
+                  if np.isfinite(d) and d >= 0.05]
+            q_mean = float(np.mean(qs)) if qs else 0.0
+        eff_mode = self._pen_mode.decide_uwb_mode(n_valid, q_mean)
+        touchdown_credit = (eff_mode == PenMode.PEN_DOWN
+                            and self._pen_mode.consume_touchdown_credit())
+
         # -- Warm: EKF update -----------------------------------------------
         accepted, rejected = self._ekf.update_uwb(
             filtered_dists,
             quality_weights,
             marker_axis_wb=marker_axis_for_update,
             ts=ts,
+            mode=eff_mode,
+            touchdown_reacq=touchdown_credit,
         )
 
         # Update IRLS speed for LIFTED_VEL_DAMP gating, and run Fix I
@@ -985,11 +1202,18 @@ class AsyncEKFFusionEngine:
         if not np.all(np.isfinite(irls_2d)):
             return
 
-        board_max = float(np.max(self.anchors[:, :2])) + self._COLD_MARGIN
-        irls_sane = (-self._COLD_MARGIN <= irls_2d[0] <= board_max and
-                     -self._COLD_MARGIN <= irls_2d[1] <= board_max)
+        # Mid-session sanity check — stricter than COLD_MARGIN because we
+        # know the pen has already been on the board. An off-board IRLS fix
+        # is a bad trilateration, not a legitimate reset target.
+        margin = self._ekf.RUNAWAY_MARGIN_M
+        board_max_x = float(np.max(self.anchors[:, 0])) + margin
+        board_max_y = float(np.max(self.anchors[:, 1])) + margin
+        irls_sane = (-margin <= irls_2d[0] <= board_max_x and
+                     -margin <= irls_2d[1] <= board_max_y)
         if not irls_sane:
             # IRLS itself is garbage — don't use it as a reset target.
+            # Hold the runaway counter so we don't immediately fire once a
+            # sane IRLS arrives; reset it so we re-confirm from scratch.
             self._runaway_count = 0
             return
 
@@ -1009,7 +1233,7 @@ class AsyncEKFFusionEngine:
         self._ekf._range_bank.reset()
         self._ekf._mute_remain[:]   = 0
         self._ekf._consec_reject[:] = 0
-        self._ekf._zupt_stall_count = 0
+        self._ekf._zupt_stall_s     = 0.0
         self._ekf._zupt_accel_buf.clear()
         self._ekf._vel_dir_buf.clear()
         self._ekf._bias_freeze      = False
@@ -1036,8 +1260,9 @@ class AsyncEKFFusionEngine:
 
     @property
     def tip_position(self) -> np.ndarray:
-        """Pen-tip 2D position on the whiteboard (None until EKF initialised)."""
-        return self._ekf.get_tip_position(self._latest_marker_axis_wb)
+        """Pen-tip 2D position on the whiteboard (None until EKF initialised).
+        Uses the EMA-smoothed marker axis so the displayed trail is stable."""
+        return self._ekf.get_tip_position(self._display_marker_axis_wb)
 
     @property
     def tag_z_wb(self) -> float:

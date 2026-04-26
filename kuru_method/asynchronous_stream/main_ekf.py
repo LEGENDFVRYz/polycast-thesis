@@ -27,6 +27,8 @@ Configuration
 """
 
 import argparse
+import atexit
+import os
 import sys
 import time
 import numpy as np
@@ -37,6 +39,7 @@ from data_parser    import AsyncDataParser
 from preprocessor   import UWBPreprocessor, IMUPreprocessor
 from ekf_fusion     import AsyncEKFFusionEngine
 from trail_smoother import TrailSmoother
+from note_smoother  import NoteSmoother
 from imu_calibrate  import trigger_dcd_save
 
 
@@ -68,6 +71,73 @@ engine      = AsyncEKFFusionEngine()
 uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
 imu_cleaner = IMUPreprocessor()
 smoother    = TrailSmoother()
+note_smooth = NoteSmoother()    # Phase 8 Step 4b Pattern A: per-stroke RTS
+
+
+# -- Phase 9 Step 1: live auto-recording ------------------------------------
+# Every live session is auto-recorded as a fresh timestamped CSV under
+# datasets_str_50hz/ in the same I,…/U,… format that data_parser.py reads.
+# This makes any live failure replayable through CSV mode.
+_live_csv_file = None
+_live_csv_path = None
+_live_packet_count = 0
+
+
+def _live_recorder_open() -> None:
+    """Open the timestamped live capture file. Called once at module load
+    when parser.mode == 'live'."""
+    global _live_csv_file, _live_csv_path
+    if parser.mode != 'live':
+        return
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    out_dir    = os.path.join(script_dir, 'datasets_str_50hz')
+    os.makedirs(out_dir, exist_ok=True)
+    _live_csv_path = os.path.join(
+        out_dir, f'live_{time.strftime("%Y%m%d_%H%M%S")}.csv')
+    _live_csv_file = open(_live_csv_path, 'w', encoding='utf-8', newline='')
+    print(f'[live-rec] Recording to {_live_csv_path}')
+    atexit.register(_live_recorder_close)
+
+
+def _live_recorder_close() -> None:
+    """Flush + close the live capture file. Idempotent."""
+    global _live_csv_file
+    if _live_csv_file is None:
+        return
+    try:
+        _live_csv_file.flush()
+        _live_csv_file.close()
+    except Exception:
+        pass
+    print(f'[live-rec] Closed {_live_csv_path}  ({_live_packet_count} packets)')
+    _live_csv_file = None
+
+
+def _live_recorder_write(pkt: dict) -> None:
+    """Append one packet to the live CSV in csv_recorder.py-compatible
+    format. Reconstructed from parsed fields (data_parser drops the raw
+    line); precision is preserved via Python's default float repr."""
+    global _live_packet_count
+    if _live_csv_file is None or pkt is None:
+        return
+    if pkt['type'] == 'imu':
+        qx, qy, qz, qw = pkt['quat']
+        ax, ay, az     = pkt['acc']
+        line = (f"I,{pkt['seq']},{qx},{qy},{qz},{qw},"
+                f"{ax},{ay},{az},{pkt['force']},{pkt['ts']}\n")
+    elif pkt['type'] == 'uwb':
+        d0, d1, d2, d3 = pkt['dists']
+        line = f"U,{pkt['seq']},{d0},{d1},{d2},{d3},{pkt['ts']}\n"
+    else:
+        return
+    _live_csv_file.write(line)
+    _live_packet_count += 1
+    # Periodic flush so a Ctrl+C / window-close can't lose more than ~500 pkts.
+    if _live_packet_count % 500 == 0:
+        _live_csv_file.flush()
+
+
+_live_recorder_open()
 
 # Drawing trail — only positions where is_writing == True
 draw_x, draw_y   = [], []
@@ -86,36 +156,112 @@ _imu_subsample   = 0       # counter for trail subsampling
 _last_pos = None
 _last_vel = None
 
+# Phase 8 Step 4b Pattern A — "snap-to-RTS on stroke completion".
+# When the FSR contact edge falls (stroke ends) we re-render the just-
+# completed stroke using NoteSmoother (offline RTS) instead of leaving
+# the causal 5-point moving-average trail. The active stroke remains
+# causal during writing (cannot smooth the future), so this adds zero
+# live-latency — the stroke just "snaps cleaner" the instant the pen lifts.
+_stroke_history_start: int | None = None   # index into engine.ekf._history
+_stroke_draw_start:    int | None = None   # index into draw_x
+
+# Phase 8 Step 4b — parallel per-IMU-step streams used by the per-stroke
+# green RTS overlay at end-of-CSV (Layer-10-style slicing).
+_is_writing_stream:  list[bool] = []
+_history_idx_stream: list[int]  = []
+
 
 def _trim(lst, maxlen):
     if len(lst) > maxlen:
         del lst[:len(lst) - maxlen]
 
 
-# Enable RTS history recording for CSV playback
-if parser.mode == 'csv':
-    engine.ekf.record_history = True
+# Enable RTS history recording in BOTH modes — live mode needs it for the
+# Step 4b snap-to-RTS pass on stroke completion.
+engine.ekf.record_history = True
+# Soft cap to bound memory in long live sessions (~200 Hz × 50 B/record).
+_HISTORY_SOFT_CAP = 60_000   # ≈ 5 min @ 200 Hz before trim
+_HISTORY_KEEP     = 30_000
+
+
+def _snap_stroke_to_rts() -> None:
+    """At lift edge: replace the most-recent stroke's draw_x/draw_y with
+    the RTS-smoothed XY from the EKF history slice that covers it."""
+    global _stroke_history_start, _stroke_draw_start
+    if _stroke_history_start is None or _stroke_draw_start is None:
+        return
+    history = engine.ekf._history
+    if not (0 <= _stroke_history_start < len(history)):
+        _stroke_history_start = None
+        _stroke_draw_start    = None
+        return
+    slice_ = history[_stroke_history_start:]
+    if len(slice_) >= 2:
+        smoothed = note_smooth.smooth_stroke(slice_)
+        sub      = smoothed[::TRAIL_SUBSAMPLE]
+        n_replace = len(draw_x) - _stroke_draw_start
+        n_use     = min(len(sub), n_replace)
+        for i in range(n_use):
+            draw_x[_stroke_draw_start + i] = float(sub[i, 0])
+            draw_y[_stroke_draw_start + i] = float(sub[i, 1])
+    _stroke_history_start = None
+    _stroke_draw_start    = None
+    # Trim history if it has grown past the soft cap (live mode only —
+    # CSV mode runs its own end-of-replay RTS overlay and needs the full
+    # history; we still trim, but only past _HISTORY_KEEP).
+    if len(history) > _HISTORY_SOFT_CAP:
+        del history[:len(history) - _HISTORY_KEEP]
 
 
 def _run_rts_smoother():
-    """Run RTS backward smoother at end of CSV and overlay smoothed trajectory."""
+    """End-of-CSV per-stroke RTS overlay (matches Layer 10 logic).
+
+    Phase 8 Step 4b edit 1: previously this plotted the *full history* RTS
+    as one continuous line, which included every hover/relocate path and
+    rendered as a tangled blob. Now it slices `engine.ekf._history` by
+    the parallel `_is_writing_stream` flags and renders each stroke as a
+    separate green line — same algorithm Layer 10 uses, just overlaid on
+    the live axes.
+    """
     if not engine.ekf.record_history or len(engine.ekf._history) < 10:
         print("[RTS] Not enough history to smooth.")
         return
-    print(f"[RTS] Running backward smoother on {len(engine.ekf._history)} steps...")
-    smoothed = engine.ekf.rts_smooth()
+    history = engine.ekf._history
+    strokes_hist: list[list[dict]] = []
+    cur: list[dict] = []
+    for w, idx in zip(_is_writing_stream, _history_idx_stream):
+        if 0 <= idx < len(history):
+            if w:
+                cur.append(history[idx])
+            elif cur:
+                strokes_hist.append(cur); cur = []
+    if cur:
+        strokes_hist.append(cur)
+
+    print(f"[RTS] Per-stroke smoother on {len(strokes_hist)} strokes "
+          f"({sum(len(s) for s in strokes_hist)} writing samples).")
+
     ax = line_draw.axes
-    ax.plot(smoothed[:, 0], smoothed[:, 1], '-', color='limegreen', lw=1.5,
-            alpha=0.8, label='RTS smoothed', zorder=5)
+    first = True
+    for s in strokes_hist:
+        if len(s) < 2:
+            continue
+        xy = note_smooth.smooth_stroke(s)
+        ax.plot(xy[:, 0], xy[:, 1], '-', color='limegreen', lw=1.5,
+                alpha=0.85,
+                label='RTS smoothed (per-stroke)' if first else None,
+                zorder=5)
+        first = False
     ax.legend(loc='upper right', fontsize=9)
     ax.figure.canvas.draw_idle()
-    print(f"[RTS] Smoothed trajectory overlaid ({len(smoothed)} points).")
+    print(f"[RTS] Per-stroke trajectories overlaid.")
 
 
 # -- Animation callback -----------------------------------------------------
 def update(frame):
     global _last_diag_time, _prev_writing, _eof_handled
     global _imu_subsample, _last_pos, _last_vel
+    global _stroke_history_start, _stroke_draw_start
 
     # Drain available packets
     packets = []
@@ -123,6 +269,10 @@ def update(frame):
         while parser.data_available():
             pkt = parser.get_packet()
             if pkt and pkt != 'EOF':
+                # Phase 9 Step 1: append to live capture before processing
+                # so even a Python exception downstream still leaves the
+                # raw stream on disk for diagnosis.
+                _live_recorder_write(pkt)
                 packets.append(pkt)
     else:
         for _ in range(CSV_PACKETS_PER_FRAME):
@@ -130,6 +280,10 @@ def update(frame):
             if pkt == 'EOF':
                 if not _eof_handled:
                     _eof_handled = True
+                    # Edit 2: if the CSV ended mid-stroke (no fall edge ever
+                    # fired), snap that final in-progress stroke now so it
+                    # gets the same RTS treatment as every completed stroke.
+                    _snap_stroke_to_rts()
                     _run_rts_smoother()
                     parser.summary()
                 return artists
@@ -158,26 +312,47 @@ def update(frame):
             # projected onto the whiteboard plane.  Falls back to the tag
             # position before heading lock.
             tip = engine.tip_position
-            draw_pt = tip if tip is not None else pos
+            draw_pt = pos
 
             _last_pos = draw_pt
             _last_vel = vel
+
+            # Per-IMU-step streams for the per-stroke RTS overlay (edit 1).
+            if engine.ekf.initialized:
+                _is_writing_stream.append(bool(is_writing))
+                _history_idx_stream.append(len(engine.ekf._history) - 1)
 
             # Trail management (subsampled)
             _imu_subsample += 1
             if _imu_subsample >= TRAIL_SUBSAMPLE:
                 _imu_subsample = 0
 
+                # Phase 8 Step 4b — track stroke boundaries so the snap-to-RTS
+                # pass can replace just-written points with the offline RTS XY
+                # the instant the FSR fall edge fires.
+                rising  = is_writing and not _prev_writing
+                falling = (not is_writing) and _prev_writing
+                if rising:
+                    _stroke_history_start = len(engine.ekf._history)
+                    _stroke_draw_start    = len(draw_x)
+
                 if is_writing:
                     smoother.push(draw_pt[0], draw_pt[1])
                     sx, sy = smoother.get()
                     draw_x.append(sx)
                     draw_y.append(sy)
-                    _trim(draw_x, MAX_TRAIL)
-                    _trim(draw_y, MAX_TRAIL)
+                    # Edit 3: in CSV-playback mode keep every stroke visible.
+                    # Live mode still trims to bound memory.
+                    if parser.mode != 'csv':
+                        _trim(draw_x, MAX_TRAIL)
+                        _trim(draw_y, MAX_TRAIL)
                 else:
                     # NaN break on pen lift transition
-                    if _prev_writing:
+                    if falling:
+                        # Snap-to-RTS BEFORE inserting the NaN separator,
+                        # so the just-completed stroke's points get rewritten
+                        # in place with the offline-smoothed XY.
+                        _snap_stroke_to_rts()
                         draw_x.append(float('nan'))
                         draw_y.append(float('nan'))
                         smoother.reset()

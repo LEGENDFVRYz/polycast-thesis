@@ -1,9 +1,14 @@
 """
-trail_smoother.py -- Causal weighted moving average for the EKF drawing trail.
+trail_smoother.py -- ONLINE causal weighted moving average for the live trail.
 
-Shared between main_ekf.py (live/CSV playback visualiser) and the layer 6
-verification replay so both produce the same rendered strokes from identical
-EKF state trajectories.
+Priority 6: this module is now strictly the *online* (display-time) smoother.
+The previous class is renamed `OnlineTrailSmoother` so its role is unambiguous;
+`TrailSmoother` remains as a backward-compatible alias for legacy call-sites.
+
+For *offline* per-stroke smoothing of saved notes, see `note_smoother.py`,
+which runs an RTS pass over the EKF state/covariance history of each stroke.
+The two filters are deliberately separate so live latency and final note
+quality can be tuned independently.
 """
 
 from collections import deque
@@ -11,8 +16,14 @@ from collections import deque
 import numpy as np
 
 
-class TrailSmoother:
-    """Weighted moving average over the last N positions (causal, no lookahead)."""
+class OnlineTrailSmoother:
+    """5-point causal weighted moving average — live display only.
+
+    The kernel weights newest samples most heavily so the rendered tip
+    tracks the marker with minimal lag. There is no lookahead. Reset on
+    every contact transition (pen-up ↔ pen-down) so hover positions never
+    bleed into the next written stroke.
+    """
 
     _WEIGHTS = np.array([0.05, 0.10, 0.20, 0.30, 0.35])
 
@@ -40,3 +51,9 @@ class TrailSmoother:
     def reset(self):
         self._buf_x.clear()
         self._buf_y.clear()
+
+
+# Backward-compatible alias for older call-sites (main_ekf.py,
+# verification/layer6, batch_main_ekf_plot.py). New code should import
+# OnlineTrailSmoother directly.
+TrailSmoother = OnlineTrailSmoother

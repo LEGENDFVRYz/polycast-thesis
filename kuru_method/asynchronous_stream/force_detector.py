@@ -36,7 +36,7 @@ from collections import deque
 from data_parser import AsyncDataParser
 
 # -- Configuration ---------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE
+from config import SERIAL_PORT, BAUD_RATE, FSR_DT_NOM_S
 DATASET_FILENAME = ''           # '' = live;  'datasets/data.csv' = playback
 
 MAX_DISPLAY = 300               # rolling window width (samples)
@@ -76,35 +76,64 @@ class ForceContactDetector:
     # ENTER: FSR must exceed this to register contact (writing)
     # EXIT:  FSR must drop below this to register release (lifting)
     # Gap between them prevents chattering near the transition point.
+    #
+    # Phase 8 Step 2 attempted to override these from calibration_profile.json
+    # (Otsu on bimodal raw-FSR histogram). The Otsu split landed at ~970
+    # ADC, which produced a *narrower* hysteresis band (970→152) than the
+    # default and risked chatter on slow lifts. Layer-5 was already passing
+    # cleanly with the legacy 250/120 thresholds, so the calibrated FSR
+    # values are kept on disk for documentation but not applied. Use
+    # calibration_get('fsr_thresh_enter') / get('fsr_thresh_exit') if you
+    # want to experiment with them.
     THRESH_ENTER = 250.0    # ~100g light touch with 10kΩ divider
     THRESH_EXIT  = 120.0    # well below ENTER — hysteresis gap
 
-    # Temporal debounce (samples at 100 Hz)
-    # ON  — short: FSR contact response is fast
-    # OFF — longer: FSR release bounce takes a few ms to settle
-    DEBOUNCE_ON  = 3        # 30 ms
-    DEBOUNCE_OFF = 8        # 80 ms
+    # Temporal debounce — time-based (Priority 1).
+    # Stored as seconds, NOT sample counts. The detector accumulates elapsed
+    # `dt` from each call's timestamp (or falls back to the rate_profile
+    # nominal IMU/FSR dt) and trips when the cumulative confirming time
+    # crosses the threshold. This is invariant to whether the underlying
+    # stream is 50 / 100 / 200 Hz — what matters is wall-clock.
+    DEBOUNCE_ON_S  = 0.030   # 30 ms confirmed contact rise
+    DEBOUNCE_OFF_S = 0.080   # 80 ms confirmed contact fall
 
     def __init__(self):
         self._ema          = None
         self._state        = 0
-        self._consec_above = 0
-        self._consec_below = 0
+        self._t_above      = 0.0    # accumulated seconds raw_classify == 1
+        self._t_below      = 0.0    # accumulated seconds raw_classify == 0
         self._raw_classify = 0      # exposed for dashboard (pre-debounce)
+        self._last_ts_us   = None   # for dt computation when ts is provided
 
     # -- public API --------------------------------------------------------
 
-    def process(self, raw_force: float):
+    def process(self, raw_force: float, ts: int | None = None,
+                dt: float | None = None):
         """
         Parameters
         ----------
         raw_force : float   raw ADC value from FSR (0–4095)
+        ts        : int     optional sender micros() timestamp; if supplied,
+                            dt is derived from successive calls. Preferred.
+        dt        : float   explicit time step in seconds; overrides ts.
+                            Falls back to rate_profile nominal FSR dt if both
+                            are None.
 
         Returns
         -------
         contact_state : int     0 (lifting) or 1 (writing)
         smooth_force  : float   EMA-smoothed ADC value
         """
+        # Resolve dt for the debounce timer.
+        if dt is None:
+            if ts is not None and self._last_ts_us is not None:
+                dt_us = ts - self._last_ts_us
+                dt = dt_us / 1_000_000.0 if 0 < dt_us < 1_000_000 else FSR_DT_NOM_S
+            else:
+                dt = FSR_DT_NOM_S
+        if ts is not None:
+            self._last_ts_us = ts
+
         # Stage 1: EMA smoothing
         if self._ema is None:
             self._ema = raw_force
@@ -116,29 +145,30 @@ class ForceContactDetector:
         gated = smooth if smooth >= self.NOISE_FLOOR else 0.0
 
         # Stage 3: Hysteresis classification (Schmitt trigger)
-        # Use different thresholds depending on current state
         if self._state == 0:
             self._raw_classify = 1 if gated >= self.THRESH_ENTER else 0
         else:
             self._raw_classify = 0 if gated < self.THRESH_EXIT else 1
 
-        # Stage 4: Debounce state machine
+        # Stage 4: Time-based debounce
         if self._state == 0:                        # currently LIFTING
             if self._raw_classify == 1:
-                self._consec_above += 1
-                self._consec_below  = 0
-                if self._consec_above >= self.DEBOUNCE_ON:
+                self._t_above += dt
+                self._t_below  = 0.0
+                if self._t_above >= self.DEBOUNCE_ON_S:
                     self._state = 1                 # → WRITING
+                    self._t_above = 0.0
             else:
-                self._consec_above = 0
+                self._t_above = 0.0
         else:                                       # currently WRITING
             if self._raw_classify == 0:
-                self._consec_below += 1
-                self._consec_above  = 0
-                if self._consec_below >= self.DEBOUNCE_OFF:
+                self._t_below += dt
+                self._t_above  = 0.0
+                if self._t_below >= self.DEBOUNCE_OFF_S:
                     self._state = 0                 # → LIFTING
+                    self._t_below = 0.0
             else:
-                self._consec_below = 0
+                self._t_below = 0.0
 
         return self._state, smooth
 
@@ -257,7 +287,7 @@ class ForceDetectorDashboard:
         ax.set_yticklabels(['0  --  Lifting', '1  --  Writing'], fontsize=10)
         ax.set_title('Binary Contact State Output  (post-debounce)',
                      fontsize=12, weight='bold')
-        ax.set_xlabel('Sample index  (100 Hz)')
+        ax.set_xlabel('Sample index')
         ax.grid(True, alpha=0.15)
 
         writing_p = mpatches.Patch(color='#00FF99', alpha=0.3, label='Writing')
@@ -299,7 +329,7 @@ class ForceDetectorDashboard:
 
     def _ingest_imu(self, pkt):
         """Process a single IMU packet's force value."""
-        state, smooth = self.detector.process(pkt['force'])
+        state, smooth = self.detector.process(pkt['force'], ts=pkt.get('ts'))
         pre_state = self.detector._raw_classify
 
         # Count bounce events: pre-debounce flipped but final state didn't
@@ -401,8 +431,8 @@ class ForceDetectorDashboard:
         print(f'  Noise floor            : {ForceContactDetector.NOISE_FLOOR:.0f} ADC')
         print(f'  Enter threshold        : {ForceContactDetector.THRESH_ENTER:.0f} ADC')
         print(f'  Exit  threshold        : {ForceContactDetector.THRESH_EXIT:.0f} ADC')
-        print(f'  Debounce ON  window    : {ForceContactDetector.DEBOUNCE_ON} samples')
-        print(f'  Debounce OFF window    : {ForceContactDetector.DEBOUNCE_OFF} samples')
+        print(f'  Debounce ON  window    : {ForceContactDetector.DEBOUNCE_ON_S*1000:.0f} ms')
+        print(f'  Debounce OFF window    : {ForceContactDetector.DEBOUNCE_OFF_S*1000:.0f} ms')
         print('='*60 + '\n')
 
 

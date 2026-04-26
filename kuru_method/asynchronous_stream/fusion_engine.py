@@ -44,7 +44,11 @@ class IRLSTrilateration:
     # -- Tuning ------------------------------------------------------------
     _HUBER_DELTA  = 0.08   # m  residual above which anchor is penalised
     _N_ITERATIONS = 5      #    IRLS refinement passes
-    _MIN_ANCHORS  = 2      #    minimum valid anchors to attempt a solve
+    # Require at least 3 anchors to compute a reliable 2D fix.  A triangulation
+    # from only two anchors leaves a degree of freedom along their baseline and often
+    # produces large initial errors.  Raising the minimum to 3 improves cold‑start
+    # robustness at the cost of a slightly longer wait until enough anchors report ranges.
+    _MIN_ANCHORS  = 3      #    minimum valid anchors to attempt a solve
     _VALID_THR    = 0.05   # m  distances below this are treated as missing
 
     def __init__(self, anchors, bounds_min, bounds_max, tag_z=None):
@@ -61,6 +65,13 @@ class IRLSTrilateration:
         else:
             self.last_pos = np.mean(self.anchors, axis=0).copy()
 
+        # Priority 4: status of the most recent solve. Cold-start aggregator
+        # in AsyncEKFFusionEngine reads these to enforce ≥3-anchor seeding.
+        # `last_solve_ok=False` means the returned position is the previous
+        # estimate (a stale guess), not a fresh fix — do NOT seed from it.
+        self.last_solve_ok      = False
+        self.last_solve_n_valid = 0
+
     def solve(self, dists, quality_weights=None):
         if self._tag_z is not None:
             return self._solve_2d(dists, quality_weights)
@@ -73,8 +84,11 @@ class IRLSTrilateration:
 
         valid_idx = [i for i in range(n)
                      if dists[i] > self._VALID_THR and d2d[i] > 0.01]
+        self.last_solve_n_valid = len(valid_idx)
         if len(valid_idx) < self._MIN_ANCHORS:
+            self.last_solve_ok = False
             return self.last_pos.copy(), np.zeros(len(dists))
+        self.last_solve_ok = True
 
         v_anch = self._anch_2d[valid_idx]
         v_dist = d2d[valid_idx]
@@ -109,8 +123,11 @@ class IRLSTrilateration:
     def _solve_3d(self, dists, quality_weights=None):
         n         = min(len(self.anchors), len(dists))
         valid_idx = [i for i in range(n) if dists[i] > self._VALID_THR]
+        self.last_solve_n_valid = len(valid_idx)
         if len(valid_idx) < self._MIN_ANCHORS:
+            self.last_solve_ok = False
             return self.last_pos.copy(), np.zeros(len(dists))
+        self.last_solve_ok = True
 
         v_anch = self.anchors[valid_idx]
         v_dist = np.array([dists[i] for i in valid_idx], dtype=float)

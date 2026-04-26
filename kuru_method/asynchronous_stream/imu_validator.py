@@ -3,8 +3,15 @@ imu_validator.py  —  PolyCast IMU Integration Validator (Async Stream)
 ======================================================================
 """
 
+import os
 import sys
+from pathlib import Path
 import numpy as np
+import matplotlib
+# If SAVE_PNG is set (or no DISPLAY), use a headless backend so this script
+# can be driven non-interactively for per-CSV IMU diagnostic PNGs.
+if os.environ.get('SAVE_PNG') or os.environ.get('IMU_VALIDATOR_HEADLESS'):
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
@@ -18,7 +25,7 @@ from fusion_engine   import IRLSTrilateration
 
 # ── Configuration ──────────────────────────────────────────────────────
 from config import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
-DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
+DATASET_FILENAME = 'datasets_str_50hz/abc_s1.csv'   # '' = live; 'path/to/data.csv' = playback
 
 MAX_SAMPLES      = 500  # rolling window width for time-series plots
 RESET_INTERVAL_S = 2.0  # seconds between dead-reckoning resets to UWB
@@ -304,6 +311,37 @@ class IMUValidatorDashboard:
         print('='*55 + '\n')
 
 
+def _run_headless(dash, parser, save_dir: str, stem: str):
+    """Drain all CSV packets synchronously, redraw once, save PNG."""
+    while True:
+        pkt = parser.get_packet()
+        if pkt == 'EOF':
+            break
+        if pkt:
+            dash._ingest(pkt)
+    dash._redraw()
+    # Overwrite the banner with the dataset stem so each PNG is self-identifying
+    hl = 'YES' if dash._imu.heading_locked else 'accumulating...'
+    hvec = dash._imu.heading_vec.round(3) if dash._imu.heading_locked else None
+    if dash._buf_ax:
+        ax_stats = f"a_wb_x {np.mean(dash._buf_ax):+.2f}±{np.std(dash._buf_ax):.2f}"
+        ay_stats = f"a_wb_y {np.mean(dash._buf_ay):+.2f}±{np.std(dash._buf_ay):.2f}"
+        tilt_stats = f"tilt {np.mean(dash._buf_tilt):.0f}°±{np.std(dash._buf_tilt):.0f}°"
+    else:
+        ax_stats = ay_stats = tilt_stats = '—'
+    banner = (f"[{stem}]   heading={hl}"
+              + (f" {hvec}" if hvec is not None else '')
+              + f"   |   {ax_stats}   {ay_stats}   |   {tilt_stats}")
+    dash._stats_text.set_text(banner)
+
+    out_dir = Path(save_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f'imu_validator_{stem}.png'
+    dash.fig.savefig(out_path, dpi=110, facecolor=dash.fig.get_facecolor())
+    print(f'saved {out_path}')
+    dash._print_summary()
+
+
 def main():
     dataset = sys.argv[1] if len(sys.argv) > 1 else DATASET_FILENAME
     parser  = AsyncDataParser(port=SERIAL_PORT, baud=BAUD_RATE, csv_path=dataset)
@@ -312,8 +350,16 @@ def main():
 
     dash = IMUValidatorDashboard(parser)
     mode_str = 'CSV Playback' if parser.mode == 'csv' else 'Live Serial'
-    print(f'IMU Validator running in {mode_str} mode  (close window to stop)')
 
+    save_dir = os.environ.get('SAVE_PNG')
+    if save_dir and parser.mode == 'csv':
+        stem = Path(dataset).stem if dataset else 'live'
+        print(f'IMU Validator running HEADLESS on {stem}.csv — saving to {save_dir}/')
+        _run_headless(dash, parser, save_dir, stem)
+        parser.close()
+        return
+
+    print(f'IMU Validator running in {mode_str} mode  (close window to stop)')
     ani = FuncAnimation(dash.fig, dash.animate, interval=40, blit=False, cache_frame_data=False)
     plt.show()
     parser.close()

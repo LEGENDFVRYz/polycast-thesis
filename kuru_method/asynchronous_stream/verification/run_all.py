@@ -21,16 +21,29 @@ import layer3_imu_raw         as L3
 import layer4_imu_integration as L4
 import layer5_force_contact   as L5
 import layer6_ekf_end_to_end  as L6
+import layer7_ablations       as L7
+import layer8_penup           as L8
+import layer9_strokes         as L9
+import layer10_legibility     as L10
+import layer11_latency        as L11
 
 
 LAYERS = [
+    # Tier A — sensor-level
     ('layer0_stream_health',      L0),
     ('layer1_uwb_raw',            L1),
-    ('layer2_uwb_position',       L2),
     ('layer3_imu_raw',            L3),
+    # Tier B — fusion-level
+    ('layer2_uwb_position',       L2),
     ('layer4_imu_integration',    L4),
     ('layer5_force_contact',      L5),
     ('layer6_ekf_end_to_end',     L6),
+    ('layer7_ablations',          L7),
+    ('layer8_penup',              L8),
+    # Tier C — output-level
+    ('layer9_strokes',            L9),
+    ('layer10_legibility',        L10),
+    ('layer11_latency',           L11),
 ]
 
 

@@ -24,7 +24,7 @@ from config      import ANCHORS            # noqa: E402
 
 # -- Paths ----------------------------------------------------------------
 ASYNC_DIR    = _PARENT
-DATASET_DIR  = ASYNC_DIR / os.environ.get('ASYNC_DATASETS', 'datasets_standard')
+DATASET_DIR  = ASYNC_DIR / os.environ.get('ASYNC_DATASETS', 'datasets_str_50hz')
 OUT_DIR      = Path(__file__).resolve().parent / 'out'
 
 
@@ -36,7 +36,7 @@ def ensure_out(layer: str) -> Path:
 
 # -- Dataset discovery ----------------------------------------------------
 def list_datasets(predicate=None) -> list[Path]:
-    """Return sorted list of .csv files under datasets_a3_ls/ matching predicate."""
+    """Return sorted list of .csv files under DATASET_DIR matching predicate."""
     files = sorted(DATASET_DIR.glob('*.csv'))
     if predicate is not None:
         files = [f for f in files if predicate(f.stem)]

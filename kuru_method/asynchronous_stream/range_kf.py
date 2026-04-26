@@ -155,14 +155,28 @@ class PerAnchorRangeKFBank:
                      for _ in range(n_anchors)]
 
     def step_all(self, dt: float, raw_ranges) -> np.ndarray:
-        """Run a predict+update for every anchor; return filtered ranges."""
+        """
+        Run a predict+update for every anchor; return filtered ranges.
+
+        Priority 2: on a missing/NaN raw measurement, the KF still runs the
+        *predict* step (so covariance grows correctly with elapsed time),
+        but skips the update. NaN propagates downstream so the EKF knows
+        the measurement is genuinely missing rather than stale.
+        """
         out = np.full(len(self._kfs), np.nan, dtype=float)
+        dt_f = float(dt)
         for i, z in enumerate(raw_ranges[:len(self._kfs)]):
+            kf = self._kfs[i]
             if np.isfinite(z):
-                out[i] = self._kfs[i].step(float(dt), float(z))
+                out[i] = kf.step(dt_f, float(z))
             else:
-                # Skip predict on missing measurement — preserves last state.
-                out[i] = self._kfs[i].range if self._kfs[i].range is not None else np.nan
+                # Predict-only: advance state and inflate covariance, but
+                # do not fold an imaginary measurement back in.
+                if kf._x is not None and 0.0 < dt_f < 2.0:
+                    kf._predict(dt_f)
+                # Surface NaN so the EKF skips this anchor; range buffer is
+                # preserved internally for the next valid sample.
+                out[i] = float('nan')
         return out
 
     def update_feedback(self, posterior_ranges) -> None:

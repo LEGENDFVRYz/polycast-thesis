@@ -91,7 +91,7 @@ class ContactConfig:
 
     # Debounce prevents force spikes/dips from fragmenting strokes.
     pen_down_debounce_ms: float = 10.0
-    pen_up_debounce_ms: float = 30.0
+    pen_up_debounce_ms: float = 8.0   # Phase-3: reduced from 30 ms — debounce window was wider than FSR noise requires
 
     # Minimum confirmed drawing time before opening a stroke.
     min_draw_ms: float = 25.0
@@ -232,51 +232,60 @@ class FusionModeParams:
     # Higher gives IMU more stroke shape authority.
     acc_scale: float = 1.0
 
+    # Hard ceiling on position Kalman gain K[0:2].
+    # Values < 1.0 prevent a momentarily clean UWB from yanking the stroke
+    # even if R collapses.  Set to 1.0 to disable.
+    pos_gain_cap: float = 1.0
+
 
 @dataclass(frozen=True)
 class FusionModeTable:
     # Normal pen-down drawing.
-    # Balanced: UWB anchors shape, IMU still influences small details.
+    # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.30,   # tuner Stage-1 winner: weaker UWB pull lets IMU preserve handwritten curvature
-        drag_inv_s     = 0.70,   # tuner result: moderate damping; drag had low sensitivity but 0.70 was stable on abc_s1/s2
+        sigma_scale    = 1.50,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
+        drag_inv_s     = 0.70,   # keep from Stage-1 tuner — stable on abc_s1/s2
         dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
         jump_speed_max = 1.8,
-        pos_floor      = 0.005,  # tuner Stage-1 winner: lower floor prevents excessive UWB gain during contact
-        acc_scale      = 1.35,   # compromise: 1.05 best on abc-only, 1.50 best on abc+square
+        pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
+        acc_scale      = 1.35,   # keep from Stage-1 tuner
+        pos_gain_cap   = 0.10,   # hard K ceiling: even a momentarily clean UWB cannot pull more than 10 % per sample
     ))
 
     # Short high-speed burst mode.
-    # Used when handwriting moves quickly; IMU temporarily owns local shape.
+    # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.50,   # tuner Stage-2 winner: fast mode should not fully detach from UWB
+        sigma_scale    = 1.15,   # Phase-1: moderate loosening for fast strokes
         drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
-        acc_scale      = 1.00,   # tuner Stage-2 winner: high acc_scale made fast mode too unstable
+        acc_scale      = 1.00,   # keep from Stage-2 tuner
+        pos_gain_cap   = 0.18,   # slightly more UWB latitude during fast strokes
     ))
 
     # Pen lifted / air movement.
-    # Strongly suppress IMU dead-reckoning; UWB may re-anchor if clean.
+    # UWB re-anchors aggressively; IMU suppressed to prevent drift carry-over.
     air: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.80,   # tuner Stage-3 winner: trust clean UWB more during air/re-entry
-        drag_inv_s     = 4.0,    # tuner Stage-3 winner: aggressively kill air dead-reckoning drift
+        sigma_scale    = 0.40,   # Phase-1: strong UWB pull between strokes to re-anchor placement
+        drag_inv_s     = 4.0,    # keep from Stage-3 tuner — aggressively kill air dead-reckoning drift
         dir_penalty    = 3.0,
         jump_speed_max = 1.4,
         pos_floor      = 0.015,
-        acc_scale      = 0.08,   # further suppress IMU integration while pen is lifted
+        acc_scale      = 0.08,   # suppress IMU integration while pen is lifted
+        pos_gain_cap   = 1.0,    # no cap in air — UWB should correct freely
     ))
 
     # Still/idle mode.
-    # Avoid trusting small UWB jitter as real movement.
+    # UWB re-anchors hard; IMU completely suppressed.
     static: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 2.2,
+        sigma_scale    = 0.30,   # Phase-1: very strong UWB pull when truly idle
         drag_inv_s     = 0.6,
         dir_penalty    = 3.0,
         jump_speed_max = 1.2,
         pos_floor      = 0.010,
         acc_scale      = 0.0,
+        pos_gain_cap   = 1.0,    # no cap when idle
     ))
 
 
@@ -356,6 +365,13 @@ class FusionESKFConfig:
     # this amount.  Prevents ~5 cm UWB noise over 50 ms (≈1 m/s) from injecting a
     # large spurious velocity that integrates into a 40+ cm teleport.
     uwb_vel_dev_max: float = 0.45
+
+    # Stroke-start UWB soft snap.
+    # On pen-down rising edge, apply a position pseudo-measurement toward the
+    # last known UWB fix so each letter starts at the correct board location.
+    # Lower sigma_scale = stronger pull toward UWB at pen-down.
+    stroke_start_sigma_scale: float = 0.50    # multiplied onto sigma_uwb
+    stroke_start_uwb_max_age_s: float = 0.10  # skip snap if UWB is older than this
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.

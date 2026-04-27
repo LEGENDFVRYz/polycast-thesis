@@ -83,6 +83,14 @@ _C_IMU    = (80,  130, 220, 140)
 _C_ANCHOR = (220,  30,  30, 255)
 _C_BOARD  = (60,   60,  60, 200)
 
+# Mode strip colours (R, G, B, A)
+_MODE_COLORS = {
+    'CONTACT_DRAWING': (50,  200,  80, 220),
+    'DRAWING_FAST':    (240, 180,   0, 220),
+    'AIR_MOVE':        (140, 140, 140, 160),
+}
+_MODE_STRIP_LEN = 2000   # rolling samples shown in the strip
+
 
 # ── IMU dead-reckoning integrator (blue layer) ────────────────────────────────
 class _IMUTrack:
@@ -197,6 +205,38 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     else:
         L.append('  (waiting for UWB data)')
 
+    # Fusion mode panel
+    L += ['', D, '  FUSION MODE']
+    if latest_fused:
+        mode = latest_fused.get('fusion_mode', '?')
+        e3   = latest_fused.get('eskf', {})
+        fc   = e3.get('frames_contact', 0)
+        ff   = e3.get('frames_fast', 0)
+        fa   = e3.get('frames_air', 0)
+        fs   = e3.get('frames_static', 0)
+        total = fc + ff + fa + fs
+        def pct(n): return 100 * n / total if total else 0
+        avg_kc = e3.get('avg_K_contact', 0.0)
+        avg_kf = e3.get('avg_K_fast', 0.0)
+        avg_ka = e3.get('avg_K_air', 0.0)
+        arm    = e3.get('fast_arm_count', 0)
+        burst  = e3.get('fast_burst_count', 0)
+        fast_f  = cfg.fusion_eskf.drawing_fast_min_frames
+        snaps   = e3.get('stroke_start_snaps', 0)
+        is_fast = e3.get('drawing_fast', False)
+        fast_tag = ' ★FAST' if is_fast else ''
+        L += [
+            f"  Mode     : {mode}{fast_tag}",
+            f"  F_draw   : {fc:4d} ({pct(fc):3.0f}%)  K̄={avg_kc:.4f}",
+            f"  F_fast   : {ff:4d} ({pct(ff):3.0f}%)  K̄={avg_kf:.4f}",
+            f"  F_air    : {fa:4d} ({pct(fa):3.0f}%)  K̄={avg_ka:.4f}",
+            f"  F_static : {fs:4d} ({pct(fs):3.0f}%)",
+            f"  FastArm  : {arm}/{fast_f}  Burst: {burst}",
+            f"  SnapCount: {snaps}",
+        ]
+    else:
+        L.append('  (waiting for fusion data)')
+
     # Session counts
     L += [
         '', D, '  SESSION',
@@ -252,6 +292,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.closed_count  = 0
         self._stopping     = False
 
+        # Mode strip rolling colour buffer (one entry per IMU sample)
+        self._strip_colors = deque(maxlen=_MODE_STRIP_LEN)
+
         # ── CSV ───────────────────────────────────────────────────────────────
         self._csvf   = open(CSV_FILENAME, 'w', newline='', buffering=1)
         self._writer = csv.writer(self._csvf)
@@ -260,8 +303,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'imu_p_x', 'imu_p_y',
             'uwb_p_x', 'uwb_p_y',
             'fused_x', 'fused_y',
-            'state', 'stroke_id', 'stroke_active',
-            'is_static', 'contact', 'force', 'jerk',
+            'state', 'fusion_mode', 'stroke_id', 'stroke_active',
+            'is_static', 'contact', 'contact_raw', 'ink_written', 'force', 'jerk',
             'P_pos_trace', 'innovation_norm', 'r_scale',
             'K_pos_diag', 'b_a_norm', 'uwb_residual_rms',
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
@@ -276,7 +319,13 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         hbox.setContentsMargins(6, 6, 6, 6)
         hbox.setSpacing(8)
 
-        # Board plot (left, 3/4 width)
+        # Left column: board plot + mode strip (stacked vertically)
+        left_widget = QtWidgets.QWidget()
+        vbox_left = QtWidgets.QVBoxLayout(left_widget)
+        vbox_left.setContentsMargins(0, 0, 0, 0)
+        vbox_left.setSpacing(2)
+
+        # Board plot
         self._plot_widget = pg.PlotWidget(title='Drawing Board — Live')
         self._plot_widget.setBackground('#fafafa')
         self._plot_widget.setAspectLocked(True)
@@ -285,7 +334,30 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self._plot_widget.showGrid(x=True, y=True, alpha=0.20)
         self._plot_widget.getAxis('bottom').setLabel('Board X (m)')
         self._plot_widget.getAxis('left').setLabel('Board Y (m)')
-        hbox.addWidget(self._plot_widget, stretch=3)
+        vbox_left.addWidget(self._plot_widget, stretch=1)
+
+        # Mode strip (time × mode colour, 38 px tall)
+        self._strip_widget = pg.PlotWidget()
+        self._strip_widget.setBackground('#1a1a1a')
+        self._strip_widget.setFixedHeight(38)
+        self._strip_widget.hideAxis('left')
+        self._strip_widget.hideAxis('bottom')
+        self._strip_widget.setMouseEnabled(x=False, y=False)
+        self._strip_widget.setMenuEnabled(False)
+        # Label inside the strip using a TextItem
+        _strip_lbl = pg.TextItem(
+            '  FUSION MODE STRIP  ·  green=CONTACT  yellow=FAST  gray=AIR',
+            color=(200, 200, 200), anchor=(0, 0),
+        )
+        _strip_lbl.setPos(0, 0.5)
+        self._strip_widget.addItem(_strip_lbl)
+        self._strip_scatter = pg.ScatterPlotItem(size=6, pxMode=True)
+        self._strip_widget.addItem(self._strip_scatter)
+        self._strip_widget.setXRange(0, _MODE_STRIP_LEN, padding=0)
+        self._strip_widget.setYRange(0, 1, padding=0)
+        vbox_left.addWidget(self._strip_widget, stretch=0)
+
+        hbox.addWidget(left_widget, stretch=3)
 
         # Debug panel (right, 1/4 width)
         self._debug_label = QtWidgets.QLabel()
@@ -397,6 +469,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 self.latest_fused = fused
                 self._dirty       = True
 
+                # Mode strip — one entry per IMU sample (store mode name string)
+                self._strip_colors.append(fused.get('fusion_mode', 'AIR_MOVE'))
+
                 fx, fy = fused['fused_x'], fused['fused_y']
                 if math.isfinite(fx) and math.isfinite(fy):
                     if fused.get('stroke_active', False):
@@ -456,6 +531,24 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         else:
             self._cur_curve.setData([], [])
 
+        # Mode strip — render per-sample colour band
+        if self._strip_colors:
+            if not hasattr(self, '_cached_brushes'):
+                # Pre-build QBrush objects once; reuse per-frame (3 possible modes)
+                self._cached_brushes = {k: pg.mkBrush(*v) for k, v in _MODE_COLORS.items()}
+                self._cached_brushes['_fallback'] = pg.mkBrush(100, 100, 100, 160)
+            n = len(self._strip_colors)
+            xs = list(range(n))
+            ys = [0.5] * n
+            fb = self._cached_brushes['_fallback']
+            brushes = [self._cached_brushes.get(m, fb) for m in self._strip_colors]
+            self._strip_scatter.setData(
+                x=xs, y=ys,
+                brush=brushes,
+                pen=pg.mkPen(None),
+            )
+            self._strip_widget.setXRange(max(0, n - _MODE_STRIP_LEN), n, padding=0)
+
         # Debug panel
         txt = _format_debug(
             self.latest_fused, self.latest_uwb_fused,
@@ -486,10 +579,17 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{self.last_uwb_p[0]:.4f}', f'{self.last_uwb_p[1]:.4f}',
             f'{fused["fused_x"]:.4f}', f'{fused["fused_y"]:.4f}',
             fused.get('state', ''),
+            fused.get('fusion_mode', ''),
             fused.get('stroke_id', 0),
             int(fused.get('stroke_active', False)),
             int(imu_ev.get('is_static', False)),
             int(imu_ev.get('contact', False)),
+            int(fused.get('contact_raw', True)),
+            int(
+                bool(fused.get('stroke_active', False)) and
+                bool(fused.get('contact_raw', True)) and
+                int(fused.get('stroke_id', 0)) != 0
+            ),
             f'{imu_ev.get("force", 0):.1f}',
             f'{imu_ev.get("jerk", 0):.4f}',
             f'{e.get("P_pos_trace", 0):.5f}',

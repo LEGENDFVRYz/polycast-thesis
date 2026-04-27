@@ -100,6 +100,10 @@ class StrokeReconstructor:
 
     # ── Internals ─────────────────────────────────────────────────────────────
     def _start_stroke(self, sid: int, ev: dict):
+        # Phase-3: skip first point if physical contact is already gone.
+        # contact_raw defaults True for backward-compat with pre-Phase-3 events.
+        if not ev.get('contact_raw', True):
+            return
         x, y = float(ev['fused_x']), float(ev['fused_y'])
         if not (math.isfinite(x) and math.isfinite(y)):
             return
@@ -112,6 +116,9 @@ class StrokeReconstructor:
         }
 
     def _append_point(self, ev: dict):
+        # Phase-3: skip ink when physical contact is gone (tail samples in debounce window).
+        if not ev.get('contact_raw', True):
+            return
         x  = float(ev['fused_x'])
         y  = float(ev['fused_y'])
         if not (math.isfinite(x) and math.isfinite(y)):

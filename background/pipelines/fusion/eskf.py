@@ -141,12 +141,14 @@ class ESKF:
         # ── Book-keeping ────────────────────────────────────────────────────
         self.last_ts: int | None = None
         self.last_uwb = self.p.copy()
+        self._last_uwb_fix_ts: int | None = None   # hw ts of the last stored last_uwb
         self._last_innovation_norm = 0.0
         self._last_r_scale = 1.0
         self._last_K_pos = 0.0
         self._last_uwb_residual_rms = 0.0
         self._uwb_accepted = 0
         self._uwb_rejected = 0
+        self._stroke_start_snaps = 0   # number of pen-down soft snaps applied
         self._have_imu_attitude = False
         self._last_lever_arm_m = 0.0
         self._last_lever_r_world = np.zeros(3, dtype=float)
@@ -179,10 +181,12 @@ class ESKF:
         self._in_fast_mode: bool    = False
 
         # ── Mode statistics (accelerate per-regime tuning) ───────────────────
-        self._frames_contact = 0     # CONTACT_DRAWING IMU frames
+        self._frames_contact = 0     # CONTACT_DRAWING (normal speed) IMU frames
+        self._frames_fast    = 0     # CONTACT_DRAWING + DRAWING_FAST IMU frames
         self._frames_air = 0         # AIR_MOVE IMU frames
         self._frames_static = 0      # IDLE / CONTACT_STATIC IMU frames
-        self._k_contact_sum = 0.0    # sum of K_pos_diag during contact frames
+        self._k_contact_sum = 0.0    # sum of K_pos_diag during normal-contact frames
+        self._k_fast_sum    = 0.0    # sum of K_pos_diag during fast-contact frames
         self._k_air_sum = 0.0        # sum of K_pos_diag during air frames
 
         self._board_w = bx
@@ -252,6 +256,12 @@ class ESKF:
         if self._prev_stroke_active:
             return ecfg.modes.drawing_fast if self._in_fast_mode else ecfg.modes.drawing
         return ecfg.modes.air
+
+    def _mode_name(self) -> str:
+        """Human-readable fusion mode name matching _mode_params() — pure read."""
+        if self._prev_stroke_active:
+            return 'DRAWING_FAST' if self._in_fast_mode else 'CONTACT_DRAWING'
+        return 'AIR_MOVE'
 
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
@@ -331,6 +341,7 @@ class ESKF:
         stroke_active_now = bool(ev.get('stroke_active', False))
         if stroke_active_now and not self._prev_stroke_active:
             self._zupt_soft_update(sigma=0.05)
+            self._stroke_start_uwb_snap(ts)
         elif (not stroke_active_now) and self._prev_stroke_active:
             ecfg_se = cfg.fusion_eskf
             self.v *= ecfg_se.stroke_end_v_decay
@@ -342,8 +353,12 @@ class ESKF:
         # Mode statistics — accumulate per-frame counters for tuning diagnostics.
         stroke_state = ev.get('stroke_state', 'UNKNOWN')
         if stroke_state == 'CONTACT_DRAWING':
-            self._frames_contact += 1
-            self._k_contact_sum  += self._last_K_pos
+            if self._in_fast_mode:
+                self._frames_fast += 1
+                self._k_fast_sum  += self._last_K_pos
+            else:
+                self._frames_contact += 1
+                self._k_contact_sum  += self._last_K_pos
         elif stroke_state == 'AIR_MOVE':
             self._frames_air += 1
             self._k_air_sum  += self._last_K_pos
@@ -355,13 +370,17 @@ class ESKF:
 
         self._clamp_to_board()
 
-        return self._emit(
+        out = self._emit(
             ts       = ts,
             source   = 'IMU',
             state    = stroke_state,
             sid      = ev.get('stroke_id', 0),
             active   = ev.get('stroke_active', False),
         )
+        # Forward physical contact flag so reconstruct.py can gate ink strictly.
+        # contact_raw=True is the safe default for events that predate this field.
+        out['contact_raw'] = bool(ev.get('contact', True))
+        return out
 
     # ────────────────────────────────────────────────────────────────────────
     # UWB path — Kalman correction (Steps 3+4)
@@ -387,6 +406,7 @@ class ESKF:
 
         # Time interpolation: innovation against state at UWB timestamp (Step 4).
         ts_uwb = ev.get('ts_hw', ts)
+        self._last_uwb_fix_ts = ts_uwb   # record for stroke-start snap age check
         interp = self._interpolate_at(ts_uwb)
         if interp is not None:
             p_ref, _, q_ref = interp
@@ -611,6 +631,13 @@ class ESKF:
 
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
+
+        # Hard position-gain ceiling — clamps first two rows of K so a
+        # momentarily clean UWB cannot yank the position mid-stroke.
+        cap = mode_p.pos_gain_cap
+        if cap < 1.0:
+            K[0:2, :] = np.clip(K[0:2, :], -cap, cap)
+
         self._last_K_pos = float(K[0, 0])
 
         dx = K @ y
@@ -804,8 +831,50 @@ class ESKF:
         self._sanitize_covariance()
         self._apply_covariance_floor()
         self._sanitize_state()
-        
-        
+
+    def _stroke_start_uwb_snap(self, ts: int):
+        """Soft UWB position pseudo-measurement on pen-down rising edge.
+
+        Pulls the filter's position toward the last known UWB fix so each
+        stroke starts at the correct board location.  Only fires when a fresh
+        UWB fix is available (age < stroke_start_uwb_max_age_s).
+        """
+        ecfg = cfg.fusion_eskf
+        if self._last_uwb_fix_ts is None:
+            return
+        age_s = (ts - self._last_uwb_fix_ts) / 1_000_000.0
+        if age_s > ecfg.stroke_start_uwb_max_age_s:
+            return
+
+        H = np.zeros((2, 6))
+        H[0, 0] = 1.0
+        H[1, 1] = 1.0
+
+        sigma = ecfg.sigma_uwb * ecfg.stroke_start_sigma_scale
+        R = (sigma ** 2) * np.eye(2)
+
+        y = self.last_uwb - self.p
+        S = H @ self.P @ H.T + R
+        K = self.P @ H.T @ np.linalg.inv(S)
+
+        dx = K @ y
+        if not np.all(np.isfinite(dx)):
+            return
+        dx[0:2] = np.clip(dx[0:2], -0.15, 0.15)
+        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
+        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
+        self.p   += dx[0:2]
+        self.v   += dx[2:4]
+        self.b_a += dx[4:6]
+
+        I = np.eye(6)
+        IKH = I - K @ H
+        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        self._sanitize_covariance()
+        self._apply_covariance_floor()
+        self._sanitize_state()
+        self._stroke_start_snaps += 1
+
     def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
         """Kalman update for a UWB-derived velocity pseudo-measurement.
 
@@ -954,6 +1023,7 @@ class ESKF:
             'uwb_x': float(self.last_uwb[0]),
             'uwb_y': float(self.last_uwb[1]),
             'state': state,
+            'fusion_mode': self._mode_name(),
             'stroke_id': sid,
             'stroke_active': active,
             'eskf': {
@@ -992,14 +1062,20 @@ class ESKF:
                 'cov_resets':        self._cov_resets,
                 # Innovation-deadlock recovery diagnostics
                 'innov_reject_streak': self._innov_reject_streak,
-                'uwb_snap_count':    self._uwb_snap_count,
+                'uwb_snap_count':      self._uwb_snap_count,
+                # Stroke-start soft snap diagnostics
+                'stroke_start_snaps':  self._stroke_start_snaps,
                 # Mode statistics — counters for per-regime tuning
                 'frames_contact':    self._frames_contact,
+                'frames_fast':       self._frames_fast,
                 'frames_air':        self._frames_air,
                 'frames_static':     self._frames_static,
                 'avg_K_contact':     round(
                     self._k_contact_sum / self._frames_contact
                     if self._frames_contact > 0 else 0.0, 5),
+                'avg_K_fast':        round(
+                    self._k_fast_sum / self._frames_fast
+                    if self._frames_fast > 0 else 0.0, 5),
                 'avg_K_air':         round(
                     self._k_air_sum / self._frames_air
                     if self._frames_air > 0 else 0.0, 5),

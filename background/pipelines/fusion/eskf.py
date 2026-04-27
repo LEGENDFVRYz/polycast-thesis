@@ -197,7 +197,10 @@ class ESKF:
         """
         if not _rts_enabled():
             return []
-        return [e for e in self._rts_buf if e['stroke_id'] == stroke_id]
+        return [
+            e for e in self._rts_buf
+            if e.get('stroke_id') == stroke_id and e.get('stroke_active', True)
+        ]
 
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
@@ -288,20 +291,25 @@ class ESKF:
         # nonlinear propagation (acc input term not captured by F alone).
         if _rts_enabled():
             sid_now = int(ev.get('stroke_id', 0))
-            # Clear buffer on every new stroke so the slice stays contiguous.
-            if sid_now != self._rts_current_sid:
-                self._rts_buf.clear()
-                self._rts_current_sid = sid_now
-            self._rts_buf.append({
-                'ts':        ts,
-                'x_pred':    np.concatenate([_rts_p_pred, _rts_v_pred, _rts_ba_pred]),
-                'P_pred':    _rts_P_pred,
-                'x_post':    np.concatenate([self.p, self.v, self.b_a]),
-                'P_post':    self.P.copy(),
-                'F':         F,
-                'Q':         Q,
-                'stroke_id': sid_now,
-            })
+            # Buffer only confirmed active-writing IMU samples. In this
+            # architecture stroke_id persists after pen-up, so appending every
+            # IMU sample would leak hover/relocation points into the RTS pass.
+            # Keep the just-closed stroke until the next active stroke changes id.
+            if stroke_active_now and sid_now > 0:
+                if sid_now != self._rts_current_sid:
+                    self._rts_buf.clear()
+                    self._rts_current_sid = sid_now
+                self._rts_buf.append({
+                    'ts':            ts,
+                    'x_pred':        np.concatenate([_rts_p_pred, _rts_v_pred, _rts_ba_pred]),
+                    'P_pred':        _rts_P_pred,
+                    'x_post':        np.concatenate([self.p, self.v, self.b_a]),
+                    'P_post':        self.P.copy(),
+                    'F':             F,
+                    'Q':             Q,
+                    'stroke_id':     sid_now,
+                    'stroke_active': True,
+                })
 
         self._clamp_to_board()
 

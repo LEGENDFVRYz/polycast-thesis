@@ -229,13 +229,18 @@ class FusionESKFConfig:
 class PostprocessConfig:
     rts_enabled:             bool  = True
     rts_max_stroke_samples:  int   = 50000    # hard cap ~20 s at 200 Hz
-    spline_resample_ds_m:    float = 0.001   # 1 mm arc-length step
+    spline_resample_ds_m:    float = 0.0001   # 1 mm arc-length step
     spline_min_points:       int   = 5       # skip spline below this count
     # splprep smoothing factor per unique knot: s = spline_smoothing_factor * n_unique
     # 0.0 → interpolating (no smoothing), ~0.002–0.005 → light smoothing for handwriting.
     spline_smoothing_factor: float = 0.002
 
-    # Trail smoother (OnlineTrailSmoother applied as post-process on closed strokes)
+    # Post-stroke smoothing mode selector:
+    #   'online'  — 3-point causal WMA (OnlineTrailSmoother); low-effort, low-distortion
+    #   'offline' — RTS backward pass over ESKF history + spline resample; aggressive quality
+    # Both modes run at pen-up (post-event), never during live drawing.
+    # 'offline' requires fusion_mode == 'eskf' and rts_enabled == True.
+    smoothing_mode:          str   = 'offline'
     trail_enabled:           bool  = True
 
 

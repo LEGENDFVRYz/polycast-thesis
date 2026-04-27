@@ -238,7 +238,7 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # Balanced: UWB anchors shape, IMU still influences small details.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.85,   # tuner Stage-1 winner: weaker UWB pull lets IMU preserve handwritten curvature
+        sigma_scale    = 0.30,   # tuner Stage-1 winner: weaker UWB pull lets IMU preserve handwritten curvature
         drag_inv_s     = 0.70,   # tuner result: moderate damping; drag had low sensitivity but 0.70 was stable on abc_s1/s2
         dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
         jump_speed_max = 1.8,
@@ -249,7 +249,7 @@ class FusionModeTable:
     # Short high-speed burst mode.
     # Used when handwriting moves quickly; IMU temporarily owns local shape.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.90,   # tuner Stage-2 winner: fast mode should not fully detach from UWB
+        sigma_scale    = 0.50,   # tuner Stage-2 winner: fast mode should not fully detach from UWB
         drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
@@ -308,6 +308,10 @@ class FusionESKFConfig:
     r_scale_max: float = 10.0  # tuner Stage-4 winner: cap R inflation earlier
     hard_reject_mult: float = 3.0  # tighter hard rejection for bad trilateration periods
     innov_hard_reject_m: float = 0.50  # UWB innovation magnitude hard reject (m); >25 cm UWB↔IMU disagreement is non-physical in board writing
+    # Recovery: after this many consecutive innovation-gate rejections with clean
+    # UWB geometry the filter is assumed lost and _snap_to_uwb() re-localizes.
+    # At 50 Hz UWB this is ~120 ms before recovery triggers.
+    innov_recovery_n: int = 6
 
     # Turn detection.
     # For handwriting, avoid making TURN fire too often.
@@ -337,10 +341,21 @@ class FusionESKFConfig:
     dir_check_cos_thresh: float = -0.3
 
     # UWB jump gate: if UWB implies fast motion but IMU speed is low, reject.
-    uwb_jump_imu_speed_min: float = 0.5
+    # Lowered from 0.5 → 0.15 so the gate fires whenever pen is not genuinely fast,
+    # preventing NLOS spikes from sneaking through when IMU has moderate velocity.
+    uwb_jump_imu_speed_min: float = 0.15
 
     # Velocity covariance floor.
-    vel_floor: float = 0.08
+    # Lowered from 0.08 → 0.02 so the filter can converge velocity confidence after
+    # consistent UWB anchoring.  0.08 kept P_vel ≥ 0.0064 m²/s² permanently, giving
+    # the UWB velocity pseudo-update a ~0.9 Kalman gain even on noisy samples.
+    vel_floor: float = 0.02
+
+    # UWB velocity deviation gate: skip the velocity pseudo-update when the central-
+    # difference UWB velocity disagrees with the current filter velocity by more than
+    # this amount.  Prevents ~5 cm UWB noise over 50 ms (≈1 m/s) from injecting a
+    # large spurious velocity that integrates into a 40+ cm teleport.
+    uwb_vel_dev_max: float = 0.45
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.

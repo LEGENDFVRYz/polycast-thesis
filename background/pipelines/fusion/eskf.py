@@ -166,6 +166,13 @@ class ESKF:
         self._dt_clamps = 0          # cumulative count of dt-jitter clamps
         self._cov_resets = 0         # cumulative covariance reset events (NaN recovery)
 
+        # ── Innovation-deadlock recovery ─────────────────────────────────────
+        # Counts consecutive UWB updates rejected by the innovation hard-gate.
+        # When the streak reaches innov_recovery_n with clean UWB geometry, the
+        # filter is assumed lost and _snap_to_uwb() re-localizes the position.
+        self._innov_reject_streak = 0
+        self._uwb_snap_count = 0     # cumulative re-localizations for diagnostics
+
         # ── DRAWING_FAST mode tracking ───────────────────────────────────────
         self._fast_arm_count: int   = 0    # consecutive frames at/above speed threshold
         self._fast_burst_count: int = 0    # hold-down counter after trigger fires
@@ -199,14 +206,17 @@ class ESKF:
     def reset(self):
         self.__init__()
 
-    def _resolve_mode(self):
-        """Return the FusionModeParams for the current filter state.
+    def _update_and_resolve_mode(self):
+        """Update DRAWING_FAST state and return mode params — call ONCE per IMU frame.
 
         DRAWING_FAST arms after drawing_fast_min_frames consecutive frames where
         tip speed >= drawing_fast_speed_thresh, then holds for drawing_fast_burst_frames
         additional IMU frames before returning to DRAWING.  This gives IMU a bounded
         authority window on short fast strokes without letting it drift indefinitely.
         Resets immediately on pen-up.
+
+        This method mutates _fast_arm_count, _fast_burst_count, _in_fast_mode.
+        Use _mode_params() everywhere else (pure read, no side effects).
         """
         ecfg = cfg.fusion_eskf
         if self._prev_stroke_active:
@@ -230,6 +240,17 @@ class ESKF:
         self._fast_arm_count = 0
         self._fast_burst_count = 0
         self._in_fast_mode = False
+        return ecfg.modes.air
+
+    def _mode_params(self):
+        """Return current mode params — pure read, no side effects.
+
+        Uses the state already computed by _update_and_resolve_mode() on the last
+        IMU frame.  Safe to call from UWB path, covariance helpers, etc.
+        """
+        ecfg = cfg.fusion_eskf
+        if self._prev_stroke_active:
+            return ecfg.modes.drawing_fast if self._in_fast_mode else ecfg.modes.drawing
         return ecfg.modes.air
 
     # ────────────────────────────────────────────────────────────────────────
@@ -273,7 +294,7 @@ class ESKF:
             or ev.get('acc_board', (0.0, 0.0))
         )
         acc = np.asarray(acc_src, dtype=float)
-        mode_p = self._resolve_mode()
+        mode_p = self._update_and_resolve_mode()
         a   = (acc - self.b_a) * mode_p.acc_scale
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
@@ -389,7 +410,7 @@ class ESKF:
         # limits AND IMU velocity doesn't confirm the fast move.
         # Ceiling is mode-dependent: drawing allows faster legitimate strokes.
         ecfg_j   = cfg.fusion_eskf
-        mode_j   = self._resolve_mode()
+        mode_j   = self._mode_params()
         if (self._last_z_tip is not None and self._last_z_tip_ts is not None):
             dt_uwb_j  = max((ts_uwb - self._last_z_tip_ts) / 1_000_000.0, 1e-6)
             uwb_speed = float(np.linalg.norm(z_tip - self._last_z_tip)) / dt_uwb_j
@@ -463,13 +484,20 @@ class ESKF:
                     if 0.02 < dt_vel < 0.5:                   # guard stale / duplicate ts
                         v_uwb = (p2 - p0) / dt_vel            # central difference at t1
                         if float(np.linalg.norm(v_uwb)) < 2.0:
-                            # Adaptive sigma: tighter when geometry is cleaner.
-                            e_avg   = (e0 + e1 + e2) / 3.0
-                            ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
-                            sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
-                            self._last_sigma_v_eff = sigma_v
-                            self._velocity_pseudo_update(v_uwb, sigma_v)
-                            self._last_uwb_reset_ts = ts_uwb
+                            # Deviation gate: skip if UWB-derived velocity disagrees too
+                            # much with the current filter velocity.  Noisy UWB positions
+                            # (5 cm over 50 ms → 1 m/s) with P_vel floor kept the Kalman
+                            # gain ~0.9, injecting large spurious velocities that caused
+                            # the position to integrate 40+ cm in the wrong direction.
+                            vel_dev = float(np.linalg.norm(v_uwb - self.v))
+                            if vel_dev <= ecfg_v.uwb_vel_dev_max:
+                                # Adaptive sigma: tighter when geometry is cleaner.
+                                e_avg   = (e0 + e1 + e2) / 3.0
+                                ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
+                                sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
+                                self._last_sigma_v_eff = sigma_v
+                                self._velocity_pseudo_update(v_uwb, sigma_v)
+                                self._last_uwb_reset_ts = ts_uwb
 
         self._clamp_to_board()
 
@@ -515,7 +543,7 @@ class ESKF:
         H[0, 0] = 1.0
         H[1, 1] = 1.0
 
-        mode_p = self._resolve_mode()
+        mode_p = self._mode_params()
 
         quality = uwb_quality or {}
         uwb_quality_mult = 1.0
@@ -537,8 +565,20 @@ class ESKF:
         # destabilise K or P (a clean trilateration can still disagree with
         # the integrated IMU state after long dead-reckoning).
         if self._last_innovation_norm > ecfg.innov_hard_reject_m:
+            self._innov_reject_streak += 1
+            # Recovery: if the streak is long enough AND UWB geometry is clean AND
+            # the reading is high-confidence, the filter is the one that is lost —
+            # not the UWB.  Snap back to the UWB position to break the deadlock.
+            if (self._innov_reject_streak >= ecfg.innov_recovery_n
+                    and solve_error <= cfg.uwb.trilat_max_residual
+                    and not quality.get('low_confidence', False)):
+                self._snap_to_uwb(z)
+                self._innov_reject_streak = 0
+                self._uwb_snap_count += 1
+                return True
             self._uwb_rejected += 1
             return False
+        self._innov_reject_streak = 0
 
         # --- ADAPTIVE TRUST LOGIC ---
         current_speed = float(np.linalg.norm(self.v))
@@ -623,9 +663,26 @@ class ESKF:
         # ts_uwb is newer than all buffered states — caller uses current p.
         return None
 
+    def _snap_to_uwb(self, z: np.ndarray):
+        """Soft re-localization after innovation-gate deadlock.
+
+        Sets position to z, zeros velocity, and resets the position/velocity
+        covariance blocks to their initial widths.  Bias estimate is preserved
+        so convergence from prior good epochs is not discarded.
+        Called only when innov_reject_streak >= innov_recovery_n with clean UWB.
+        """
+        ecfg = cfg.fusion_eskf
+        self.p[:] = z
+        self.v[:] = 0.0
+        self.P[0, 0] = self.P[1, 1] = ecfg.p0_pos ** 2
+        self.P[2, 2] = self.P[3, 3] = ecfg.p0_vel ** 2
+        self.P[0:4, 4:6] = 0.0
+        self.P[4:6, 0:4] = 0.0
+        self._apply_covariance_floor()
+
     def _apply_covariance_floor(self):
         ecfg  = cfg.fusion_eskf
-        mode_p = self._resolve_mode()
+        mode_p = self._mode_params()
         pos_floor = mode_p.pos_floor ** 2
         pos_cap   = (mode_p.pos_floor * ecfg.pos_cap_mult) ** 2
         vel_floor = ecfg.vel_floor ** 2
@@ -933,6 +990,9 @@ class ESKF:
                 'pos_cap_used':      round(self._last_pos_cap_used, 6),
                 'zupt_fires':        self._zupt_fires,
                 'cov_resets':        self._cov_resets,
+                # Innovation-deadlock recovery diagnostics
+                'innov_reject_streak': self._innov_reject_streak,
+                'uwb_snap_count':    self._uwb_snap_count,
                 # Mode statistics — counters for per-regime tuning
                 'frames_contact':    self._frames_contact,
                 'frames_air':        self._frames_air,

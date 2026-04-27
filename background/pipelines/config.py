@@ -249,7 +249,7 @@ class FusionModeTable:
         jump_speed_max = 1.8,
         pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
         acc_scale      = 1.35,   # keep from Stage-1 tuner
-        pos_gain_cap   = 0.10,   # hard K ceiling: even a momentarily clean UWB cannot pull more than 10 % per sample
+        pos_gain_cap   = 0.025,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
     ))
 
     # Short high-speed burst mode.
@@ -261,7 +261,7 @@ class FusionModeTable:
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
         acc_scale      = 1.00,   # keep from Stage-2 tuner
-        pos_gain_cap   = 0.18,   # slightly more UWB latitude during fast strokes
+        pos_gain_cap   = 0.050,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
     ))
 
     # Pen lifted / air movement.
@@ -372,6 +372,17 @@ class FusionESKFConfig:
     # Lower sigma_scale = stronger pull toward UWB at pen-down.
     stroke_start_sigma_scale: float = 0.50    # multiplied onto sigma_uwb
     stroke_start_uwb_max_age_s: float = 0.10  # skip snap if UWB is older than this
+
+    # Phase 4 — in-stroke position bias (pos_bias EMA tracker).
+    # During CONTACT_DRAWING or DRAWING_FAST, each accepted UWB fix nudges a
+    # parallel bias b_p by alpha*(z_uwb - (p + b_p)).  The visible output is
+    # p + b_p, so the letter shape (relative IMU motion in p) is preserved while
+    # the global placement slowly drifts toward UWB.
+    # alpha = 0.01 → time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
+    # a steady offset over a 2-second stroke.
+    bias_uwb_alpha: float = 0.02    # Phase-4c: slightly faster bias absorption (~1.3 s time constant at 50 Hz)
+    bias_decay:     float = 0.30     # multiplicative decay applied at stroke falling edge
+    bias_max_m:     float = 0.10     # hard clip on |b_p| to prevent runaway (metres)
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.

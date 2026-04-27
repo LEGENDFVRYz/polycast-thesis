@@ -221,9 +221,11 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
         avg_ka = e3.get('avg_K_air', 0.0)
         arm    = e3.get('fast_arm_count', 0)
         burst  = e3.get('fast_burst_count', 0)
-        fast_f  = cfg.fusion_eskf.drawing_fast_min_frames
-        snaps   = e3.get('stroke_start_snaps', 0)
-        is_fast = e3.get('drawing_fast', False)
+        fast_f   = cfg.fusion_eskf.drawing_fast_min_frames
+        snaps    = e3.get('stroke_start_snaps', 0)
+        b_p_mag  = e3.get('b_p_mag', 0.0)
+        b_p_xy   = e3.get('b_p', (0.0, 0.0))
+        is_fast  = e3.get('drawing_fast', False)
         fast_tag = ' ★FAST' if is_fast else ''
         L += [
             f"  Mode     : {mode}{fast_tag}",
@@ -233,6 +235,7 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
             f"  F_static : {fs:4d} ({pct(fs):3.0f}%)",
             f"  FastArm  : {arm}/{fast_f}  Burst: {burst}",
             f"  SnapCount: {snaps}",
+            f"  b_p      : ({b_p_xy[0]:+.4f}, {b_p_xy[1]:+.4f})  |{b_p_mag*1000:.1f} mm|",
         ]
     else:
         L.append('  (waiting for fusion data)')
@@ -308,6 +311,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'P_pos_trace', 'innovation_norm', 'r_scale',
             'K_pos_diag', 'b_a_norm', 'uwb_residual_rms',
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
+            'b_p_x', 'b_p_y', 'b_p_mag',
         ])
 
         # ── Qt layout ─────────────────────────────────────────────────────────
@@ -602,6 +606,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             int(e.get('turn_flag', False)),
             f'{ba[0]:.5f}',
             f'{ba[1]:.5f}',
+            f'{e.get("b_p", (0.0, 0.0))[0]:.5f}',
+            f'{e.get("b_p", (0.0, 0.0))[1]:.5f}',
+            f'{e.get("b_p_mag", 0.0):.5f}',
         ])
 
     # ── Shutdown (window close or Ctrl+C) ─────────────────────────────────────

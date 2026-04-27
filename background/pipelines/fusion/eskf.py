@@ -98,6 +98,7 @@ class ESKF:
         self.p   = np.array([bx * 0.5, by * 0.5], dtype=float)   # position
         self.v   = np.zeros(2, dtype=float)                      # velocity
         self.b_a = np.zeros(2, dtype=float)                      # accel bias
+        self.b_p = np.zeros(2, dtype=float)                      # position bias (Phase 4 EMA tracker)
         self.q   = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)   # identity
 
         # ── Error-state covariance (6×6 block-diag init) ────────────────────
@@ -181,13 +182,19 @@ class ESKF:
         self._in_fast_mode: bool    = False
 
         # ── Mode statistics (accelerate per-regime tuning) ───────────────────
+        # Frame counters are driven by IMU events (accurate mode classification).
         self._frames_contact = 0     # CONTACT_DRAWING (normal speed) IMU frames
-        self._frames_fast    = 0     # CONTACT_DRAWING + DRAWING_FAST IMU frames
-        self._frames_air = 0         # AIR_MOVE IMU frames
-        self._frames_static = 0      # IDLE / CONTACT_STATIC IMU frames
-        self._k_contact_sum = 0.0    # sum of K_pos_diag during normal-contact frames
-        self._k_fast_sum    = 0.0    # sum of K_pos_diag during fast-contact frames
-        self._k_air_sum = 0.0        # sum of K_pos_diag during air frames
+        self._frames_fast    = 0     # DRAWING_FAST IMU frames
+        self._frames_air     = 0     # AIR_MOVE IMU frames
+        self._frames_static  = 0     # IDLE / CONTACT_STATIC IMU frames
+        # K-sum counters are driven by accepted UWB events so the averages reflect
+        # actual Kalman gain at UWB-update time, not a stale carry-over value.
+        self._k_contact_sum  = 0.0   # K_pos sum during accepted UWB fixes in normal-contact mode
+        self._k_contact_uwb  = 0     # accepted UWB count during normal-contact mode
+        self._k_fast_sum     = 0.0   # K_pos sum during accepted UWB fixes in fast-contact mode
+        self._k_fast_uwb     = 0     # accepted UWB count during fast-contact mode
+        self._k_air_sum      = 0.0   # K_pos sum during accepted UWB fixes in air mode
+        self._k_air_uwb      = 0     # accepted UWB count during air mode
 
         self._board_w = bx
         self._board_h = by
@@ -348,20 +355,23 @@ class ESKF:
             self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
             self.P[3, 3] *= ecfg_se.stroke_end_p_vel_scale
             self._apply_covariance_floor()
+            # Phase 4: decay position bias on pen-up so the next stroke starts
+            # with a fresh (near-zero) b_p, giving the stroke-start snap and
+            # the new stroke's own EMA a clean slate.
+            self.b_p *= ecfg_se.bias_decay
         self._prev_stroke_active = stroke_active_now
 
-        # Mode statistics — accumulate per-frame counters for tuning diagnostics.
+        # IMU frame counters — mode classification from contact detector.
+        # K averages are accumulated in _on_uwb (UWB-event-driven) so they
+        # reflect the actual gain at update time, not a stale carry-over.
         stroke_state = ev.get('stroke_state', 'UNKNOWN')
         if stroke_state == 'CONTACT_DRAWING':
             if self._in_fast_mode:
                 self._frames_fast += 1
-                self._k_fast_sum  += self._last_K_pos
             else:
                 self._frames_contact += 1
-                self._k_contact_sum  += self._last_K_pos
         elif stroke_state == 'AIR_MOVE':
             self._frames_air += 1
-            self._k_air_sum  += self._last_K_pos
         else:
             self._frames_static += 1
 
@@ -486,6 +496,33 @@ class ESKF:
         self._last_uwb_reset_ts = ts_uwb
         self._last_z_tip = z_tip.copy()
         self._last_z_tip_ts = ts_uwb
+
+        # K statistics — accumulated here (UWB-event-driven) so panel averages
+        # reflect actual gain at update time, not stale IMU carry-overs.
+        if self._prev_stroke_active:
+            if self._in_fast_mode:
+                self._k_fast_sum += self._last_K_pos
+                self._k_fast_uwb += 1
+            else:
+                self._k_contact_sum += self._last_K_pos
+                self._k_contact_uwb += 1
+        else:
+            self._k_air_sum += self._last_K_pos
+            self._k_air_uwb += 1
+
+        # Phase 4 — in-stroke position bias (EMA tracker).
+        # During CONTACT_DRAWING or DRAWING_FAST, nudge b_p toward the UWB-vs-
+        # visible-position residual.  This shifts the output (p + b_p) toward UWB
+        # without touching p, so the relative IMU stroke shape is preserved.
+        # During AIR / IDLE, b_p is frozen; p is corrected directly by the main filter.
+        if self._prev_stroke_active:
+            ecfg_bp = cfg.fusion_eskf
+            visible = self.p + self.b_p
+            y_bp    = z_tip - visible
+            self.b_p += ecfg_bp.bias_uwb_alpha * y_bp
+            cap = ecfg_bp.bias_max_m
+            self.b_p[0] = float(np.clip(self.b_p[0], -cap, cap))
+            self.b_p[1] = float(np.clip(self.b_p[1], -cap, cap))
 
         # Phase 3b: UWB-velocity pseudo-measurement (Rule 2 — UWB Sync).
         # Always push to buffer (solve_error stored so bad samples are detectable).
@@ -632,8 +669,12 @@ class ESKF:
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
 
-        # Hard position-gain ceiling — clamps first two rows of K so a
-        # momentarily clean UWB cannot yank the position mid-stroke.
+        # Phase 4c: per-mode position-gain cap.
+        # During strokes (CONTACT_DRAWING / DRAWING_FAST) the cap is kept very
+        # small so UWB provides only a tiny stabilising nudge — enough to prevent
+        # IMU runaway but not enough to sculpt the letter shape.  The bulk of the
+        # UWB-IMU placement correction comes from b_p (EMA tracker in _on_uwb).
+        # During air/idle the cap is 1.0 (disabled) so UWB re-anchors freely.
         cap = mode_p.pos_gain_cap
         if cap < 1.0:
             K[0:2, :] = np.clip(K[0:2, :], -cap, cap)
@@ -750,6 +791,8 @@ class ESKF:
             self.v[:] = 0.0
         if not np.all(np.isfinite(self.p)):
             self.p[:] = np.array([self._board_w * 0.5, self._board_h * 0.5])
+        if not np.all(np.isfinite(self.b_p)):
+            self.b_p[:] = 0.0
 
     # ────────────────────────────────────────────────────────────────────────
     # Filter math
@@ -1015,11 +1058,15 @@ class ESKF:
         self.p[1] = max(0.0, min(self._board_h, self.p[1]))
 
     def _emit(self, ts: int, source: str, state: str, sid: int, active: bool) -> dict:
+        # Visible output = p + b_p.  During drawing b_p provides a slow global
+        # offset correction; during air b_p is frozen near zero (decayed on pen-up).
+        p_out_x = float(np.clip(self.p[0] + self.b_p[0], 0.0, self._board_w))
+        p_out_y = float(np.clip(self.p[1] + self.b_p[1], 0.0, self._board_h))
         return {
             'ts_hw': ts,
             'source': source,
-            'fused_x': float(self.p[0]),
-            'fused_y': float(self.p[1]),
+            'fused_x': p_out_x,
+            'fused_y': p_out_y,
             'uwb_x': float(self.last_uwb[0]),
             'uwb_y': float(self.last_uwb[1]),
             'state': state,
@@ -1065,20 +1112,23 @@ class ESKF:
                 'uwb_snap_count':      self._uwb_snap_count,
                 # Stroke-start soft snap diagnostics
                 'stroke_start_snaps':  self._stroke_start_snaps,
+                # Phase 4 — position bias diagnostics
+                'b_p':     (float(self.b_p[0]), float(self.b_p[1])),
+                'b_p_mag': float(np.linalg.norm(self.b_p)),
                 # Mode statistics — counters for per-regime tuning
                 'frames_contact':    self._frames_contact,
                 'frames_fast':       self._frames_fast,
                 'frames_air':        self._frames_air,
                 'frames_static':     self._frames_static,
                 'avg_K_contact':     round(
-                    self._k_contact_sum / self._frames_contact
-                    if self._frames_contact > 0 else 0.0, 5),
+                    self._k_contact_sum / self._k_contact_uwb
+                    if self._k_contact_uwb > 0 else 0.0, 5),
                 'avg_K_fast':        round(
-                    self._k_fast_sum / self._frames_fast
-                    if self._frames_fast > 0 else 0.0, 5),
+                    self._k_fast_sum / self._k_fast_uwb
+                    if self._k_fast_uwb > 0 else 0.0, 5),
                 'avg_K_air':         round(
-                    self._k_air_sum / self._frames_air
-                    if self._frames_air > 0 else 0.0, 5),
+                    self._k_air_sum / self._k_air_uwb
+                    if self._k_air_uwb > 0 else 0.0, 5),
             },
         }
 

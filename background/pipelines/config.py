@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM3"
+    port: str = "COM20"
     baud: int = 921600
 
 
@@ -228,12 +228,15 @@ class FusionESKFConfig:
 @dataclass(frozen=True)
 class PostprocessConfig:
     rts_enabled:             bool  = True
-    rts_max_stroke_samples:  int   = 5000    # hard cap ~20 s at 200 Hz
+    rts_max_stroke_samples:  int   = 50000    # hard cap ~20 s at 200 Hz
     spline_resample_ds_m:    float = 0.001   # 1 mm arc-length step
     spline_min_points:       int   = 5       # skip spline below this count
     # splprep smoothing factor per unique knot: s = spline_smoothing_factor * n_unique
     # 0.0 → interpolating (no smoothing), ~0.002–0.005 → light smoothing for handwriting.
-    spline_smoothing_factor: float = 0.00000125
+    spline_smoothing_factor: float = 0.002
+
+    # Trail smoother (OnlineTrailSmoother applied as post-process on closed strokes)
+    trail_enabled:           bool  = True
 
 
 # ------------------------------------------------------------------------

@@ -1,28 +1,47 @@
 """
-[postprocess] — Offline / post-stroke refinement for completed strokes.
+postprocess/__init__.py — Post-stroke smoothing via OnlineTrailSmoother.
 
-Modules:
-  rts_smoother   — Rauch-Tung-Striebel backward Kalman pass (pure math).
-  note_smoother  — Arc-length spline resample over RTS output.
-  post_processor — Orchestrator: consumes closed strokes + ESKF history,
-                   emits smoothed "dry ink" stroke dicts.
+Applied once per closed stroke (pen-up event), not during live drawing.
+The smoother is reset before each stroke so there is no cross-stroke bleed.
 """
-from __future__ import annotations
+
+from background.pipelines.postprocess.trail_smoother import OnlineTrailSmoother
+from background.pipelines.config import cfg
 
 
-def __getattr__(name: str):
-    if name == 'rts_smooth_history':
-        from background.pipelines.postprocess.rts_smoother import rts_smooth_history
-        return rts_smooth_history
-    if name == 'NoteSmoother':
-        from background.pipelines.postprocess.note_smoother import NoteSmoother
-        return NoteSmoother
-    if name == 'StrokePostProcessor':
-        from background.pipelines.postprocess.post_processor import StrokePostProcessor
-        return StrokePostProcessor
-    raise AttributeError(
-        f"module 'background.pipelines.postprocess' has no attribute {name!r}"
-    )
+class StrokePostProcessor:
+    """Applies trail smoothing to the fused (x, y) points of a closed stroke."""
 
+    def __init__(self, fusion_engine=None):
+        # fusion_engine kept for API compatibility; not used without RTS.
+        self._smoother = OnlineTrailSmoother()
 
-__all__ = ['rts_smooth_history', 'NoteSmoother', 'StrokePostProcessor']
+    def process_closed_stroke(self, stroke: dict) -> dict | None:
+        """Smooth the closed stroke's fused points and return the result.
+
+        Args:
+            stroke: dict with at minimum {'points': [(x, y, ts), ...], ...}
+
+        Returns:
+            Modified stroke dict with smoothed points and 'smoothed': True,
+            or None if the stroke is too short to process.
+        """
+        if not cfg.postprocess.trail_enabled:
+            return None
+
+        pts = stroke.get('points', [])
+        if len(pts) < 2:
+            return None
+
+        self._smoother.reset()
+        smoothed_pts = []
+        for x, y, ts in pts:
+            self._smoother.push(x, y)
+            sx, sy = self._smoother.get()
+            smoothed_pts.append((sx, sy, ts))
+
+        return {
+            **stroke,
+            'points':   smoothed_pts,
+            'smoothed': True,
+        }

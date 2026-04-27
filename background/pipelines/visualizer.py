@@ -235,12 +235,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.imu_trk    = _IMUTrack()
         self.fusion     = ESKF() if fusion_mode == 'eskf' else FusionEngine(fusion_alpha=0.15)
 
-        # RTS post-processor: only wired when fusion is ESKF (needs _rts_buf).
-        self.post_proc = (
-            StrokePostProcessor(self.fusion)
-            if fusion_mode == 'eskf'
-            else None
-        )
+        # Trail-smoother post-processor: works with any fusion mode.
+        self.post_proc = StrokePostProcessor(self.fusion)
 
         # ── Data accumulators ─────────────────────────────────────────────────
         self.air_x = deque(maxlen=AIR_TRAIL); self.air_y = deque(maxlen=AIR_TRAIL)

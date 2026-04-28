@@ -243,31 +243,31 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 1.50,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
+        sigma_scale    = 0.65,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
         drag_inv_s     = 0.70,   # keep from Stage-1 tuner — stable on abc_s1/s2
         dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
         jump_speed_max = 1.8,
         pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
         acc_scale      = 1.35,   # keep from Stage-1 tuner
-        pos_gain_cap   = 0.025,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
+        pos_gain_cap   = 0.042,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 1.15,   # Phase-1: moderate loosening for fast strokes
+        sigma_scale    = 0.76,   # Phase-1: moderate loosening for fast strokes
         drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
         acc_scale      = 1.00,   # keep from Stage-2 tuner
-        pos_gain_cap   = 0.050,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
+        pos_gain_cap   = 0.081,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
     ))
 
     # Pen lifted / air movement.
     # UWB re-anchors aggressively; IMU suppressed to prevent drift carry-over.
     air: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.40,   # Phase-1: strong UWB pull between strokes to re-anchor placement
+        sigma_scale    = 0.48,   # Phase-1: strong UWB pull between strokes to re-anchor placement
         drag_inv_s     = 4.0,    # keep from Stage-3 tuner — aggressively kill air dead-reckoning drift
         dir_penalty    = 3.0,
         jump_speed_max = 1.4,
@@ -279,7 +279,7 @@ class FusionModeTable:
     # Still/idle mode.
     # UWB re-anchors hard; IMU completely suppressed.
     static: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.30,   # Phase-1: very strong UWB pull when truly idle
+        sigma_scale    = 0.31,   # Phase-1: very strong UWB pull when truly idle
         drag_inv_s     = 0.6,
         dir_penalty    = 3.0,
         jump_speed_max = 1.2,
@@ -380,7 +380,7 @@ class FusionESKFConfig:
     # the global placement slowly drifts toward UWB.
     # alpha = 0.01 → time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
     # a steady offset over a 2-second stroke.
-    bias_uwb_alpha: float = 0.02    # Phase-4c: slightly faster bias absorption (~1.3 s time constant at 50 Hz)
+    bias_uwb_alpha: float = 0.03    # Phase-4c: slightly faster bias absorption (~1.3 s time constant at 50 Hz)
     bias_decay:     float = 0.30     # multiplicative decay applied at stroke falling edge
     bias_max_m:     float = 0.10     # hard clip on |b_p| to prevent runaway (metres)
 
@@ -403,9 +403,9 @@ class FusionESKFConfig:
     # DRAWING_FAST gate.
     # 4 frames at 180 Hz ≈ 22 ms.
     # This gives short IMU authority without letting drift dominate.
-    drawing_fast_speed_thresh: float = 0.18  # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
-    drawing_fast_min_frames: int = 5      # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
-    drawing_fast_burst_frames: int = 6    # hold fast authority briefly after trigger, then return to UWB anchoring
+    drawing_fast_speed_thresh: float = 0.30     # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
+    drawing_fast_min_frames: int = 8            # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
+    drawing_fast_burst_frames: int = 3          # hold fast authority briefly after trigger, then return to UWB anchoring
 
     # Per-mode parameter table.
     modes: FusionModeTable = field(default_factory=FusionModeTable)

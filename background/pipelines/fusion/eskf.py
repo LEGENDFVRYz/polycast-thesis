@@ -684,9 +684,14 @@ class ESKF:
         dx = K @ y
         if not np.all(np.isfinite(dx)):
             return False
+        
         dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
-        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
+        if self._prev_stroke_active:
+            dx[2:4] = np.clip(dx[2:4], -0.05, 0.05)
+        else:
+            dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
         dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
+        
         self.p   += dx[0:2]
         self.v   += dx[2:4]
         self.b_a += dx[4:6]

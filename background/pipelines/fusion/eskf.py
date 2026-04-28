@@ -124,6 +124,7 @@ class ESKF:
 
         # ── Contact-edge tracking (for stroke-start soft ZUPT + 3c sigma) ────
         self._prev_stroke_active = False
+        self._last_stroke_state: str = 'UNKNOWN'   # last stroke_state string from IMU event
 
         # ── Phase 3a — sustained-static hard reset ───────────────────────────
         self._zupt_hard_count = 0
@@ -140,7 +141,8 @@ class ESKF:
         self._last_sigma_v_eff: float = 0.0
 
         # ── Book-keeping ────────────────────────────────────────────────────
-        self.last_ts: int | None = None
+        self.last_ts: int | None = None        # IMU-only propagation clock
+        self.last_uwb_ts: int | None = None    # UWB arrival timestamp (diagnostics only)
         self.last_uwb = self.p.copy()
         self._last_uwb_fix_ts: int | None = None   # hw ts of the last stored last_uwb
         self._last_innovation_norm = 0.0
@@ -262,19 +264,23 @@ class ESKF:
         ecfg = cfg.fusion_eskf
         if self._prev_stroke_active:
             return ecfg.modes.drawing_fast if self._in_fast_mode else ecfg.modes.drawing
+        if self._last_stroke_state in ('IDLE', 'CONTACT_STATIC'):
+            return ecfg.modes.static
         return ecfg.modes.air
 
     def _mode_name(self) -> str:
         """Human-readable fusion mode name matching _mode_params() — pure read."""
         if self._prev_stroke_active:
             return 'DRAWING_FAST' if self._in_fast_mode else 'CONTACT_DRAWING'
+        if self._last_stroke_state in ('IDLE', 'CONTACT_STATIC'):
+            return 'IDLE'
         return 'AIR_MOVE'
 
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
     # ────────────────────────────────────────────────────────────────────────
     def _on_imu(self, ev: dict, ts: int) -> dict:
-        dt_s = self._advance_clock(ts)
+        dt_s = self._advance_imu_clock(ts)
 
         # Step 7: Update quaternion first so omega and Q use the current sample.
         q_raw = ev.get('quat')
@@ -365,6 +371,7 @@ class ESKF:
         # K averages are accumulated in _on_uwb (UWB-event-driven) so they
         # reflect the actual gain at update time, not a stale carry-over.
         stroke_state = ev.get('stroke_state', 'UNKNOWN')
+        self._last_stroke_state = stroke_state   # used by _mode_params / _mode_name
         if stroke_state == 'CONTACT_DRAWING':
             if self._in_fast_mode:
                 self._frames_fast += 1
@@ -398,7 +405,7 @@ class ESKF:
     #   Step 6 adds lever-arm compensation on the measurement.
     # ────────────────────────────────────────────────────────────────────────
     def _on_uwb(self, ev: dict, ts: int) -> dict:
-        self._advance_clock(ts)
+        self.last_uwb_ts = ts   # UWB does not propagate state; do not advance IMU clock
 
         # Prefer the board-clamped, alpha-beta smoothed position so the position
         # filter's protection actually reaches the Kalman update. Only fall back to
@@ -1038,8 +1045,8 @@ class ESKF:
         ax1 = axis_map[cfg.imu.board_axes[1]]
         return np.array([r_world[ax0], r_world[ax1]], dtype=float), r_world
 
-    def _advance_clock(self, ts: int) -> float:
-        """Returns dt (s) since the previous event; handles gaps and init."""
+    def _advance_imu_clock(self, ts: int) -> float:
+        """Returns dt (s) since the previous IMU event; handles gaps and init."""
         dt_nom = 1.0 / cfg.imu.sample_rate_hz
         if self.last_ts is None:
             self.last_ts = ts

@@ -88,6 +88,7 @@ _MODE_COLORS = {
     'CONTACT_DRAWING': (50,  200,  80, 220),
     'DRAWING_FAST':    (240, 180,   0, 220),
     'AIR_MOVE':        (140, 140, 140, 160),
+    'IDLE':            ( 80, 120, 220, 200),
 }
 _MODE_STRIP_LEN = 2000   # rolling samples shown in the strip
 

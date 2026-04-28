@@ -282,16 +282,23 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
 
 
 def _imu_curve_csv(imu_ev: dict) -> list:
-    """Return [acc_hp_tip_x, acc_hp_tip_y, acc_hp_tip_mag, omega_mag, alpha_mag] as formatted strings."""
+    """Return IMU curve diagnostic columns as formatted strings.
+
+    Columns: acc_hp_tip_x/y/mag, acc_tip_x/y/mag, omega_mag, alpha_mag
+    """
     hp  = imu_ev.get('acc_board_hp_tip', (0.0, 0.0))
+    tip = imu_ev.get('acc_board_tip',    (0.0, 0.0))
     om  = imu_ev.get('omega_world', (0.0, 0.0, 0.0))
     al  = imu_ev.get('alpha_world', (0.0, 0.0, 0.0))
-    hx, hy = float(hp[0]), float(hp[1])
-    hp_mag = math.hypot(hx, hy)
-    om_mag = math.sqrt(sum(float(x)**2 for x in om))
-    al_mag = math.sqrt(sum(float(x)**2 for x in al))
+    hx, hy = float(hp[0]),  float(hp[1])
+    tx, ty = float(tip[0]), float(tip[1])
+    hp_mag  = math.hypot(hx, hy)
+    tip_mag = math.hypot(tx, ty)
+    om_mag  = math.sqrt(sum(float(x)**2 for x in om))
+    al_mag  = math.sqrt(sum(float(x)**2 for x in al))
     return [
         f'{hx:.5f}', f'{hy:.5f}', f'{hp_mag:.5f}',
+        f'{tx:.5f}', f'{ty:.5f}', f'{tip_mag:.5f}',
         f'{om_mag:.5f}', f'{al_mag:.5f}',
     ]
 
@@ -359,6 +366,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'b_p_x', 'b_p_y', 'b_p_mag',
             'stroke_age_s', 'age_cap_mult', 'kcap_eff',
             'acc_hp_tip_x', 'acc_hp_tip_y', 'acc_hp_tip_mag',
+            'acc_tip_x', 'acc_tip_y', 'acc_tip_mag',
             'omega_mag', 'alpha_mag',
         ])
 

@@ -384,6 +384,15 @@ class FusionESKFConfig:
     bias_decay:     float = 0.30     # multiplicative decay applied at stroke falling edge
     bias_max_m:     float = 0.10     # hard clip on |b_p| to prevent runaway (metres)
 
+    # Stroke-age drift guard — adaptive pos_gain_cap ramp.
+    # Multiplier is 1.0 for age < age_ramp_start_s, then linearly grows to
+    # age_ramp_mult_max at age_ramp_end_s and holds there.  Applied on top of
+    # the per-mode pos_gain_cap so handwriting (< 0.8 s) keeps full IMU shape
+    # authority while long geometric strokes (> 2.5 s) get stronger UWB pull.
+    age_ramp_start_s:  float = 0.80   # handwriting window (IMU shape authority)
+    age_ramp_end_s:    float = 2.50   # beyond this → full drift-guard multiplier
+    age_ramp_mult_max: float = 2.50   # cap multiplier at full drift-guard
+
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.
     stroke_end_v_decay: float = 0.0

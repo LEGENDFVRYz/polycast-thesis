@@ -152,6 +152,7 @@ class ESKF:
         self._uwb_accepted = 0
         self._uwb_rejected = 0
         self._stroke_start_snaps = 0   # number of pen-down soft snaps applied
+        self._stroke_start_ts: int | None = None   # hw ts of current stroke's pen-down edge
         self._have_imu_attitude = False
         self._last_lever_arm_m = 0.0
         self._last_lever_r_world = np.zeros(3, dtype=float)
@@ -276,6 +277,24 @@ class ESKF:
             return 'IDLE'
         return 'AIR_MOVE'
 
+    def _stroke_age_cap_mult(self, ts: int) -> float:
+        """Return pos_gain_cap multiplier based on active-stroke age.
+
+        Linearly ramps from 1.0 (pure IMU shape authority for short strokes) up
+        to age_ramp_mult_max (drift guard for long geometric strokes).  Returns
+        1.0 when no stroke is active so AIR/STATIC caps are unaffected.
+        """
+        if self._stroke_start_ts is None:
+            return 1.0
+        ecfg = cfg.fusion_eskf
+        age_s = (ts - self._stroke_start_ts) * 1e-6   # µs → s
+        if age_s <= ecfg.age_ramp_start_s:
+            return 1.0
+        if age_s >= ecfg.age_ramp_end_s:
+            return ecfg.age_ramp_mult_max
+        t = (age_s - ecfg.age_ramp_start_s) / (ecfg.age_ramp_end_s - ecfg.age_ramp_start_s)
+        return 1.0 + t * (ecfg.age_ramp_mult_max - 1.0)
+
     # ────────────────────────────────────────────────────────────────────────
     # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
     # ────────────────────────────────────────────────────────────────────────
@@ -353,9 +372,11 @@ class ESKF:
         #    doesn't leak into the next stroke.
         stroke_active_now = bool(ev.get('stroke_active', False))
         if stroke_active_now and not self._prev_stroke_active:
+            self._stroke_start_ts = ts
             self._zupt_soft_update(sigma=0.05)
             self._stroke_start_uwb_snap(ts)
         elif (not stroke_active_now) and self._prev_stroke_active:
+            self._stroke_start_ts = None
             ecfg_se = cfg.fusion_eskf
             self.v *= ecfg_se.stroke_end_v_decay
             self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
@@ -676,13 +697,15 @@ class ESKF:
         S = H @ self.P @ H.T + R                  # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
 
-        # Phase 4c: per-mode position-gain cap.
-        # During strokes (CONTACT_DRAWING / DRAWING_FAST) the cap is kept very
-        # small so UWB provides only a tiny stabilising nudge — enough to prevent
-        # IMU runaway but not enough to sculpt the letter shape.  The bulk of the
-        # UWB-IMU placement correction comes from b_p (EMA tracker in _on_uwb).
-        # During air/idle the cap is 1.0 (disabled) so UWB re-anchors freely.
-        cap = mode_p.pos_gain_cap
+        # Phase 4c: per-mode position-gain cap — with stroke-age drift guard.
+        # During strokes (CONTACT_DRAWING / DRAWING_FAST) the base cap is kept
+        # very small so UWB provides only a tiny stabilising nudge — enough to
+        # prevent IMU runaway but not enough to sculpt the letter shape.
+        # The stroke-age multiplier linearly relaxes the cap for long strokes
+        # (> age_ramp_start_s) so geometric shapes get stronger UWB pull while
+        # short handwriting letters keep full IMU shape authority.
+        # During air/idle the mode cap is 1.0 (disabled) so UWB re-anchors freely.
+        cap = min(mode_p.pos_gain_cap * self._stroke_age_cap_mult(self.last_uwb_ts or 0), 1.0)
         if cap < 1.0:
             K[0:2, :] = np.clip(K[0:2, :], -cap, cap)
 
@@ -1124,6 +1147,9 @@ class ESKF:
                 'uwb_snap_count':      self._uwb_snap_count,
                 # Stroke-start soft snap diagnostics
                 'stroke_start_snaps':  self._stroke_start_snaps,
+                # Stroke-age drift guard diagnostics
+                'stroke_age_s':  round((ts - self._stroke_start_ts) * 1e-6, 3) if self._stroke_start_ts else 0.0,
+                'age_cap_mult':  round(self._stroke_age_cap_mult(ts), 3),
                 # Phase 4 — position bias diagnostics
                 'b_p':     (float(self.b_p[0]), float(self.b_p[1])),
                 'b_p_mag': float(np.linalg.norm(self.b_p)),

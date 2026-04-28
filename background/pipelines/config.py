@@ -75,6 +75,9 @@ class IMUConfig:
     # Converts sensor-end acceleration to estimated tip acceleration.
     # Keep enabled, but verify lever_arm_m is near zero when marker is perpendicular.
     rigid_body_enabled: bool = True
+    # A/B diagnostic: +1 = normal sensor→tip vector, -1 = negated (test wrong-sign hypothesis).
+    # Only meaningful when rigid_body_enabled=True. Set to 1 for production.
+    rigid_body_sign: int = 1
 
     # EMA on angular acceleration used in rigid-body tip correction.
     # Higher = smoother but more lag; 0.7 is conservative.
@@ -298,6 +301,10 @@ class FusionESKFConfig:
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
     # Too high makes UWB dominate; too low makes IMU drift dominate.
     sigma_a: float = 2.4
+    # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
+    # Disabled by default; enable to test whether spikes are causing loop distortion.
+    acc_spike_clamp_enabled: bool = False
+    acc_spike_clamp_ms2:     float = 7.0   # threshold in m/s²; 6–8 suggested
 
     # Acceleration-bias random walk.
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
@@ -338,6 +345,9 @@ class FusionESKFConfig:
     # This is useful, but can make velocity too UWB-shaped.
     sigma_uwb_vel: float = 0.075
     sigma_uwb_vel_min_scale: float = 0.35
+    # A/B diagnostic: if True, skip UWB velocity pseudo-update during any active stroke.
+    # Prevents UWB-derived velocity from fighting IMU curved motion.
+    uwb_vel_stroke_gate: bool = False
 
     # If accepted UWB updates are stale, inflate Q and increase drag.
     uwb_window_s: float = 0.30

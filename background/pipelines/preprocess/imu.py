@@ -249,7 +249,8 @@ class IMUPreprocessor:
         # Step 3 — sensor→tip lever arm in world frame.
         # r_imu_body_m is tip→IMU (positive z_body); negate for sensor→tip.
         r_imu = cfg.marker.r_imu_body_m
-        r_body_st   = (-r_imu[0], -r_imu[1], -r_imu[2])
+        s = float(cfg.imu.rigid_body_sign)
+        r_body_st   = (-r_imu[0] * s, -r_imu[1] * s, -r_imu[2] * s)
         r_world_st  = _quat_rotate(q_norm, r_body_st)
 
         # Step 4 — rigid-body correction terms (world frame).

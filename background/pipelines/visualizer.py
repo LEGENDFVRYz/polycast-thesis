@@ -248,6 +248,28 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     else:
         L.append('  (waiting for fusion data)')
 
+    # IMU Curve Diagnostics panel
+    L += ['', D, '  IMU CURVE']
+    if latest_imu:
+        acc_hp_tip  = latest_imu.get('acc_board_hp_tip', (0.0, 0.0))
+        acc_tip     = latest_imu.get('acc_board_tip', (0.0, 0.0))
+        omega       = latest_imu.get('omega_world', (0.0, 0.0, 0.0))
+        alpha       = latest_imu.get('alpha_world', (0.0, 0.0, 0.0))
+        jerk        = latest_imu.get('jerk', 0.0)
+        acc_hp_mag  = math.hypot(float(acc_hp_tip[0]), float(acc_hp_tip[1]))
+        acc_tip_mag = math.hypot(float(acc_tip[0]),    float(acc_tip[1]))
+        omega_mag   = math.sqrt(sum(float(x)**2 for x in omega))
+        alpha_mag   = math.sqrt(sum(float(x)**2 for x in alpha))
+        L += [
+            f"  acc_hp_tip : {float(acc_hp_tip[0]):+.3f} {float(acc_hp_tip[1]):+.3f}  |{acc_hp_mag:.3f}| m/s²",
+            f"  acc_tip    : {float(acc_tip[0]):+.3f} {float(acc_tip[1]):+.3f}  |{acc_tip_mag:.3f}| m/s²",
+            f"  omega      : |{omega_mag:.3f}| rad/s",
+            f"  alpha      : |{alpha_mag:.3f}| rad/s²",
+            f"  jerk       : {jerk:.2f} m/s³",
+        ]
+    else:
+        L.append('  (waiting for IMU data)')
+
     # Session counts
     L += [
         '', D, '  SESSION',
@@ -257,6 +279,21 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     ]
 
     return '\n'.join(L)
+
+
+def _imu_curve_csv(imu_ev: dict) -> list:
+    """Return [acc_hp_tip_x, acc_hp_tip_y, acc_hp_tip_mag, omega_mag, alpha_mag] as formatted strings."""
+    hp  = imu_ev.get('acc_board_hp_tip', (0.0, 0.0))
+    om  = imu_ev.get('omega_world', (0.0, 0.0, 0.0))
+    al  = imu_ev.get('alpha_world', (0.0, 0.0, 0.0))
+    hx, hy = float(hp[0]), float(hp[1])
+    hp_mag = math.hypot(hx, hy)
+    om_mag = math.sqrt(sum(float(x)**2 for x in om))
+    al_mag = math.sqrt(sum(float(x)**2 for x in al))
+    return [
+        f'{hx:.5f}', f'{hy:.5f}', f'{hp_mag:.5f}',
+        f'{om_mag:.5f}', f'{al_mag:.5f}',
+    ]
 
 
 # ── PyQtGraph application window ──────────────────────────────────────────────
@@ -321,6 +358,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
             'b_p_x', 'b_p_y', 'b_p_mag',
             'stroke_age_s', 'age_cap_mult', 'kcap_eff',
+            'acc_hp_tip_x', 'acc_hp_tip_y', 'acc_hp_tip_mag',
+            'omega_mag', 'alpha_mag',
         ])
 
         # ── Qt layout ─────────────────────────────────────────────────────────
@@ -621,6 +660,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{e.get("stroke_age_s", 0.0):.3f}',
             f'{e.get("age_cap_mult", 1.0):.4f}',
             f'{min(e.get("age_cap_mult", 1.0) * (cfg.fusion_eskf.modes.drawing_fast if e.get("drawing_fast") else cfg.fusion_eskf.modes.drawing).pos_gain_cap, 1.0):.5f}',
+            # IMU curve diagnostics
+            *_imu_curve_csv(imu_ev),
         ])
 
     # ── Shutdown (window close or Ctrl+C) ─────────────────────────────────────

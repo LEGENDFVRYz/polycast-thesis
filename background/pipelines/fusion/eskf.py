@@ -337,7 +337,11 @@ class ESKF:
         )
         acc = np.asarray(acc_src, dtype=float)
         mode_p = self._update_and_resolve_mode()
+        ecfg = cfg.fusion_eskf
         a   = (acc - self.b_a) * mode_p.acc_scale
+        if ecfg.acc_spike_clamp_enabled and self._prev_stroke_active:
+            clamp = ecfg.acc_spike_clamp_ms2
+            a = np.clip(a, -clamp, clamp)
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
         # Velocity drag — further scaled by stale_factor when UWB is silent.
@@ -557,7 +561,10 @@ class ESKF:
         self._uwb_vel_buf.append((ts_uwb, z_tip.copy(), solve_error))
         # Skip velocity anchor during DRAWING_FAST — anchoring v to UWB geometry
         # would cancel the IMU shape authority the mode is designed to grant.
-        if not self._in_fast_mode:
+        # Optional A/B gate: also skip during any active stroke to prevent UWB
+        # velocity from fighting IMU curved motion (uwb_vel_stroke_gate=True).
+        ecfg_gate = cfg.fusion_eskf
+        if not self._in_fast_mode and not (ecfg_gate.uwb_vel_stroke_gate and self._prev_stroke_active):
             ecfg_v = cfg.fusion_eskf
             if len(self._uwb_vel_buf) >= 3:
                 (t0, p0, e0), (t1, p1, e1), (t2, p2, e2) = (

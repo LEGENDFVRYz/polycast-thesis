@@ -243,25 +243,25 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.65,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
+        sigma_scale    = 0.85,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
         drag_inv_s     = 0.70,   # keep from Stage-1 tuner — stable on abc_s1/s2
         dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
         jump_speed_max = 1.8,
         pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
         acc_scale      = 1.35,   # keep from Stage-1 tuner
-        pos_gain_cap   = 0.042,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
+        pos_gain_cap   = 0.030,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.76,   # Phase-1: moderate loosening for fast strokes
+        sigma_scale    = 1.05,   # Phase-1: moderate loosening for fast strokes
         drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
         acc_scale      = 1.00,   # keep from Stage-2 tuner
-        pos_gain_cap   = 0.081,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
+        pos_gain_cap   = 0.060,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
     ))
 
     # Pen lifted / air movement.
@@ -389,9 +389,9 @@ class FusionESKFConfig:
     # age_ramp_mult_max at age_ramp_end_s and holds there.  Applied on top of
     # the per-mode pos_gain_cap so handwriting (< 0.8 s) keeps full IMU shape
     # authority while long geometric strokes (> 2.5 s) get stronger UWB pull.
-    age_ramp_start_s:  float = 0.80   # handwriting window (IMU shape authority)
-    age_ramp_end_s:    float = 2.50   # beyond this → full drift-guard multiplier
-    age_ramp_mult_max: float = 2.50   # cap multiplier at full drift-guard
+    age_ramp_start_s:  float = 1.20   # handwriting window (IMU shape authority)
+    age_ramp_end_s:    float = 2.75   # beyond this → full drift-guard multiplier
+    age_ramp_mult_max: float = 1.50   # cap multiplier at full drift-guard
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.

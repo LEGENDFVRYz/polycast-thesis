@@ -224,10 +224,14 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
         burst  = e3.get('fast_burst_count', 0)
         fast_f   = cfg.fusion_eskf.drawing_fast_min_frames
         snaps    = e3.get('stroke_start_snaps', 0)
-        b_p_mag  = e3.get('b_p_mag', 0.0)
-        b_p_xy   = e3.get('b_p', (0.0, 0.0))
-        is_fast  = e3.get('drawing_fast', False)
-        fast_tag = ' ★FAST' if is_fast else ''
+        b_p_mag   = e3.get('b_p_mag', 0.0)
+        b_p_xy    = e3.get('b_p', (0.0, 0.0))
+        is_fast   = e3.get('drawing_fast', False)
+        fast_tag  = ' ★FAST' if is_fast else ''
+        age_s     = e3.get('stroke_age_s', 0.0)
+        age_mult  = e3.get('age_cap_mult', 1.0)
+        base_cap  = (cfg.fusion_eskf.modes.drawing_fast if is_fast else cfg.fusion_eskf.modes.drawing).pos_gain_cap
+        kcap_eff  = min(base_cap * age_mult, 1.0)
         L += [
             f"  Mode     : {mode}{fast_tag}",
             f"  F_draw   : {fc:4d} ({pct(fc):3.0f}%)  K̄={avg_kc:.4f}",
@@ -236,6 +240,9 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
             f"  F_static : {fs:4d} ({pct(fs):3.0f}%)",
             f"  FastArm  : {arm}/{fast_f}  Burst: {burst}",
             f"  SnapCount: {snaps}",
+            f"  StrokeAge: {age_s:.2f} s",
+            f"  AgeMult  : {age_mult:.3f}x",
+            f"  KcapEff  : {kcap_eff:.4f}",
             f"  b_p      : ({b_p_xy[0]:+.4f}, {b_p_xy[1]:+.4f})  |{b_p_mag*1000:.1f} mm|",
         ]
     else:
@@ -313,6 +320,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'K_pos_diag', 'b_a_norm', 'uwb_residual_rms',
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
             'b_p_x', 'b_p_y', 'b_p_mag',
+            'stroke_age_s', 'age_cap_mult', 'kcap_eff',
         ])
 
         # ── Qt layout ─────────────────────────────────────────────────────────
@@ -610,6 +618,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{e.get("b_p", (0.0, 0.0))[0]:.5f}',
             f'{e.get("b_p", (0.0, 0.0))[1]:.5f}',
             f'{e.get("b_p_mag", 0.0):.5f}',
+            f'{e.get("stroke_age_s", 0.0):.3f}',
+            f'{e.get("age_cap_mult", 1.0):.4f}',
+            f'{min(e.get("age_cap_mult", 1.0) * (cfg.fusion_eskf.modes.drawing_fast if e.get("drawing_fast") else cfg.fusion_eskf.modes.drawing).pos_gain_cap, 1.0):.5f}',
         ])
 
     # ── Shutdown (window close or Ctrl+C) ─────────────────────────────────────

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM20"
+    port: str = "COM5"
     baud: int = 921600
 
 
@@ -29,8 +29,9 @@ class IMUConfig:
 
     # ZUPT
     zupt_acc_threshold: float = 0.15
-    zupt_jerk_threshold: float = 8.5
+    zupt_jerk_threshold: float = 32.5
     zupt_min_duration_s: float = 0.05
+    zupt_omega_threshold: float = 0.08  # rad/s — gyro stillness gate (~4.6 dps)
 
     # Contact / force
     force_contact_threshold: float = 100.0
@@ -42,12 +43,16 @@ class IMUConfig:
     # Board projection
     board_axes: tuple[str, str] = ("x", "z")
     smooth_alpha: float = 0.75          # legacy heavy EMA — superseded by smooth_alpha_eskf
-    smooth_alpha_eskf: float = 0.18     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
+    smooth_alpha_eskf: float = 0.25     # Path-A light EMA fed to ESKF (near-raw, minimal lag)
     acc_is_linear: bool = True
 
     # High-pass filter (Path C) — strips DC bias drift before ESKF integration
     hpf_enabled: bool = True
-    hpf_cutoff_hz: float = 0.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
+    hpf_cutoff_hz: float = 1.5         # 0.5 Hz: below handwriting (2–8 Hz), kills bias in ~2 s
+
+    # Rigid-body tip correction (lever-arm kinematics)
+    rigid_body_enabled: bool = True     # ablation toggle — False reverts to sensor-point acc
+    alpha_ema_alpha: float = 0.7        # EMA weight on α_world (angular accel is noisy 2nd deriv)
 
 
 # ------------------------------------------------------------------------
@@ -57,7 +62,7 @@ class IMUConfig:
 class ContactConfig:
     force_exit_ratio:     float = 0.70   # exit threshold = force_enter * ratio
     pen_down_debounce_ms: float = 10.0   # reject bumps/spikes (ms of sustained force)
-    pen_up_debounce_ms:   float = 100.0   # reject tremor dips (ms below exit threshold)
+    pen_up_debounce_ms:   float = 174.0   # reject tremor dips (ms below exit threshold)
     min_draw_ms:          float = 30.0   # cumulative CONTACT_DRAWING before session opens
     state_debounce_n:     int   = 5      # N consecutive samples to confirm substate change
 
@@ -67,6 +72,7 @@ class ContactConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
+    # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)
     range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1620)
     # range_offsets_m: tuple = (-0.1752, -0.0466, -0.2227, -0.1220)
     # range_offsets_m: tuple = (-0.1232, -0.0146, -0.1919, -0.0965)
@@ -85,7 +91,7 @@ class UWBConfig:
 
     # Alpha-Beta filter (replaces scalar EMA)
     pos_alpha: float = 0.60                 # position correction gain
-    pos_beta: float = 0.10                  # velocity correction gain
+    pos_beta: float = 0.05                  # velocity correction gain
 
     # Trilateration stale-guess recovery
     stale_guess_timeout_us: int = 1_000_000 # 1 second gap triggers centroid re-seed
@@ -137,8 +143,11 @@ class PipelineConfig:
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class MarkerConfig:
-    r_imu_body_m: tuple[float, float, float] = (0.0, 0.0, 0.110)   # tip → IMU
-    r_uwb_body_m: tuple[float, float, float] = (0.0, 0.0, 0.200)   # tip → UWB
+    # Changed from (0, 0, Z) to (0, Y, 0)
+    # This means the IMU's Z-axis is pointing perpendicular to the pen shaft, not along it
+    # The pen shaft is actually aligned with the IMU's Y-axis
+    r_imu_body_m: tuple[float, float, float] = (0.110, 0.0, 0.0)   # tip → IMU
+    r_uwb_body_m: tuple[float, float, float] = (0.200, 0.0, 0.0)   # tip → UWB
 
 
 # ------------------------------------------------------------------------
@@ -149,16 +158,17 @@ class FusionESKFConfig:
     # ── Process noise ─────────────────────────────────────────────────────
     # sigma_a raised: Path-A feeds near-raw 200 Hz acc, so real micro-accels
     # are present — inflate Q so UWB retains authority between updates.
-    sigma_a: float           = 0.6      # m/s² (was 0.15)
-    # sigma_b_a lowered: bias wanders slowly; don't absorb real motion into bias.
-    sigma_b_a: float         = 0.002     # m/s²·√Hz (was 0.005)
+    sigma_a: float           = 1.10      # m/s² (was 0.15)
+    # sigma_b_a tightened further: prevents b_a from absorbing IMU/UWB disagreement
+    # during CONTACT_DRAWING where ZUPT never fires (was 0.002, was 0.005).
+    sigma_b_a: float         = 0.0001    # m/s²·√Hz
     sigma_zupt: float        = 0.005     # unchanged — already aggressive
 
     # ── Measurement noise ─────────────────────────────────────────────────
     # sigma_uwb tightened: WLS + α-β filter gives much cleaner pos_raw than before.
     # Each UWB update now pulls harder so IMU drift doesn't accumulate between fixes.
-    sigma_uwb: float         = 0.05      # m (was 0.12)
-    sigma_trilat: float      = 0.04      # m (was 0.05 — matches new trilat_max_residual=0.15 scale)
+    sigma_uwb: float         = 0.035      # m (was 0.12)
+    sigma_trilat: float      = 0.09      # m (was 0.04 — widen velocity-pseudo gate to anchor IMU vel more often)
 
     # NLOS-adaptive R re-enabled: WLS solve_error is now a reliable confidence signal.
     k_nlos: float            = 1.5       # (was 0.00)
@@ -170,7 +180,7 @@ class FusionESKFConfig:
     # ── Turn detection ────────────────────────────────────────────────────
     # Threshold lowered slightly: cleaner acc signal means real corners are
     # detectable earlier without false positives from noise.
-    turn_omega_threshold: float = 0.8    # rad/s (was 1.85 — ~86 dps)
+    turn_omega_threshold: float = 0.5    # rad/s (was 1.85 — ~86 dps)
     turn_k_q: float             = 5.8   # (was 3.0 — let UWB shape corners harder)
     turn_n_post: int            = 2      # unchanged
 
@@ -191,11 +201,20 @@ class FusionESKFConfig:
 
     # 3b: velocity pseudo-measurement noise when UWB is pristine.
     # Applied when solve_error < sigma_trilat (reliable trilateration).
-    sigma_uwb_vel: float       = 0.08    # m/s
+    sigma_uwb_vel: float       = 0.05    # m/s (was 0.08 — tighter now that gate is wider)
+    # Floor scale for adaptive sigma: at solve_error→0, sigma shrinks to min_scale * sigma_uwb_vel.
+    sigma_uwb_vel_min_scale: float = 0.2  # dimensionless (0.2 → 0.01 m/s minimum)
 
     # 3c: sigma_uwb scale factor while pen is actively drawing.
     # Pen physically constrained to board → trust UWB more during strokes.
-    contact_sigma_scale: float = 0.85    # 30 % tighter (multiplicative)
+    contact_sigma_scale: float = 1.25    # 30 % tighter (multiplicative)
+
+    # ── Sliding-window safeguard (Rule 3) ────────────────────────────────────
+    # Bounds how long IMU dead-reckoning runs without a UWB velocity anchor.
+    # After uwb_window_s of UWB silence, Q inflates and velocity drag increases.
+    uwb_window_s: float     = 0.30   # s — matches paper's sub-cm threshold (t < 0.3 s)
+    uwb_stale_k: float      = 2.0    # ramp slope per window-length of over-run
+    uwb_stale_max_k: float  = 5.0    # max stale factor (Q inflates ≤25×, drag ≤5×)
 
     # ── Initial covariance ────────────────────────────────────────────────
     p0_pos: float    = 0.20
@@ -204,18 +223,44 @@ class FusionESKFConfig:
 
 
 # ------------------------------------------------------------------------
+# POSTPROCESS (RTS smoother + spline resample)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class PostprocessConfig:
+    # Master switch for all post-stroke smoothing / overlay output.
+    # False = no smoothed closed-stroke overlay.
+    trail_enabled: bool = True
+
+    # Post-stroke smoothing mode:
+    #   'online'  -> replay closed stroke through OnlineTrailSmoother
+    #   'offline' -> NoteSmoother RTS over ESKF history, then optional spline
+    smoothing_mode: str = 'offline'
+
+    # ESKF RTS history / NoteSmoother control
+    rts_enabled: bool = True
+    rts_max_stroke_samples: int = 50000
+
+    # Optional spline after RTS
+    spline_enabled: bool = True
+    spline_resample_ds_m: float = 0.001
+    spline_min_points: int = 5
+    spline_smoothing_factor: float = 0.002
+
+
+# ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Config:
-    serial:  SerialConfig  = field(default_factory=SerialConfig)
-    imu:     IMUConfig     = field(default_factory=IMUConfig)
-    contact: ContactConfig = field(default_factory=ContactConfig)
-    uwb:     UWBConfig     = field(default_factory=UWBConfig)
-    anchors: AnchorConfig = field(default_factory=AnchorConfig)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
-    marker: MarkerConfig = field(default_factory=MarkerConfig)
-    fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
+    serial:      SerialConfig      = field(default_factory=SerialConfig)
+    imu:         IMUConfig         = field(default_factory=IMUConfig)
+    contact:     ContactConfig     = field(default_factory=ContactConfig)
+    uwb:         UWBConfig         = field(default_factory=UWBConfig)
+    anchors:     AnchorConfig      = field(default_factory=AnchorConfig)
+    pipeline:    PipelineConfig    = field(default_factory=PipelineConfig)
+    marker:      MarkerConfig      = field(default_factory=MarkerConfig)
+    fusion_eskf: FusionESKFConfig  = field(default_factory=FusionESKFConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 
 
 cfg = Config()

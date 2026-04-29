@@ -136,6 +136,8 @@ def draw_segment(x0, y0, x1, y1, p):
 def generate_frames():
     """Generate MJPEG frames for streaming."""
     import io, time
+    from benchmark import get_logger as _get_bm_logger
+    _bm = _get_bm_logger()
     interval = 1.0 / MJPEG_FPS
     while True:
         start = time.time()
@@ -143,7 +145,10 @@ def generate_frames():
             frame = canvas.copy()
         buf = io.BytesIO()
         frame.convert("RGB").save(buf, format="JPEG")
+        _bm.on_broadcast(time.perf_counter())
         yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + buf.getvalue() + b"\r\n")
         elapsed = time.time() - start
+        _bm.on_software_perf(encode_ms=elapsed * 1000,
+                              sleep_ms=max(0, interval - elapsed) * 1000)
         time.sleep(max(0, interval - elapsed))
 

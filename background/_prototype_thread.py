@@ -11,6 +11,9 @@ from background.image_generator import draw_segment, image_lock
 # from background.stroke_processor import StrokeTracker     # IF FINALIZED
 from background.pipelines.tracker import StrokeTracker
 
+# --- BENCHMARK (opt-in via BENCHMARK=1 env var) ---
+from benchmark import get_logger as _get_bm_logger
+
 
 class PrototypeSerialThread(threading.Thread):
     def __init__(self, stop_event, ws_server=None):
@@ -19,6 +22,7 @@ class PrototypeSerialThread(threading.Thread):
         self.ws_server = ws_server
         self.serial_conn = None
         self.tracker = StrokeTracker()  # Initialize the Logic Engine
+        self._bm = _get_bm_logger()     # Benchmark logger (no-op when BENCHMARK != 1)
         self.last_point = None
         self.xpressure = 8              # temporary 
         
@@ -59,16 +63,21 @@ class PrototypeSerialThread(threading.Thread):
                 self.serial_conn = serial.Serial(self.port, self.baud, timeout=1)
                 self.serial_conn.flushInput()
                 log_message(CONN_LOG, "[SERIAL] Connected")
+                self._bm.on_connection_event("CONNECTED")
                 
                 while not self.stop_event.is_set() and self.serial_conn.is_open:
                     if self.serial_conn.in_waiting:
                         try:
                             line = self.serial_conn.readline()
                             if not line: continue
-                            
+
+                            _t_recv = time.perf_counter()
+                            self._bm.on_packet_recv(line, _t_recv)
+
                             # --- STEP 1: MATH (Meters) ---
                             # Hand off raw bytes to the processor
                             result = self.tracker.process_packet(line)
+                            self._bm.on_fusion_done(line, time.perf_counter(), result)
                             
                             if result:
                                 meter_x, meter_y, is_drawing = result
@@ -94,6 +103,7 @@ class PrototypeSerialThread(threading.Thread):
                                 
                         except Exception as e:
                             print(f"[SERIAL] Data processing error: {e}")
+                            self._bm.on_error(str(e))
                             
                     else:
                         time.sleep(0.001) # Sleep if buffer empty
@@ -101,6 +111,7 @@ class PrototypeSerialThread(threading.Thread):
             except Exception as e:
                 print(f"[SERIAL] Connection Error: {e}")
                 log_message(ERROR_LOG, f"[SERIAL] Connection Error: {e}")
+                self._bm.on_connection_event(f"DISCONNECTED: {e}")
                 if self.serial_conn and self.serial_conn.is_open:
                     self.serial_conn.close()
                 time.sleep(2) # Reconnect delay

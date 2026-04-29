@@ -1,3 +1,5 @@
+from lzma import MODE_FAST
+
 import serial
 import time
 import os

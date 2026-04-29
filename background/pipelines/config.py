@@ -247,25 +247,25 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.65,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
-        drag_inv_s     = 0.70,   # keep from Stage-1 tuner — stable on abc_s1/s2
-        dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
+        sigma_scale    = 0.95,   # was 0.65 → weaker UWB during normal drawing
+        drag_inv_s     = 0.70,
+        dir_penalty    = 1.5,
         jump_speed_max = 1.8,
-        pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
-        acc_scale      = 1.35,   # keep from Stage-1 tuner
-        pos_gain_cap   = 0.020,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
+        pos_floor      = 0.005,
+        acc_scale      = 1.35,
+        pos_gain_cap   = 0.015,  # was 0.020 → less direct UWB pull
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.85,   # Phase-1: moderate loosening for fast strokes
-        drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
+        sigma_scale    = 1.00,   # was 0.85 → less UWB-shaped in fast strokes
+        drag_inv_s     = 0.35,
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
-        acc_scale      = 1.00,   # keep from Stage-2 tuner
-        pos_gain_cap   = 0.080,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
+        acc_scale      = 1.00,
+        pos_gain_cap   = 0.060,  # was 0.080 → less UWB pull in fast mode
     ))
 
     # Pen lifted / air movement.
@@ -304,8 +304,8 @@ class FusionESKFConfig:
     sigma_a: float = 2.4
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
-    acc_spike_clamp_enabled: bool = False
-    acc_spike_clamp_ms2:     float = 7.0   # threshold in m/s²; 6–8 suggested
+    acc_spike_clamp_enabled: bool = True
+    acc_spike_clamp_ms2:     float = 5.0   # threshold in m/s²; 6–8 suggested
 
     # Acceleration-bias random walk.
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
@@ -391,9 +391,9 @@ class FusionESKFConfig:
     # the global placement slowly drifts toward UWB.
     # alpha = 0.01 → time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
     # a steady offset over a 2-second stroke.
-    bias_uwb_alpha: float = 0.03    # Phase-4c: slightly faster bias absorption (~1.3 s time constant at 50 Hz)
-    bias_decay:     float = 0.30     # multiplicative decay applied at stroke falling edge
-    bias_max_m:     float = 0.10     # hard clip on |b_p| to prevent runaway (metres)
+    bias_uwb_alpha: float = 0.015   # was 0.03
+    bias_decay:     float = 0.30
+    bias_max_m:     float = 0.10
 
     # Stroke-age drift guard — adaptive pos_gain_cap ramp.
     # Stage-9 result: ramp fires on abc handwriting at all tested start thresholds
@@ -402,7 +402,7 @@ class FusionESKFConfig:
     # Fields preserved so the ramp can be re-enabled per-dataset if needed.
     age_ramp_start_s:  float = 1.20   # (inactive while mult_max=1.0)
     age_ramp_end_s:    float = 2.75   # (inactive while mult_max=1.0)
-    age_ramp_mult_max: float = 1.50    # 1.0 = disabled; Stage-9 winner
+    age_ramp_mult_max: float = 1.00    # 1.0 = disabled; Stage-9 winner
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.

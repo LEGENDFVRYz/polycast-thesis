@@ -1,5 +1,5 @@
 from app import create_app, db
-
+from config import FLASK_PORT
 
 
 # ---------------------------------------------------------------------
@@ -22,4 +22,4 @@ def run_webserver(port):
     )
 
 if __name__ == "__main__":
-    run_webserver(5000)
+    run_webserver(FLASK_PORT)

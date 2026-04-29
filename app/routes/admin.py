@@ -375,7 +375,7 @@ def scan_ports():
         return jsonify({'success': False, 'message': 'User not authenticated'}), 401
     
     # Utilize the helper method in prototype_config
-    ports = ["COM3", "COM4", "COM5"]
+    ports = ["COM3", "/dev/ttyUSB0", "/dev/ttyUSB1"]
     
     if ports:
         # Return the list of found ports (e.g., ["COM3", "COM4"])

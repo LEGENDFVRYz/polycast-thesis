@@ -18,5 +18,12 @@
             "extensionName": ".css",
             "savePath": "/src/assets/css"
         }
+    ],
+    "python-envs.pythonProjects": [
+        {
+            "path": "test/_quick.py",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
     ]
 }

@@ -75,9 +75,9 @@ class IMUConfig:
     # Converts sensor-end acceleration to estimated tip acceleration.
     # Keep enabled, but verify lever_arm_m is near zero when marker is perpendicular.
     rigid_body_enabled: bool = True
-    # A/B diagnostic: +1 = normal sensor→tip vector, -1 = negated (test wrong-sign hypothesis).
-    # Only meaningful when rigid_body_enabled=True. Set to 1 for production.
-    rigid_body_sign: int = 1
+    # Stage-5 winner: sign=-1 corrects the lever-arm direction for this marker geometry.
+    # Confirmed on circle, triangle, hline, abc, w across two recording sessions.
+    rigid_body_sign: int = -1
 
     # EMA on angular acceleration used in rigid-body tip correction.
     # Higher = smoother but more lag; 0.7 is conservative.
@@ -109,7 +109,8 @@ class ContactConfig:
 @dataclass(frozen=True)
 class UWBConfig:
     # Per-anchor range calibration offsets.
-    range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)
+    # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)         # -- old validation
+    range_offsets_m: tuple = (-0.1366, -0.0127, -0.1983, -0.1191)
 
     # Nominal UWB rate.
     rate_hz: float = 50.0
@@ -246,25 +247,25 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.85,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
+        sigma_scale    = 0.65,   # Phase-1: weakened UWB pull during contact so IMU preserves handwritten curvature
         drag_inv_s     = 0.70,   # keep from Stage-1 tuner — stable on abc_s1/s2
         dir_penalty    = 1.5,    # relaxed — handwriting has legitimate backward curves
         jump_speed_max = 1.8,
         pos_floor      = 0.005,  # keep from Stage-1 tuner — lower floor prevents excessive UWB gain during contact
         acc_scale      = 1.35,   # keep from Stage-1 tuner
-        pos_gain_cap   = 0.030,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
+        pos_gain_cap   = 0.020,  # Phase-4c: very tight cap — prevents IMU runaway without UWB sculpting the letter
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 1.05,   # Phase-1: moderate loosening for fast strokes
+        sigma_scale    = 0.85,   # Phase-1: moderate loosening for fast strokes
         drag_inv_s     = 0.35,   # light damping preserves burst motion without excessive drift
         dir_penalty    = 1.1,
         jump_speed_max = 2.6,
         pos_floor      = 0.030,
         acc_scale      = 1.00,   # keep from Stage-2 tuner
-        pos_gain_cap   = 0.060,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
+        pos_gain_cap   = 0.080,  # Phase-4c: tighter than before; fast strokes still need slightly more latitude
     ))
 
     # Pen lifted / air movement.
@@ -395,13 +396,13 @@ class FusionESKFConfig:
     bias_max_m:     float = 0.10     # hard clip on |b_p| to prevent runaway (metres)
 
     # Stroke-age drift guard — adaptive pos_gain_cap ramp.
-    # Multiplier is 1.0 for age < age_ramp_start_s, then linearly grows to
-    # age_ramp_mult_max at age_ramp_end_s and holds there.  Applied on top of
-    # the per-mode pos_gain_cap so handwriting (< 0.8 s) keeps full IMU shape
-    # authority while long geometric strokes (> 2.5 s) get stronger UWB pull.
-    age_ramp_start_s:  float = 1.20   # handwriting window (IMU shape authority)
-    age_ramp_end_s:    float = 2.75   # beyond this → full drift-guard multiplier
-    age_ramp_mult_max: float = 1.50   # cap multiplier at full drift-guard
+    # Stage-9 result: ramp fires on abc handwriting at all tested start thresholds
+    # because abc stroke durations overlap geometric shape durations in this dataset.
+    # Neutralised by setting mult_max=1.0 (multiplier stays flat = ramp disabled).
+    # Fields preserved so the ramp can be re-enabled per-dataset if needed.
+    age_ramp_start_s:  float = 1.20   # (inactive while mult_max=1.0)
+    age_ramp_end_s:    float = 2.75   # (inactive while mult_max=1.0)
+    age_ramp_mult_max: float = 1.50    # 1.0 = disabled; Stage-9 winner
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.
@@ -424,7 +425,7 @@ class FusionESKFConfig:
     # This gives short IMU authority without letting drift dominate.
     drawing_fast_speed_thresh: float = 0.30     # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
     drawing_fast_min_frames: int = 8            # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
-    drawing_fast_burst_frames: int = 3          # hold fast authority briefly after trigger, then return to UWB anchoring
+    drawing_fast_burst_frames: int = 2          # hold fast authority briefly after trigger, then return to UWB anchoring
 
     # Per-mode parameter table.
     modes: FusionModeTable = field(default_factory=FusionModeTable)

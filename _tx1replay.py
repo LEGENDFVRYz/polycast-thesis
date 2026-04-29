@@ -10,9 +10,9 @@ import re
 # ==============================================================================
 VIRTUAL_COM_PORT    = 'COM19'
 BAUD_RATE           = 921600
-MODE                = "abc"
-TESTNAME            = "force_test"
-LOG_FILE            = f'logs/{TESTNAME}.csv'
+MODE                = "ct"
+TESTNAME            = "w"
+LOG_FILE            = f'test/raw/{TESTNAME}.csv'
 
 # ==============================================================================
 # MAIN REPLAY LOOP

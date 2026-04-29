@@ -140,8 +140,15 @@ def main():
                         help='Output CSV path (default: auto-timestamped)')
     args = parser.parse_args()
 
-    recorder = AsyncCSVRecorder(port="COM3", baud=921600,
-                                output_path="logs/force_test.csv")
+    MODE        = "square"
+    TESTNAME    = "c7"
+    
+    recorder = AsyncCSVRecorder(
+        port="COM3", 
+        baud=921600,
+        output_path=f"logs/datasets/{MODE}.csv"
+    )
+    
     if not recorder.connect():
         sys.exit(1)
 

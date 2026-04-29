@@ -11,13 +11,14 @@ import sys
 # -------------------------
 # CONFIG
 # -------------------------
-SERIAL_PORT = 'COM5'  # CHECK YOUR COM PORT
+SERIAL_PORT = 'COM3'  # CHECK YOUR COM PORT
 BAUD_RATE = 115200
 
 ANCHORS = np.array([
-    [1.22, 0.00, 0.00],
-    [1.22, 1.22, 0.00],
-    [0.00, 1.22, 0.00]
+    [0.00, 0.00, 0.064],
+    [1.23, 0.00, 0.064], 
+    [1.23, 1.23, 0.060], 
+    [0.00, 1.23, 0.060],
 ])
 
 PEN_TIP_OFFSET = np.array([0.0, 0.0, 0.0])
@@ -25,7 +26,7 @@ PEN_TIP_OFFSET = np.array([0.0, 0.0, 0.0])
 # System Constants
 TRAP_DT_MAX = 0.15
 IMU_SAMPLES_PER_PACKET = 5
-FORCE_ACTIVATION_THRESHOLD = 8
+FORCE_ACTIVATION_THRESHOLD = 1
 
 # Filter & Bias Constants
 BIAS_ALPHA = 0.01
@@ -233,17 +234,18 @@ class StrokeTracker:
                 return None
                 
             toks = raw.split(',')
-            if len(toks) < 48:
+            if len(toks) < 52:
                 return None
             
             # ========================================
             # 1. PROCESS UWB DATA (The Guide)
             # ========================================
-            d0 = float(toks[0])
-            d1 = float(toks[1])
-            d2 = float(toks[2])
+            d0 = float(toks[3])
+            d1 = float(toks[4])
+            d2 = float(toks[5])
+            d3 = float(toks[6])
             
-            raw_uwb_3d = self._trilaterate([d0, d1, d2], ANCHORS)
+            raw_uwb_3d = self._trilaterate([d0, d1, d2, d3], ANCHORS)
             raw_uwb_3d_transformed = np.array([
                 raw_uwb_3d[0],
                 raw_uwb_3d[2],
@@ -297,7 +299,7 @@ class StrokeTracker:
             last_valid_result = None
             
             for i in range(IMU_SAMPLES_PER_PACKET):
-                s = 3 + i * 9
+                s = 7 + i * 9
                 qx, qy, qz, qw = map(float, toks[s:s+4])
                 ax, ay, az = map(float, toks[s+4:s+7])
                 force = float(toks[s+7])

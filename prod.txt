@@ -1,0 +1,39 @@
+# ----------------------------------------------------
+# PRODUCTION REQUIREMENTS — Raspberry Pi 4B (ARM64)
+# Python 3.11+ (system python3 or venv)
+#
+# Usage:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r prod.txt
+#
+# Intentionally minimal — only packages actually
+# imported at runtime. Dev tools (Jupyter, Spyder,
+# Streamlit, FastAPI, etc.) are excluded.
+# ----------------------------------------------------
+
+# --- Web Server ---
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+gunicorn==22.0.0
+Werkzeug==3.0.3
+
+# --- Serial Communication ---
+pyserial==3.5
+
+# --- WebSocket (ESP32 client + browser server) ---
+websocket-client==1.8.0
+websocket-server==0.6.4
+
+# --- Image Generation (MJPEG canvas) ---
+Pillow==11.1.0
+
+# --- Pipeline / Sensor Fusion Math ---
+numpy==1.26.4
+scipy==1.13.1
+
+# --- Auth ---
+bcrypt==4.2.0
+
+# --- SQLAlchemy (pinned separately for clarity) ---
+SQLAlchemy==2.0.34

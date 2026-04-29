@@ -1,31 +1,33 @@
-# Python cache
+# --- Python cache ---
 __pycache__/
 *.py[cod]
 
-# Test cache
+# --- Test cache ---
 .pytest_cache/
 
-# Environments
+# --- Environments (dependent) ---
 .venv/
 .conda/
 .env
 
-# Logs
+# --- Logs Files ---
+logs/
 *.log
 
-# Databases
+# --- Databases ---
+instance/
 *.db
 
-# CSS maps
+# --- CSS maps (any) ---
 *.css.map
 
-# Generated Frames or Notes
+# --- Generated Frames or Notes ---
 archive/
-instance/
 app/static/gallery_images/
 
-# generated logs
-logs/
-
-# sample datas
+# --- sample and output data ---
 *.csv
+
+# --- docs and claude md files (temporary, for calibrating) ---
+docs/
+claude.md

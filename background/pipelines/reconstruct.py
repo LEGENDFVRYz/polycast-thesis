@@ -40,12 +40,267 @@ import math
 from background.pipelines.config import cfg
 
 
+def _pair_norm(v):
+    return math.sqrt(v[0] * v[0] + v[1] * v[1])
+
+
+def _pair_add(a, b):
+    return (a[0] + b[0], a[1] + b[1])
+
+
+def _pair_sub(a, b):
+    return (a[0] - b[0], a[1] - b[1])
+
+
+def _pair_scale(a, s):
+    return (a[0] * s, a[1] * s)
+
+
+def _is_finite_pair(v):
+    return (
+        isinstance(v, (tuple, list)) and len(v) >= 2 and
+        math.isfinite(float(v[0])) and math.isfinite(float(v[1]))
+    )
+
+
+def _bbox_diag(points):
+    if not points:
+        return 0.0
+    xs = [p[0] for p in points]
+    ys = [p[1] for p in points]
+    return math.sqrt((max(xs) - min(xs)) ** 2 + (max(ys) - min(ys)) ** 2)
+
+
+class StrokeFinalizationIMUCleaner:
+    """Reference-style post-stroke IMU cleaner.
+
+    This class intentionally mirrors the two useful batch steps from
+    john2zy/IMU-Position-Tracking, but applies them in the MewlyCast coordinate
+    system after pen-up:
+
+      1. removeAccErr-style acceleration drift removal:
+         detect motion start/end from acceleration magnitude, estimate the final
+         acceleration drift, subtract a linearly increasing drift term across the
+         moving segment, then subtract constant drift from the end segment.
+
+      2. zupt-style velocity correction:
+         integrate acceleration, and whenever a still phase is detected, distribute
+         the predicted residual velocity backward over the previous moving segment.
+
+    MewlyCast then anchors the corrected relative IMU trajectory back to the
+    fused/UWB-supported start/end placement so we clean shape without moving the
+    stroke to a new board location.
+    """
+
+    def __init__(self):
+        self.cfg = cfg.stroke_cleaner
+
+    def clean(self, stroke: dict) -> dict:
+        c = self.cfg
+        if not c.enabled:
+            stroke['cleaner'] = {'applied': False, 'reason': 'disabled'}
+            return stroke
+
+        points = stroke.get('points') or []
+        samples = stroke.get('samples') or []
+        n = len(points)
+        if n < c.min_points or len(samples) != n:
+            stroke['cleaner'] = {'applied': False, 'reason': 'too_few_or_missing_samples'}
+            stroke.pop('samples', None)
+            return stroke
+
+        raw_xy = [(float(x), float(y)) for x, y, _ in points]
+        acc = []
+        dts = []
+        for i, sample in enumerate(samples):
+            a = sample.get('acc_board_hp_tip', (0.0, 0.0))
+            if not _is_finite_pair(a):
+                a = (0.0, 0.0)
+            acc.append((float(a[0]), float(a[1])))
+
+            dt = sample.get('dt_s')
+            if not isinstance(dt, (float, int)) or not math.isfinite(float(dt)) or float(dt) <= 0.0:
+                if i > 0:
+                    dt = max(1e-4, (points[i][2] - points[i - 1][2]) / 1_000_000.0)
+                else:
+                    dt = 1.0 / cfg.imu.sample_rate_hz
+            dts.append(float(dt))
+
+        acc_corr, drift_info = self._remove_acc_err(acc, c.acc_motion_threshold)
+        velocities, zupt_info = self._zupt(acc_corr, dts, c.zupt_acc_threshold)
+
+        if c.force_zero_velocity_at_end and velocities:
+            end_info = self._force_final_zero_velocity(velocities)
+            zupt_info.update(end_info)
+
+        rel = self._position_track(acc_corr, velocities, dts)
+        if not rel:
+            stroke['cleaner'] = {'applied': False, 'reason': 'empty_reintegration'}
+            stroke.pop('samples', None)
+            return stroke
+
+        # Reference integration produces a relative trajectory. Re-anchor it to the
+        # original fused stroke start, then distribute the remaining end-point error
+        # across the stroke. This keeps UWB-supported placement while allowing the
+        # IMU-cleaned local shape to replace part of the live preview drift.
+        start_anchor = raw_xy[0]
+        end_anchor = raw_xy[-1]
+        candidate = [_pair_add(start_anchor, r) for r in rel]
+        end_error = _pair_sub(end_anchor, candidate[-1])
+        denom = max(1, n - 1)
+        anchored = []
+        for i, p in enumerate(candidate):
+            t = i / denom
+            anchored.append(_pair_add(p, _pair_scale(end_error, c.endpoint_anchor_blend * t)))
+
+        raw_diag = max(_bbox_diag(raw_xy), 1e-6)
+        clean_diag = _bbox_diag(anchored)
+        if clean_diag > raw_diag * c.max_bbox_ratio:
+            stroke['cleaner'] = {
+                'applied': False,
+                'reason': 'bbox_guard',
+                'raw_bbox_diag_m': raw_diag,
+                'clean_bbox_diag_m': clean_diag,
+            }
+            stroke.pop('samples', None)
+            return stroke
+
+        blend = min(1.0, max(0.0, float(c.shape_blend)))
+        cleaned_points = []
+        for i, ((_, _, ts), raw_p, clean_p) in enumerate(zip(points, raw_xy, anchored)):
+            x = raw_p[0] * (1.0 - blend) + clean_p[0] * blend
+            y = raw_p[1] * (1.0 - blend) + clean_p[1] * blend
+            cleaned_points.append((x, y, ts))
+
+        stroke['raw_points'] = points
+        stroke['points'] = cleaned_points
+        stroke['start_ts'] = cleaned_points[0][2]
+        stroke['end_ts'] = cleaned_points[-1][2]
+        stroke['cleaner'] = {
+            'applied': True,
+            'method': 'removeAccErr+ZUPT+positionTrack_endpoint_anchor',
+            'shape_blend': blend,
+            'raw_bbox_diag_m': raw_diag,
+            'clean_bbox_diag_m': clean_diag,
+            **drift_info,
+            **zupt_info,
+        }
+        stroke.pop('samples', None)
+        return stroke
+
+    def _remove_acc_err(self, acc: list[tuple[float, float]], threshold: float):
+        # Same structure as reference removeAccErr(): find first motion sample,
+        # find last sample that differs from final acceleration, infer final drift,
+        # subtract linearly increasing drift through motion, constant drift at tail.
+        n = len(acc)
+        a = [tuple(v) for v in acc]
+        if n < 3:
+            return a, {'acc_drift_removed': False}
+
+        t_start = 0
+        for t in range(n):
+            if _pair_norm(a[t]) > threshold:
+                t_start = t
+                break
+
+        t_end = n - 1
+        final_a = a[-1]
+        for t in range(n - 1, -1, -1):
+            if _pair_norm(_pair_sub(a[t], final_a)) > threshold:
+                t_end = t
+                break
+
+        if t_end <= t_start:
+            return a, {
+                'acc_drift_removed': False,
+                'acc_t_start': t_start,
+                'acc_t_end': t_end,
+            }
+
+        tail = a[t_end:]
+        drift = (
+            sum(v[0] for v in tail) / len(tail),
+            sum(v[1] for v in tail) / len(tail),
+        )
+        span = max(1, t_end - t_start)
+        drift_rate = _pair_scale(drift, 1.0 / span)
+
+        for i in range(span):
+            idx = t_start + i
+            a[idx] = _pair_sub(a[idx], _pair_scale(drift_rate, i + 1))
+        for idx in range(t_end, n):
+            a[idx] = _pair_sub(a[idx], drift)
+
+        return a, {
+            'acc_drift_removed': True,
+            'acc_t_start': t_start,
+            'acc_t_end': t_end,
+            'acc_drift_norm': _pair_norm(drift),
+        }
+
+    def _zupt(self, acc: list[tuple[float, float]], dts: list[float], threshold: float):
+        # Same structure as reference zupt(): integrate velocity, detect stillness,
+        # and when entering stillness, distribute predicted residual velocity backward
+        # over the previous moving segment.
+        velocities: list[tuple[float, float]] = []
+        prevt = -1
+        still_phase = False
+        v = (0.0, 0.0)
+        corrections = 0
+
+        for t, at in enumerate(acc):
+            dt = dts[t]
+            if _pair_norm(at) < threshold:
+                if not still_phase:
+                    predict_v = _pair_add(v, _pair_scale(at, dt))
+                    span = max(1, t - prevt)
+                    v_drift_rate = _pair_scale(predict_v, 1.0 / span)
+                    for i in range(t - prevt - 1):
+                        idx = prevt + 1 + i
+                        velocities[idx] = _pair_sub(velocities[idx], _pair_scale(v_drift_rate, i + 1))
+                    v = (0.0, 0.0)
+                    prevt = t
+                    still_phase = True
+                    corrections += 1
+            else:
+                v = _pair_add(v, _pair_scale(at, dt))
+                still_phase = False
+
+            velocities.append(v)
+
+        return velocities, {'zupt_segments': corrections}
+
+    def _force_final_zero_velocity(self, velocities: list[tuple[float, float]]):
+        if len(velocities) < 2:
+            return {'end_velocity_forced_zero': False}
+        residual = velocities[-1]
+        n = len(velocities)
+        denom = max(1, n - 1)
+        for i in range(n):
+            t = i / denom
+            velocities[i] = _pair_sub(velocities[i], _pair_scale(residual, t))
+        return {
+            'end_velocity_forced_zero': True,
+            'end_velocity_residual_norm': _pair_norm(residual),
+        }
+
+    def _position_track(self, acc, velocities, dts):
+        # Same structure as reference positionTrack(): p += v*dt + 0.5*a*dt².
+        p = (0.0, 0.0)
+        positions = []
+        for at, vt, dt in zip(acc, velocities, dts):
+            p = _pair_add(p, _pair_add(_pair_scale(vt, dt), _pair_scale(at, 0.5 * dt * dt)))
+            positions.append(p)
+        return positions
+
+
 class StrokeReconstructor:
     def __init__(self, dedup_tol: float = 1e-6):
         self._dedup_tol = dedup_tol
         self._current: dict | None = None
         self._closed_count = 0
         self._point_count = 0  # total points across all closed strokes
+        self._imu_cleaner = StrokeFinalizationIMUCleaner()
 
     # ── Main entry ────────────────────────────────────────────────────────────
     def process_event(self, ev: dict) -> dict | None:
@@ -99,6 +354,18 @@ class StrokeReconstructor:
         self._point_count  = 0
 
     # ── Internals ─────────────────────────────────────────────────────────────
+    def _sample_from_event(self, ev: dict) -> dict:
+        payload = ev.get('imu_cleaner') or {}
+        return {
+            'acc_board_hp_tip': payload.get('acc_board_hp_tip', (0.0, 0.0)),
+            'dt_s': payload.get('dt_s'),
+            'vel': payload.get('vel'),
+            'rel_pos': payload.get('rel_pos'),
+            'uwb': payload.get('uwb'),
+            'contact': payload.get('contact', ev.get('contact_raw', True)),
+            'is_static': payload.get('is_static', False),
+        }
+
     def _start_stroke(self, sid: int, ev: dict):
         # Phase-3: skip first point if physical contact is already gone.
         # contact_raw defaults True for backward-compat with pre-Phase-3 events.
@@ -111,6 +378,7 @@ class StrokeReconstructor:
         self._current = {
             'stroke_id': sid,
             'points':    [pt],
+            'samples':   [self._sample_from_event(ev)],
             'start_ts':  pt[2],
             'end_ts':    pt[2],
         }
@@ -131,6 +399,7 @@ class StrokeReconstructor:
             return
 
         self._current['points'].append((x, y, ts))
+        self._current['samples'].append(self._sample_from_event(ev))
         self._current['end_ts'] = ts
 
     def _close_current(self) -> dict | None:
@@ -139,10 +408,11 @@ class StrokeReconstructor:
         stroke = self._current
         stroke['closed'] = True
         self._current = None
+
+        stroke = self._imu_cleaner.clean(stroke)
         self._closed_count += 1
         self._point_count  += len(stroke['points'])
         return stroke
-
 
 # ==============================================================================
 # SELF-TEST

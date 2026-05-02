@@ -301,7 +301,7 @@ class FusionESKFConfig:
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
     # Too high makes UWB dominate; too low makes IMU drift dominate.
-    sigma_a: float = 2.4
+    sigma_a: float = 1.4
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
     acc_spike_clamp_enabled: bool = False
@@ -348,7 +348,7 @@ class FusionESKFConfig:
     sigma_uwb_vel_min_scale: float = 0.35
     # A/B diagnostic: if True, skip UWB velocity pseudo-update during any active stroke.
     # Prevents UWB-derived velocity from fighting IMU curved motion.
-    uwb_vel_stroke_gate: bool = False
+    uwb_vel_stroke_gate: bool = True
 
     # If accepted UWB updates are stale, inflate Q and increase drag.
     uwb_window_s: float = 0.30
@@ -436,6 +436,46 @@ class FusionESKFConfig:
     p0_bias: float = 0.05
 
 
+
+# ------------------------------------------------------------------------
+# STROKE FINALIZATION IMU CLEANER
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class StrokeCleanerConfig:
+    # Batch/offline cleanup applied only after pen-up. Live ESKF output is still
+    # emitted immediately, then the finished stroke is corrected before delivery.
+    enabled: bool = True
+
+    # Minimum useful stroke size. Shorter strokes are left untouched because
+    # double-integrating a tiny segment is usually less reliable than the fused path.
+    min_points: int = 6
+
+    # Reference-style acceleration drift removal threshold, matching the role of
+    # `threshold` in john2zy/IMU-Position-Tracking.removeAccErr(). Units: m/s².
+    acc_motion_threshold: float = 0.20
+
+    # Reference-style stationary threshold for ZUPT velocity correction, matching
+    # john2zy/IMU-Position-Tracking.zupt(..., threshold=0.2). Units: m/s².
+    zupt_acc_threshold: float = 0.20
+
+    # Pen-up is treated as the end still phase for whiteboard strokes. This applies
+    # the same backward velocity-drift distribution used by the reference ZUPT when
+    # a still phase is reached, but forces it at stroke close when no still samples
+    # were recorded inside the active ink segment.
+    force_zero_velocity_at_end: bool = True
+
+    # Keep placement anchored to the fused/UWB-supported stroke endpoints. 1.0 means
+    # force the IMU-cleaned relative trajectory to end at the original fused endpoint.
+    endpoint_anchor_blend: float = 1.0
+
+    # Conservative blend between current fused ink and cleaned IMU-relative shape.
+    # 0.0 = keep current pipeline output, 1.0 = full reference-style IMU cleanup.
+    shape_blend: float = 0.45
+
+    # Guard against a bad re-integration exploding a stroke. If the cleaned bbox is
+    # outside this ratio versus the raw fused bbox, keep the raw fused stroke.
+    max_bbox_ratio: float = 3.0
+
 # ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
@@ -449,6 +489,7 @@ class Config:
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
     marker: MarkerConfig = field(default_factory=MarkerConfig)
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
+    stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
 
 
 # declare the config file

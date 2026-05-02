@@ -422,6 +422,19 @@ class ESKF:
         # Forward physical contact flag so reconstruct.py can gate ink strictly.
         # contact_raw=True is the safe default for events that predate this field.
         out['contact_raw'] = bool(ev.get('contact', True))
+
+        # Stroke-finalization IMU cleaner payload. This is intentionally attached
+        # only to IMU-originated fused events because reconstruct.py ignores UWB
+        # events for ink, but needs per-point IMU samples after pen-up.
+        out['imu_cleaner'] = {
+            'acc_board_hp_tip': (float(acc[0]), float(acc[1])),
+            'dt_s': float(dt_s),
+            'vel': (float(self.v[0]), float(self.v[1])),
+            'rel_pos': (float(self.p[0]), float(self.p[1])),
+            'uwb': (float(self.last_uwb[0]), float(self.last_uwb[1])),
+            'contact': bool(ev.get('contact', True)),
+            'is_static': bool(ev.get('is_static', False)),
+        }
         return out
 
     # ────────────────────────────────────────────────────────────────────────
@@ -614,7 +627,7 @@ class ESKF:
         Returns True if update was applied, False if hard-rejected (NLOS).
         """
         ecfg = cfg.fusion_eskf
-
+        
         # Hard reject: trilateration residual far exceeds nominal (NLOS).
         hard_thresh = ecfg.hard_reject_mult * cfg.uwb.trilat_max_residual
         if solve_error > hard_thresh:

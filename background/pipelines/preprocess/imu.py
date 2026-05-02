@@ -136,12 +136,31 @@ def _vadd(a, b):
 def _vscale(a, s):
     return (a[0]*s, a[1]*s, a[2]*s)
 
+def _ema_vec(prev, cur, alpha_new: float):
+    """Exponential moving average using alpha as current-sample weight."""
+    if prev is None:
+        return cur
+    a = max(0.0, min(1.0, float(alpha_new)))
+    return (
+        a * cur[0] + (1.0 - a) * prev[0],
+        a * cur[1] + (1.0 - a) * prev[1],
+        a * cur[2] + (1.0 - a) * prev[2],
+    )
+
+def _deadband_vec(v, threshold: float):
+    """Snap small vector magnitudes to exact zero."""
+    if threshold <= 0.0:
+        return v
+    return (0.0, 0.0, 0.0) if _vmag(v) < threshold else v
+
 
 # --- IMU preprocessor ---
 class IMUPreprocessor:
     def __init__(self):
         # History for Body-Frame Jerk
-        self._prev_acc_body = None
+        self._prev_acc_body = None  # legacy/raw fallback only
+        self._acc_body_lpf = None
+        self._prev_acc_body_lpf_for_jerk = None
         # History for World-Frame EMA Smoothing (Path A — ESKF feed)
         self._prev_acc_world_clean = None
         self._prev_acc_tip_clean   = None   # Path A on tip-corrected signal
@@ -160,9 +179,12 @@ class IMUPreprocessor:
         self._zupt_active = False
 
         # Rigid-body kinematics state (lever-arm tip correction)
-        self._prev_quat_rb      = None   # previous normalized quat — for ω_body derivation
-        self._prev_omega_world  = None   # previous ω_world — for α_world derivation
-        self._ema_alpha_world   = None   # EMA-smoothed α_world (noisy 2nd derivative)
+        self._prev_quat_rb      = None   # previous normalized quat — for fallback ω_body derivation
+        self._omega_body_lpf    = None   # low-pass omega before alpha derivative
+        self._prev_omega_body_lpf = None # previous filtered omega for alpha derivative
+        self._ema_alpha_body    = None   # EMA-smoothed α_body (noisy 2nd derivative)
+        self._prev_omega_world  = None   # legacy diagnostic compatibility
+        self._ema_alpha_world   = None   # legacy diagnostic compatibility
 
         # Minimum samples required for ZUPT_MIN_DURATION_S
         dt_nom_s = 1.0 / cfg.imu.sample_rate_hz
@@ -201,75 +223,107 @@ class IMUPreprocessor:
 
         self._prev_ts = ts
 
-        # Hardware outputs m/s² natively.
-        acc_ms2 = acc
+        # Hardware outputs m/s² natively, in the IMU/body frame.
+        acc_ms2 = tuple(float(x) for x in acc)
 
-        # --- Normalize quaternion & rotate to world frame ---
-        q_norm        = _qnormalize(q)
-        acc_world_raw = _quat_rotate(q_norm, acc_ms2)
-
-        # ==========================================================
-        # RIGID-BODY TIP CORRECTION (lever-arm kinematics)
-        # Converts sensor-point acceleration → pen-tip acceleration.
-        #
-        #   a_tip = a_sensor − α×r − ω×(ω×r)
-        #
-        # where r = sensor→tip vector in world frame.
-        # Guard: correction is zero for the first two samples (no prev quat/ω).
-        # ==========================================================
+        # --- Normalize quaternion; all derivative-sensitive math below is
+        # --- filtered in the body frame BEFORE rotating to world coordinates.
+        q_norm = _qnormalize(q)
         R_body_to_world = _q_to_R(q_norm)
 
-        # Step 1 — ω_body from consecutive quaternions (small-angle approx).
-        if self._prev_quat_rb is not None and dt_s > 1e-6:
+        # ==========================================================
+        # PRE-DERIVATIVE LOW-PASS + DEADBAND
+        # ==========================================================
+        # Never compute alpha or jerk from raw frame-to-frame noise.  First
+        # low-pass the body-frame angular velocity and acceleration.  If a
+        # hardware gyro is present, use it; otherwise fall back to quaternion
+        # delta-derived omega so older recordings still work.
+        gyro_ev = ev.get('gyro') or ev.get('gyr') or ev.get('omega_body_raw')
+        if gyro_ev is not None:
+            try:
+                omega_body_raw = tuple(float(x) for x in gyro_ev)
+            except (TypeError, ValueError):
+                omega_body_raw = (0.0, 0.0, 0.0)
+        elif self._prev_quat_rb is not None and dt_s > 1e-6:
             q_delta = _quat_mul(q_norm, _quat_conj(self._prev_quat_rb))
             if q_delta[3] < 0:              # choose shorter arc
                 q_delta = (-q_delta[0], -q_delta[1], -q_delta[2], -q_delta[3])
-            omega_body  = _vscale(q_delta[:3], 2.0 / dt_s)
-            omega_world = _matvec3(R_body_to_world, omega_body)
+            omega_body_raw = _vscale(q_delta[:3], 2.0 / dt_s)
         else:
-            omega_body  = (0.0, 0.0, 0.0)
-            omega_world = (0.0, 0.0, 0.0)
+            omega_body_raw = (0.0, 0.0, 0.0)
 
-        # Step 2 — α_world from consecutive ω_world, EMA-filtered.
-        if self._prev_omega_world is not None and dt_s > 1e-6:
-            alpha_raw = _vscale(_vsub(omega_world, self._prev_omega_world), 1.0 / dt_s)
+        if cfg.imu.pre_derivative_lpf_enabled:
+            acc_body_clean = _ema_vec(self._acc_body_lpf, acc_ms2, cfg.imu.acc_lpf_alpha)
+            omega_body = _ema_vec(self._omega_body_lpf, omega_body_raw, cfg.imu.gyro_lpf_alpha)
         else:
-            alpha_raw = (0.0, 0.0, 0.0)
+            acc_body_clean = acc_ms2
+            omega_body = omega_body_raw
+
+        # Dynamic deadband: silence near-zero gyro noise before it enters
+        # centripetal correction, turn detection, ZUPT, or alpha derivation.
+        omega_body = _deadband_vec(omega_body, cfg.imu.omega_deadband_rads)
+        omega_world = _matvec3(R_body_to_world, omega_body)
+
+        # Alpha is the derivative of the already-filtered omega.  Then apply the
+        # existing alpha EMA as a second guard against derivative amplification.
+        if self._prev_omega_body_lpf is not None and dt_s > 1e-6:
+            alpha_body_raw = _vscale(_vsub(omega_body, self._prev_omega_body_lpf), 1.0 / dt_s)
+        else:
+            alpha_body_raw = (0.0, 0.0, 0.0)
 
         a_ema = cfg.imu.alpha_ema_alpha
-        if self._ema_alpha_world is None:
-            alpha_world = alpha_raw
+        if self._ema_alpha_body is None:
+            alpha_body = alpha_body_raw
         else:
-            alpha_world = (
-                a_ema * self._ema_alpha_world[0] + (1.0 - a_ema) * alpha_raw[0],
-                a_ema * self._ema_alpha_world[1] + (1.0 - a_ema) * alpha_raw[1],
-                a_ema * self._ema_alpha_world[2] + (1.0 - a_ema) * alpha_raw[2],
+            alpha_body = (
+                a_ema * self._ema_alpha_body[0] + (1.0 - a_ema) * alpha_body_raw[0],
+                a_ema * self._ema_alpha_body[1] + (1.0 - a_ema) * alpha_body_raw[1],
+                a_ema * self._ema_alpha_body[2] + (1.0 - a_ema) * alpha_body_raw[2],
             )
+        alpha_body = _deadband_vec(alpha_body, cfg.imu.alpha_deadband_rads2)
+        alpha_world = _matvec3(R_body_to_world, alpha_body)
 
-        # Step 3 — sensor→tip lever arm in world frame.
-        # r_imu_body_m is tip→IMU (positive z_body); negate for sensor→tip.
+        # ==========================================================
+        # RIGID-BODY TIP CORRECTION (BODY FRAME FIRST)
+        # Converts IMU/sensor acceleration → marker-tip acceleration.
+        #
+        #   a_tip = a_sensor − α×r − ω×(ω×r)
+        #
+        # r is the tip→IMU vector in the same body frame as omega/alpha.
+        # The body-frame correction is rotated into world coordinates only
+        # after tangential and centripetal terms are removed.
+        # ==========================================================
         r_imu = cfg.marker.r_imu_body_m
         s = float(cfg.imu.rigid_body_sign)
-        r_body_st   = (-r_imu[0] * s, -r_imu[1] * s, -r_imu[2] * s)
-        r_world_st  = _quat_rotate(q_norm, r_body_st)
+        # Preserve the previously validated sign convention.  With the current
+        # config rigid_body_sign=-1, this resolves to cfg.marker.r_imu_body_m.
+        r_body_tip_to_sensor = (-r_imu[0] * s, -r_imu[1] * s, -r_imu[2] * s)
 
-        # Step 4 — rigid-body correction terms (world frame).
-        tangential  = _vcross(alpha_world, r_world_st)
-        centripetal = _vcross(omega_world, _vcross(omega_world, r_world_st))
+        tangential_body  = _vcross(alpha_body, r_body_tip_to_sensor)
+        centripetal_body = _vcross(omega_body, _vcross(omega_body, r_body_tip_to_sensor))
 
         if cfg.imu.rigid_body_enabled:
-            acc_tip_world_raw = (
-                acc_world_raw[0] - tangential[0] - centripetal[0],
-                acc_world_raw[1] - tangential[1] - centripetal[1],
-                acc_world_raw[2] - tangential[2] - centripetal[2],
+            acc_tip_body_raw = (
+                acc_body_clean[0] - tangential_body[0] - centripetal_body[0],
+                acc_body_clean[1] - tangential_body[1] - centripetal_body[1],
+                acc_body_clean[2] - tangential_body[2] - centripetal_body[2],
             )
         else:
-            acc_tip_world_raw = acc_world_raw
+            acc_tip_body_raw = acc_body_clean
 
-        # Update rigid-body state for next sample.
-        self._prev_quat_rb     = q_norm
+        # Rotate cleaned sensor and tip acceleration into world frame.
+        acc_world_raw = _quat_rotate(q_norm, acc_body_clean)
+        acc_tip_world_raw = _quat_rotate(q_norm, acc_tip_body_raw)
+
+        # Update derivative state for next sample.
+        self._prev_quat_rb = q_norm
+        self._acc_body_lpf = acc_body_clean
+        self._omega_body_lpf = omega_body
+        self._prev_omega_body_lpf = omega_body
+        self._ema_alpha_body = alpha_body
+        # Keep legacy names populated for any external diagnostics.
         self._prev_omega_world = omega_world
-        self._ema_alpha_world  = alpha_world
+        self._ema_alpha_world = alpha_world
 
         # ==========================================================
         # DUAL-PATH EMA ARCHITECTURE
@@ -348,12 +402,15 @@ class IMUPreprocessor:
             acc_board_hp     = acc_board
             acc_board_hp_tip = acc_board_tip
 
-        # --- Body-Frame Jerk (raw body acc for sensitivity) ---
-        if self._prev_acc_body is not None and dt_s > 0:
-            delta_body = _vsub(acc_ms2, self._prev_acc_body)
+        # --- Body-Frame Jerk (pre-derivative low-pass) ---
+        # Jerk is also a derivative, so use the filtered body acceleration.
+        # This prevents micro-tremor/electrical noise from arming turn logic.
+        if self._prev_acc_body_lpf_for_jerk is not None and dt_s > 0:
+            delta_body = _vsub(acc_body_clean, self._prev_acc_body_lpf_for_jerk)
             jerk = _vmag(delta_body) / dt_s
         else:
             jerk = 0.0
+        self._prev_acc_body_lpf_for_jerk = acc_body_clean
         self._prev_acc_body = acc_ms2
 
         # --- Smoothed ZUPT Jerk (Path B — prevents tremor spikes blocking ZUPT) ---
@@ -395,6 +452,7 @@ class IMUPreprocessor:
             'sample_idx':  ev.get('sample_idx'),
             'quat':        q_norm,
             'acc_sensor':  acc_ms2,
+            'acc_body_lpf': acc_body_clean,
             # --- legacy / diagnostic (sensor-point, not tip-corrected) ---
             'acc_world':    acc_world,
             'acc_board':    acc_board,
@@ -406,7 +464,9 @@ class IMUPreprocessor:
             # --- angular kinematics (consumed by ESKF turn detection) ---
             'omega_world': omega_world,
             'omega_body':  omega_body,
+            'omega_body_raw': omega_body_raw,
             'alpha_world': alpha_world,
+            'alpha_body':  alpha_body,
             # --- contact / motion ---
             'jerk':           round(jerk, 6),
             'omega_mag_world': round(omega_mag, 6),
@@ -418,6 +478,8 @@ class IMUPreprocessor:
     def reset(self):
         """Clear integration history on startup or buffer limit"""
         self._prev_acc_body = None
+        self._acc_body_lpf = None
+        self._prev_acc_body_lpf_for_jerk = None
         self._prev_acc_world_clean = None
         self._prev_acc_world_zupt = None
         self._prev_acc_world_zupt_old = None
@@ -427,6 +489,9 @@ class IMUPreprocessor:
         self._still_streak = 0
         self._zupt_active = False
         self._prev_quat_rb     = None
+        self._omega_body_lpf = None
+        self._prev_omega_body_lpf = None
+        self._ema_alpha_body = None
         self._prev_omega_world = None
         self._ema_alpha_world  = None
         self._prev_acc_tip_clean = None

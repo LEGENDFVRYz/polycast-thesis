@@ -21,6 +21,7 @@ Output (normalized event schema):
         'ts_hw':      int,      # hardware timestamp from sensor
         'quat':       (qx, qy, qz, qw),
         'acc':        (ax, ay, az),
+        'gyro':       (gx, gy, gz) | None,
         'force':      float
     }
 
@@ -105,6 +106,9 @@ class StreamNormalizer:
             'ts_hw':      pkt.get('ts_hw'),
             'quat':       pkt.get('quat'),
             'acc':        pkt.get('acc'),
+            # Optional hardware gyro passthrough.  Current packets may omit this;
+            # imu.py falls back to quaternion-derived omega when absent.
+            'gyro':       pkt.get('gyro'),
             'force':      pkt.get('force'),
         }]
 

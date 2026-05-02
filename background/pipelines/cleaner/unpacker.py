@@ -9,6 +9,7 @@ Responsibility:
 Input (from the ESP32 Receiver, fetched via serial com on COM3):
     - Interleaved CSV lines:
       IMU: I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts>
+      IMU with gyro: I,<seq>,<qx>,<qy>,<qz>,<qw>,<gx>,<gy>,<gz>,<ax>,<ay>,<az>,<force>,<ts>
       UWB: U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts>
 
 Output (Flat event dictionaries ready for normalizer/preprocessor):
@@ -72,7 +73,22 @@ class SerialStreamer:
 
                 try:
                     # ── Parse IMU Event ────────────────────────────────────────
-                    if type_char == 'I' and len(parts) == 11:
+                    if type_char == 'I' and len(parts) == 14:
+                        # Extended format with raw body-frame gyro.  This lets
+                        # imu.py compute omega/alpha from gyro when firmware
+                        # provides it; legacy packets still work below.
+                        packets_found.append({
+                            'sensor':     'IMU',
+                            'packet_id':  int(parts[1]),
+                            'sample_idx': 0,  # Always 0
+                            'quat':       (float(parts[2]), float(parts[3]), float(parts[4]), float(parts[5])),
+                            'gyro':       (float(parts[6]), float(parts[7]), float(parts[8])),
+                            'acc':        (float(parts[9]), float(parts[10]), float(parts[11])),
+                            'force':      float(parts[12]),
+                            'ts_hw':      int(parts[13])
+                        })
+
+                    elif type_char == 'I' and len(parts) == 11:
                         packets_found.append({
                             'sensor':     'IMU',
                             'packet_id':  int(parts[1]),

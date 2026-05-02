@@ -142,6 +142,14 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     if latest_fused:
         e  = latest_fused.get('eskf', {})
         ba = e.get('b_a', (0.0, 0.0))
+        p_nom = e.get('p_nominal', (0.0, 0.0))
+        z_tip = e.get('z_uwb_tip', (0.0, 0.0))
+        dxp = e.get('vel_pseudo_dx_pos', (0.0, 0.0))
+        dxv = e.get('vel_pseudo_dx_vel', (0.0, 0.0))
+        p_nom = e.get('p_nominal', (0.0, 0.0))
+        z_tip = e.get('z_uwb_tip', (0.0, 0.0))
+        dxp = e.get('vel_pseudo_dx_pos', (0.0, 0.0))
+        dxv = e.get('vel_pseudo_dx_vel', (0.0, 0.0))
         turn_tag = ' [TURN]' if e.get('turn_flag') else ''
         ux = latest_fused.get('uwb_x') or 0.0
         uy = latest_fused.get('uwb_y') or 0.0
@@ -226,6 +234,16 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
         snaps    = e3.get('stroke_start_snaps', 0)
         b_p_mag   = e3.get('b_p_mag', 0.0)
         b_p_xy    = e3.get('b_p', (0.0, 0.0))
+        vp_on     = e3.get('vel_pseudo_applied', False)
+        vp_dxp    = e3.get('vel_pseudo_dx_pos', (0.0, 0.0))
+        vp_dxv    = e3.get('vel_pseudo_dx_vel', (0.0, 0.0))
+        guard_on  = e3.get('active_uwb_guard_fired', False)
+        guard_mm  = e3.get('active_uwb_guard_correction', 0.0) * 1000.0
+        lock_on   = e3.get('tip_lock_active', False)
+        lock_cand = e3.get('tip_lock_candidate', False)
+        lock_mm   = e3.get('tip_lock_correction', 0.0) * 1000.0
+        lock_n    = e3.get('tip_lock_count', 0)
+        lock_r    = e3.get('tip_lock_reason', 'OFF')
         is_fast   = e3.get('drawing_fast', False)
         fast_tag  = ' ★FAST' if is_fast else ''
         age_s     = e3.get('stroke_age_s', 0.0)
@@ -244,6 +262,9 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
             f"  AgeMult  : {age_mult:.3f}x",
             f"  KcapEff  : {kcap_eff:.4f}",
             f"  b_p      : ({b_p_xy[0]:+.4f}, {b_p_xy[1]:+.4f})  |{b_p_mag*1000:.1f} mm|",
+            f"  VelPseudo: {'ON' if vp_on else 'OFF'}  dP=({vp_dxp[0]*1000:+.1f},{vp_dxp[1]*1000:+.1f})mm  dV=({vp_dxv[0]:+.2f},{vp_dxv[1]:+.2f})",
+            f"  UWBGuard : {'ON' if guard_on else 'OFF'}  corr={guard_mm:.1f} mm",
+            f"  TipLock  : {'ON' if lock_on else ('CAND' if lock_cand else 'OFF')}  n={lock_n}  corr={lock_mm:.1f} mm  {lock_r}",
         ]
     else:
         L.append('  (waiting for fusion data)')
@@ -364,6 +385,12 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'K_pos_diag', 'b_a_norm', 'uwb_residual_rms',
             'omega_in_plane', 'turn_flag', 'b_a_x', 'b_a_y',
             'b_p_x', 'b_p_y', 'b_p_mag',
+            'p_nom_x', 'p_nom_y', 'uwb_tip_x', 'uwb_tip_y',
+            'vel_pseudo_applied', 'vel_pseudo_dx_pos_x', 'vel_pseudo_dx_pos_y',
+            'vel_pseudo_dx_vel_x', 'vel_pseudo_dx_vel_y',
+            'active_uwb_guard_fired', 'active_uwb_guard_correction_m',
+            'tip_lock_active', 'tip_lock_candidate', 'tip_lock_count',
+            'tip_lock_correction_m', 'tip_lock_uwb_blend', 'tip_lock_reason',
             'stroke_age_s', 'age_cap_mult', 'kcap_eff',
             'acc_hp_tip_x', 'acc_hp_tip_y', 'acc_hp_tip_mag',
             'acc_tip_x', 'acc_tip_y', 'acc_tip_mag',
@@ -665,6 +692,23 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{e.get("b_p", (0.0, 0.0))[0]:.5f}',
             f'{e.get("b_p", (0.0, 0.0))[1]:.5f}',
             f'{e.get("b_p_mag", 0.0):.5f}',
+            f'{e.get("p_nominal", (0.0, 0.0))[0]:.5f}',
+            f'{e.get("p_nominal", (0.0, 0.0))[1]:.5f}',
+            f'{e.get("z_uwb_tip", (0.0, 0.0))[0]:.5f}',
+            f'{e.get("z_uwb_tip", (0.0, 0.0))[1]:.5f}',
+            int(e.get('vel_pseudo_applied', False)),
+            f'{e.get("vel_pseudo_dx_pos", (0.0, 0.0))[0]:.5f}',
+            f'{e.get("vel_pseudo_dx_pos", (0.0, 0.0))[1]:.5f}',
+            f'{e.get("vel_pseudo_dx_vel", (0.0, 0.0))[0]:.5f}',
+            f'{e.get("vel_pseudo_dx_vel", (0.0, 0.0))[1]:.5f}',
+            int(e.get('active_uwb_guard_fired', False)),
+            f'{e.get("active_uwb_guard_correction", 0.0):.5f}',
+            int(e.get('tip_lock_active', False)),
+            int(e.get('tip_lock_candidate', False)),
+            int(e.get('tip_lock_count', 0)),
+            f'{e.get("tip_lock_correction", 0.0):.5f}',
+            f'{e.get("tip_lock_uwb_blend", 0.0):.3f}',
+            e.get('tip_lock_reason', 'OFF'),
             f'{e.get("stroke_age_s", 0.0):.3f}',
             f'{e.get("age_cap_mult", 1.0):.4f}',
             f'{min(e.get("age_cap_mult", 1.0) * (cfg.fusion_eskf.modes.drawing_fast if e.get("drawing_fast") else cfg.fusion_eskf.modes.drawing).pos_gain_cap, 1.0):.5f}',

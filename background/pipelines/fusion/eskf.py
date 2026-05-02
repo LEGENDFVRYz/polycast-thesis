@@ -88,6 +88,14 @@ def _slerp(q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
     return math.cos(theta) * q1 + math.sin(theta) * q_perp
 
 
+def _clip_vec_norm(v: np.ndarray, max_norm: float) -> np.ndarray:
+    """Limit a 2D correction by vector magnitude instead of per-axis only."""
+    n = float(np.linalg.norm(v))
+    if not math.isfinite(n) or n <= max_norm or n < 1e-12:
+        return v
+    return v * (max_norm / n)
+
+
 class ESKF:
     def __init__(self):
         ecfg = cfg.fusion_eskf
@@ -99,6 +107,21 @@ class ESKF:
         self.v   = np.zeros(2, dtype=float)                      # velocity
         self.b_a = np.zeros(2, dtype=float)                      # accel bias
         self.b_p = np.zeros(2, dtype=float)                      # position bias (Phase 4 EMA tracker)
+        self._active_uwb_guard_fired = False
+        self._active_uwb_guard_correction = 0.0
+
+        # Mode-aware stationary-contact clamp.  When contact.py reports
+        # CONTACT_STATIC, or when force/contact + low motion indicates that the
+        # tip is planted, the visible tip is pinned to a local anchor and
+        # velocity is aggressively killed.  This prevents start/end hold drift.
+        self._tip_lock_active = False
+        self._tip_lock_candidate = False
+        self._tip_lock_count = 0
+        self._tip_lock_anchor_visible: np.ndarray | None = None
+        self._tip_lock_correction = 0.0
+        self._tip_lock_uwb_blend = 0.0
+        self._tip_lock_reason = 'OFF'
+
         self.q   = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)   # identity
 
         # ── Error-state covariance (6×6 block-diag init) ────────────────────
@@ -144,6 +167,7 @@ class ESKF:
         self.last_ts: int | None = None        # IMU-only propagation clock
         self.last_uwb_ts: int | None = None    # UWB arrival timestamp (diagnostics only)
         self.last_uwb = self.p.copy()
+        self.last_uwb_tip = self.p.copy()  # last accepted lever-arm-corrected UWB tip position
         self._last_uwb_fix_ts: int | None = None   # hw ts of the last stored last_uwb
         self._last_innovation_norm = 0.0
         self._last_r_scale = 1.0
@@ -157,6 +181,10 @@ class ESKF:
         self._last_lever_arm_m = 0.0
         self._last_lever_r_world = np.zeros(3, dtype=float)
         self._last_z_uwb_raw     = np.zeros(2, dtype=float)
+        self._last_z_uwb_tip     = np.zeros(2, dtype=float)
+        self._vel_pseudo_applied = False
+        self._vel_pseudo_dx_pos  = np.zeros(2, dtype=float)
+        self._vel_pseudo_dx_vel  = np.zeros(2, dtype=float)
 
         # ── Adaptive trust tracking ─────────────────────────────────────────
         self._last_z_tip: np.ndarray | None = None   # last accepted tip position (jump gate)
@@ -271,6 +299,8 @@ class ESKF:
 
     def _mode_name(self) -> str:
         """Human-readable fusion mode name matching _mode_params() — pure read."""
+        if self._tip_lock_active:
+            return 'CONTACT_STATIC_LOCK'
         if self._prev_stroke_active:
             return 'DRAWING_FAST' if self._in_fast_mode else 'CONTACT_DRAWING'
         if self._last_stroke_state in ('IDLE', 'CONTACT_STATIC'):
@@ -336,17 +366,43 @@ class ESKF:
             or ev.get('acc_board', (0.0, 0.0))
         )
         acc = np.asarray(acc_src, dtype=float)
+
+        # Read contact state before propagation.  contact.py already separates
+        # CONTACT_STATIC from CONTACT_DRAWING; the clamp uses that mode to avoid
+        # integrating IMU noise while the physical tip is planted.
+        stroke_state = ev.get('stroke_state', 'UNKNOWN')
+        stroke_active_now = bool(ev.get('stroke_active', False))
+        stroke_active_prev = self._prev_stroke_active
+        self._last_stroke_state = stroke_state   # used by _mode_params / _mode_name
+        contact_static_candidate = self._contact_static_candidate(ev, acc, stroke_state)
+
         mode_p = self._update_and_resolve_mode()
         ecfg = cfg.fusion_eskf
-        a   = (acc - self.b_a) * mode_p.acc_scale
-        if ecfg.acc_spike_clamp_enabled and self._prev_stroke_active:
-            clamp = ecfg.acc_spike_clamp_ms2
-            a = np.clip(a, -clamp, clamp)
+
+        # When the tip is physically down and stationary, use the static-mode
+        # process model and suppress acceleration before it can create a start/end
+        # hook.  The actual visible freeze happens later in _apply_contact_static_lock.
+        if contact_static_candidate:
+            mode_p = ecfg.modes.static
+            a = np.zeros(2, dtype=float)
+            self._in_fast_mode = False
+            self._fast_arm_count = 0
+            self._fast_burst_count = 0
+        else:
+            a = (acc - self.b_a) * mode_p.acc_scale
+            if ecfg.acc_spike_clamp_enabled and self._prev_stroke_active:
+                # Clamp by vector norm so diagonal impulses are limited correctly.
+                a = _clip_vec_norm(a, ecfg.acc_spike_clamp_ms2)
+
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
         # Velocity drag — further scaled by stale_factor when UWB is silent.
         drag_inv_s = mode_p.drag_inv_s * stale_factor
         self.v *= max(0.0, 1.0 - drag_inv_s * dt_s)
+        # Active-stroke safety cap: prevents acceleration bursts from becoming
+        # 30–40 cm loops while still allowing fast handwriting.
+        if self._prev_stroke_active:
+            self.v = _clip_vec_norm(self.v, cfg.fusion_eskf.active_vel_cap_ms)
 
         # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
         #    Q is turn-aware; also inflated by stale_factor² when UWB is silent.
@@ -374,7 +430,6 @@ class ESKF:
         #    Rising edge (inactive → active): soft ZUPT — tip velocity near zero.
         #    Falling edge (active → inactive): damp lingering momentum so it
         #    doesn't leak into the next stroke.
-        stroke_active_now = bool(ev.get('stroke_active', False))
         if stroke_active_now and not self._prev_stroke_active:
             self._stroke_start_ts = ts
             self._zupt_soft_update(sigma=0.05)
@@ -382,6 +437,13 @@ class ESKF:
         elif (not stroke_active_now) and self._prev_stroke_active:
             self._stroke_start_ts = None
             ecfg_se = cfg.fusion_eskf
+            # If the user paused at the end before lifting, preserve the locked
+            # endpoint instead of letting the final pen-up frame move it.
+            locked_endpoint = (
+                np.asarray(self._tip_lock_anchor_visible, dtype=float).copy()
+                if self._tip_lock_active and self._tip_lock_anchor_visible is not None
+                else None
+            )
             self.v *= ecfg_se.stroke_end_v_decay
             self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
             self.P[3, 3] *= ecfg_se.stroke_end_p_vel_scale
@@ -390,13 +452,23 @@ class ESKF:
             # with a fresh (near-zero) b_p, giving the stroke-start snap and
             # the new stroke's own EMA a clean slate.
             self.b_p *= ecfg_se.bias_decay
+            if locked_endpoint is not None:
+                self.p = locked_endpoint - self.b_p
         self._prev_stroke_active = stroke_active_now
+
+        # Contact-static tip lock: pen-down stabilization, mid-stroke micro-pause
+        # hold, and pen-up final stabilization all share this mode-aware clamp.
+        self._apply_contact_static_lock(
+            ts=ts,
+            candidate=contact_static_candidate,
+            stroke_active_now=stroke_active_now,
+            stroke_active_prev=stroke_active_prev,
+            stroke_state=stroke_state,
+        )
 
         # IMU frame counters — mode classification from contact detector.
         # K averages are accumulated in _on_uwb (UWB-event-driven) so they
         # reflect the actual gain at update time, not a stale carry-over.
-        stroke_state = ev.get('stroke_state', 'UNKNOWN')
-        self._last_stroke_state = stroke_state   # used by _mode_params / _mode_name
         if stroke_state == 'CONTACT_DRAWING':
             if self._in_fast_mode:
                 self._frames_fast += 1
@@ -431,7 +503,7 @@ class ESKF:
             'dt_s': float(dt_s),
             'vel': (float(self.v[0]), float(self.v[1])),
             'rel_pos': (float(self.p[0]), float(self.p[1])),
-            'uwb': (float(self.last_uwb[0]), float(self.last_uwb[1])),
+            'uwb': (float(self.last_uwb_tip[0]), float(self.last_uwb_tip[1])),
             'contact': bool(ev.get('contact', True)),
             'is_static': bool(ev.get('is_static', False)),
         }
@@ -477,6 +549,10 @@ class ESKF:
         self._last_lever_arm_m   = float(np.linalg.norm(r_board_offset))
         self._last_lever_r_world = lever_r_world
         self._last_z_uwb_raw     = z.copy()
+        self._last_z_uwb_tip     = z_tip.copy()
+        self._vel_pseudo_applied = False
+        self._vel_pseudo_dx_pos[:] = 0.0
+        self._vel_pseudo_dx_vel[:] = 0.0
 
         # Step 5: NLOS-adaptive R — consume trilateration residual.
         solve_error = float(ev.get('solve_error', 0.0))
@@ -499,7 +575,7 @@ class ESKF:
         # correction while K_air is already near zero. Rejecting it prevents
         # the alpha-beta tail from nudging the state toward a bad measurement.
         quality = ev.get('uwb_quality', {})
-        stroke_active = ev.get('stroke_active', False)
+        stroke_active = self._prev_stroke_active  # UWB events do not carry contact state reliably
         if quality.get('low_confidence') and not stroke_active:
             self._uwb_rejected += 1
             return self._emit(ts, 'POSITION', 'UWB_LOW_CONF_REJECT', 0, False)
@@ -527,6 +603,7 @@ class ESKF:
                 self._last_uwb_reset_ts = ts_uwb
                 self._last_z_tip = z_tip.copy()
                 self._last_z_tip_ts = ts_uwb
+                self.last_uwb_tip = z_tip.copy()
                 self._uwb_accepted += 1
                 self._clamp_to_board()
                 return self._emit(ts, 'POSITION', 'UWB_BOOTSTRAP', 0, False)
@@ -541,6 +618,7 @@ class ESKF:
         self._last_uwb_reset_ts = ts_uwb
         self._last_z_tip = z_tip.copy()
         self._last_z_tip_ts = ts_uwb
+        self.last_uwb_tip = z_tip.copy()
 
         # K statistics — accumulated here (UWB-event-driven) so panel averages
         # reflect actual gain at update time, not stale IMU carry-overs.
@@ -627,7 +705,7 @@ class ESKF:
         Returns True if update was applied, False if hard-rejected (NLOS).
         """
         ecfg = cfg.fusion_eskf
-        
+
         # Hard reject: trilateration residual far exceeds nominal (NLOS).
         hard_thresh = ecfg.hard_reject_mult * cfg.uwb.trilat_max_residual
         if solve_error > hard_thresh:
@@ -735,11 +813,14 @@ class ESKF:
         if not np.all(np.isfinite(dx)):
             return False
         
-        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
         if self._prev_stroke_active:
-            dx[2:4] = np.clip(dx[2:4], -0.05, 0.05)
+            # UWB can gently pull ink back to the board reference, but every
+            # accepted correction is limited so it cannot create a visible fold.
+            dx[0:2] = _clip_vec_norm(dx[0:2], 0.018)
+            dx[2:4] = _clip_vec_norm(dx[2:4], 0.025)
         else:
-            dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
+            dx[0:2] = _clip_vec_norm(dx[0:2], 0.10)
+            dx[2:4] = _clip_vec_norm(dx[2:4], 0.50)
         dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
         
         self.p   += dx[0:2]
@@ -938,11 +1019,15 @@ class ESKF:
         UWB fix is available (age < stroke_start_uwb_max_age_s).
         """
         ecfg = cfg.fusion_eskf
-        if self._last_uwb_fix_ts is None:
+        # Use the last ACCEPTED lever-arm-corrected UWB tip target, not the raw
+        # UWB tag position. Snapping to the raw tag can inject a tip/tag offset
+        # at pen-down and starts the stroke with a hidden placement error.
+        if self._last_z_tip is None or self._last_z_tip_ts is None:
             return
-        age_s = (ts - self._last_uwb_fix_ts) / 1_000_000.0
+        age_s = (ts - self._last_z_tip_ts) / 1_000_000.0
         if age_s > ecfg.stroke_start_uwb_max_age_s:
             return
+        target = self._last_z_tip.copy()
 
         H = np.zeros((2, 6))
         H[0, 0] = 1.0
@@ -951,7 +1036,7 @@ class ESKF:
         sigma = ecfg.sigma_uwb * ecfg.stroke_start_sigma_scale
         R = (sigma ** 2) * np.eye(2)
 
-        y = self.last_uwb - self.p
+        y = target - self.p
         S = H @ self.P @ H.T + R
         K = self.P @ H.T @ np.linalg.inv(S)
 
@@ -993,9 +1078,20 @@ class ESKF:
         dx = K @ y
         if not np.all(np.isfinite(dx)):
             return
-        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
-        dx[2:4] = np.clip(dx[2:4], -1.50, 1.50)
+        if self._prev_stroke_active:
+            # Safety: a UWB-derived velocity update must never teleport active ink.
+            # With uwb_vel_stroke_gate=True this branch should normally not run,
+            # but keeping it here prevents future config changes from reintroducing
+            # the 8-11 cm in-stroke fold observed in the visualizer.
+            dx[0:2] = 0.0
+            dx[2:4] = np.clip(dx[2:4], -0.15, 0.15)
+        else:
+            dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
+            dx[2:4] = np.clip(dx[2:4], -1.50, 1.50)
         dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
+        self._vel_pseudo_applied = True
+        self._vel_pseudo_dx_pos = dx[0:2].copy()
+        self._vel_pseudo_dx_vel = dx[2:4].copy()
         self.p   += dx[0:2]
         self.v   += dx[2:4]
         self.b_a += dx[4:6]
@@ -1112,7 +1208,204 @@ class ESKF:
         self.p[0] = max(0.0, min(self._board_w, self.p[0]))
         self.p[1] = max(0.0, min(self._board_h, self.p[1]))
 
+    def _fresh_uwb_age_s(self, ts: int) -> float | None:
+        """Age of the last accepted tip-corrected UWB fix, or None if absent."""
+        if self._last_z_tip_ts is None:
+            return None
+        return max(0.0, (ts - self._last_z_tip_ts) / 1_000_000.0)
+
+    def _contact_static_candidate(self, ev: dict, acc: np.ndarray, stroke_state: str) -> bool:
+        """Return True when the physical tip should be treated as planted.
+
+        CONTACT_STATIC from contact.py is the primary signal.  The threshold path
+        is a compatibility fallback for logs where the substate is not populated
+        or where a debounced transition is lagging by a frame or two.
+        """
+        ecfg = cfg.fusion_eskf
+        if not ecfg.contact_static_lock_enabled:
+            return False
+
+        if stroke_state == 'CONTACT_STATIC':
+            return True
+
+        # Fallback: raw/contact + stillness + low predicted speed + low angular
+        # motion.  This avoids false locking during actual drawing corners.
+        contact_like = bool(ev.get('contact', False)) or stroke_state in ('CONTACT_DRAWING', 'CONTACT_STATIC')
+        if not contact_like or not bool(ev.get('is_static', False)):
+            return False
+
+        speed = float(np.linalg.norm(self.v))
+        amag = float(np.linalg.norm(acc))
+        omega = abs(float(self._omega_in_plane_last))
+        return (
+            speed <= ecfg.contact_static_lock_speed_thresh_ms and
+            amag <= ecfg.contact_static_lock_acc_thresh_ms2 and
+            omega <= ecfg.contact_static_lock_omega_thresh_rads
+        )
+
+    def _make_contact_lock_anchor(self, ts: int, pen_down_phase: bool) -> tuple[np.ndarray, float]:
+        """Visible-position anchor for stationary contact.
+
+        Before the logical stroke opens, UWB is allowed to dominate because no ink
+        should be committed yet.  During an active stroke, the anchor is mostly the
+        current visible fused point so micro-pauses do not snap the drawn letter.
+        """
+        ecfg = cfg.fusion_eskf
+        visible = self.p + self.b_p
+        blend = 0.0
+        age_s = self._fresh_uwb_age_s(ts)
+        if age_s is not None and age_s <= ecfg.contact_static_lock_uwb_max_age_s:
+            blend = (
+                ecfg.contact_static_lock_pen_down_uwb_blend
+                if pen_down_phase else
+                ecfg.contact_static_lock_micro_pause_uwb_blend
+            )
+            blend = float(np.clip(blend, 0.0, 1.0))
+        anchor = (1.0 - blend) * visible + blend * self.last_uwb_tip
+        return anchor.astype(float), blend
+
+    def _release_contact_static_lock(self):
+        self._tip_lock_candidate = False
+        self._tip_lock_active = False
+        self._tip_lock_count = 0
+        self._tip_lock_anchor_visible = None
+        self._tip_lock_correction = 0.0
+        self._tip_lock_uwb_blend = 0.0
+        self._tip_lock_reason = 'OFF'
+
+    def _apply_contact_static_lock(
+        self,
+        ts: int,
+        candidate: bool,
+        stroke_active_now: bool,
+        stroke_active_prev: bool,
+        stroke_state: str,
+    ):
+        """Pin the visible tip during contact-stationary periods.
+
+        Covers three cases:
+          1. pen-down stabilization before stroke_active opens,
+          2. CONTACT_STATIC micro-pauses while stroke_active remains true,
+          3. end-hold stabilization before the pen-up edge closes the stroke.
+        """
+        ecfg = cfg.fusion_eskf
+        if not ecfg.contact_static_lock_enabled or not candidate:
+            self._release_contact_static_lock()
+            return
+
+        self._tip_lock_candidate = True
+        self._tip_lock_count += 1
+
+        # If the logical stroke is not open yet, this is a pen-down/start hold.
+        # It should be clamped immediately and strongly UWB-anchored.
+        pen_down_phase = (not stroke_active_now) or (stroke_active_now and not stroke_active_prev)
+        min_frames = 1 if pen_down_phase else max(1, int(ecfg.contact_static_lock_min_frames))
+
+        if self._tip_lock_anchor_visible is None or pen_down_phase:
+            self._tip_lock_anchor_visible, self._tip_lock_uwb_blend = self._make_contact_lock_anchor(
+                ts, pen_down_phase=pen_down_phase
+            )
+        elif self._tip_lock_active:
+            # During a held micro-pause, optionally let a fresh UWB fix very slowly
+            # trim the anchor without creating a visible snap.
+            anchor_new, blend = self._make_contact_lock_anchor(ts, pen_down_phase=False)
+            self._tip_lock_anchor_visible = (1.0 - blend) * self._tip_lock_anchor_visible + blend * anchor_new
+            self._tip_lock_uwb_blend = blend
+
+        self._tip_lock_reason = 'PENDOWN' if pen_down_phase else ('MICROPAUSE' if stroke_active_now else stroke_state)
+
+        # Always kill velocity while the candidate persists; only freeze position
+        # after min_frames for active micro-pauses so actual sharp corners are not
+        # over-clamped by a single borderline static frame.
+        self.v *= float(np.clip(ecfg.contact_static_lock_vel_decay, 0.0, 1.0))
+        if float(np.linalg.norm(self.v)) < ecfg.contact_static_lock_vel_zero_thresh_ms:
+            self.v[:] = 0.0
+
+        if self._tip_lock_count < min_frames:
+            self._tip_lock_active = False
+            self._tip_lock_correction = 0.0
+            return
+
+        self._tip_lock_active = True
+        visible = self.p + self.b_p
+        correction = (self._tip_lock_anchor_visible - visible) * float(
+            np.clip(ecfg.contact_static_lock_pos_alpha, 0.0, 1.0)
+        )
+        self.p += correction
+        self._tip_lock_correction = float(np.linalg.norm(correction))
+
+        # Shrink covariance in the dimensions the physical board constraint just
+        # observed: velocity should be near zero, position should not be wandering.
+        self.P[2, 2] *= float(np.clip(ecfg.contact_static_lock_cov_vel_scale, 0.0, 1.0))
+        self.P[3, 3] *= float(np.clip(ecfg.contact_static_lock_cov_vel_scale, 0.0, 1.0))
+        self.P[0, 0] *= float(np.clip(ecfg.contact_static_lock_cov_pos_scale, 0.0, 1.0))
+        self.P[1, 1] *= float(np.clip(ecfg.contact_static_lock_cov_pos_scale, 0.0, 1.0))
+        self._apply_covariance_floor()
+
+    def _apply_active_uwb_boundary_guard(self, ts: int, active: bool):
+        """Bound active ink around the last accepted tip-corrected UWB point.
+
+        The IMU is still allowed to make the local shape. This guard only fires
+        when the visible state has expanded unrealistically far from the UWB
+        neighbourhood, which is the failure pattern seen in abc/cat tests.
+        """
+        ecfg = cfg.fusion_eskf
+        if self._tip_lock_active:
+            # The stationary-contact clamp is a stronger physical constraint than
+            # the UWB boundary guard: while the tip is planted, hold the lock anchor.
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+        if not active or not ecfg.active_uwb_guard_enabled:
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+        if self._last_z_tip_ts is None:
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+        age_s = max(0.0, (ts - self._last_z_tip_ts) / 1_000_000.0)
+        if age_s > ecfg.active_uwb_guard_max_age_s:
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+
+        visible = self.p + self.b_p
+        delta = visible - self.last_uwb_tip
+        dist = float(np.linalg.norm(delta))
+        radius = float(ecfg.active_uwb_guard_radius_m)
+        if not np.isfinite(dist) or dist < 1e-9:
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+
+        # Tethered visual-test logic: if the fused state is already drifting
+        # away from the UWB neighbourhood, remove the outward velocity component
+        # before it integrates into an oversized loop. Tangential velocity is
+        # preserved, so corners/curves can still be IMU-shaped.
+        unit = delta / dist
+        soft_radius = max(0.020, 0.60 * radius)
+        if dist > soft_radius:
+            outward_v = float(np.dot(self.v, unit))
+            if outward_v > 0.0:
+                damp = float(np.clip(ecfg.active_uwb_outward_velocity_damping, 0.0, 1.0))
+                self.v -= unit * outward_v * damp
+
+        if dist <= radius:
+            self._active_uwb_guard_fired = False
+            self._active_uwb_guard_correction = 0.0
+            return
+
+        target_visible = self.last_uwb_tip + delta * (radius / dist)
+        correction = (target_visible - visible) * float(ecfg.active_uwb_guard_alpha)
+        self.p += correction
+        # If the guard fired, residual velocity is probably the cause; damp it.
+        self.v *= 0.55
+        self._active_uwb_guard_fired = True
+        self._active_uwb_guard_correction = float(np.linalg.norm(correction))
+
     def _emit(self, ts: int, source: str, state: str, sid: int, active: bool) -> dict:
+        self._apply_active_uwb_boundary_guard(ts, active)
         # Visible output = p + b_p.  During drawing b_p provides a slow global
         # offset correction; during air b_p is frozen near zero (decayed on pen-up).
         p_out_x = float(np.clip(self.p[0] + self.b_p[0], 0.0, self._board_w))
@@ -1147,6 +1440,8 @@ class ESKF:
                 'lever_arm_m':       self._last_lever_arm_m,
                 'lever_r_world':     tuple(float(v) for v in self._last_lever_r_world),
                 'z_uwb_raw':         tuple(float(v) for v in self._last_z_uwb_raw),
+                'z_uwb_tip':         tuple(float(v) for v in self._last_z_uwb_tip),
+                'last_uwb_tip':      tuple(float(v) for v in self.last_uwb_tip),
                 # Sliding-window diagnostics
                 'uwb_stale_s':       round(self._last_stale_s, 4),
                 'stale_factor':      round(self._last_stale_factor, 4),
@@ -1171,8 +1466,22 @@ class ESKF:
                 'stroke_age_s':  round((ts - self._stroke_start_ts) * 1e-6, 3) if self._stroke_start_ts else 0.0,
                 'age_cap_mult':  round(self._stroke_age_cap_mult(ts), 3),
                 # Phase 4 — position bias diagnostics
+                'p_nominal': (float(self.p[0]), float(self.p[1])),
+                'vel_pseudo_applied': bool(self._vel_pseudo_applied),
+                'vel_pseudo_dx_pos': tuple(float(v) for v in self._vel_pseudo_dx_pos),
+                'vel_pseudo_dx_vel': tuple(float(v) for v in self._vel_pseudo_dx_vel),
                 'b_p':     (float(self.b_p[0]), float(self.b_p[1])),
                 'b_p_mag': float(np.linalg.norm(self.b_p)),
+                'active_uwb_guard_fired': bool(self._active_uwb_guard_fired),
+                'active_uwb_guard_correction': float(self._active_uwb_guard_correction),
+                # Stationary-contact tip lock diagnostics
+                'tip_lock_active': bool(self._tip_lock_active),
+                'tip_lock_candidate': bool(self._tip_lock_candidate),
+                'tip_lock_count': int(self._tip_lock_count),
+                'tip_lock_correction': float(self._tip_lock_correction),
+                'tip_lock_uwb_blend': float(self._tip_lock_uwb_blend),
+                'tip_lock_reason': self._tip_lock_reason,
+                'tip_lock_anchor': tuple(float(v) for v in (self._tip_lock_anchor_visible if self._tip_lock_anchor_visible is not None else (self.p + self.b_p))),
                 # Mode statistics — counters for per-regime tuning
                 'frames_contact':    self._frames_contact,
                 'frames_fast':       self._frames_fast,

@@ -69,7 +69,7 @@ class IMUConfig:
     # High-pass filter used by ESKF for handwriting motion.
     # This removes slow bias/DC drift while preserving fast letter strokes.
     hpf_enabled: bool = True
-    hpf_cutoff_hz: float = 1.5
+    hpf_cutoff_hz: float = 0.75
 
     # Rigid-body tip correction.
     # Converts sensor-end acceleration to estimated tip acceleration.
@@ -79,8 +79,23 @@ class IMUConfig:
     # Confirmed on circle, triangle, hline, abc, w across two recording sessions.
     rigid_body_sign: int = -1
 
+    # Pre-derivative low-pass filtering.  Never derive alpha or jerk from raw
+    # frame-to-frame sensor deltas; first smooth the gyro/quaternion-derived
+    # omega and body acceleration, then take the derivative.  The alpha values
+    # below use new-sample weight: 0.20 means current = 20%, previous = 80%.
+    pre_derivative_lpf_enabled: bool = True
+    gyro_lpf_alpha: float = 0.20
+    acc_lpf_alpha: float = 0.20
+
+    # Dynamic deadbanding / noise floor for stationary marker behaviour.
+    # When the smoothed angular velocity is below this floor, snap it to zero
+    # so the rigid-body correction and ZUPT logic stay silent while held still.
+    omega_deadband_rads: float = 0.02
+    alpha_deadband_rads2: float = 0.10
+
     # EMA on angular acceleration used in rigid-body tip correction.
     # Higher = smoother but more lag; 0.7 is conservative.
+    # This uses previous-sample weight for backward compatibility.
     alpha_ema_alpha: float = 0.7
 
 
@@ -247,25 +262,25 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.85,   # was 0.65 → weaker UWB during normal drawing
-        drag_inv_s     = 0.70,
-        dir_penalty    = 1.5,
+        sigma_scale    = 0.42,   # tethered tune: UWB owns stroke scale, IMU adds short-term detail
+        drag_inv_s     = 1.67,   # stronger residual velocity kill for multi-stroke writing
+        dir_penalty    = 1.0,
         jump_speed_max = 1.8,
-        pos_floor      = 0.005,
-        acc_scale      = 1.35,
-        pos_gain_cap   = 0.020,  # was 0.020 → less direct UWB pull
+        pos_floor      = 0.012,
+        acc_scale      = 0.50,   # reduce IMU double-integration growth
+        pos_gain_cap   = 0.095
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.85,   # was 0.85 → less UWB-shaped in fast strokes
-        drag_inv_s     = 0.35,
-        dir_penalty    = 1.1,
-        jump_speed_max = 2.6,
-        pos_floor      = 0.030,
-        acc_scale      = 1.00,
-        pos_gain_cap   = 0.080,  # was 0.080 → less UWB pull in fast mode
+        sigma_scale    = 0.52,   # fast strokes keep detail but remain tethered to UWB scale
+        drag_inv_s     = 1.70,
+        dir_penalty    = 1.0,
+        jump_speed_max = 2.2,
+        pos_floor      = 0.020,
+        acc_scale      = 0.48,
+        pos_gain_cap   = 0.085
     ))
 
     # Pen lifted / air movement.
@@ -301,11 +316,11 @@ class FusionESKFConfig:
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
     # Too high makes UWB dominate; too low makes IMU drift dominate.
-    sigma_a: float = 1.4
+    sigma_a: float = 2.8
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
-    acc_spike_clamp_enabled: bool = False
-    acc_spike_clamp_ms2:     float = 5.0   # threshold in m/s²; 6–8 suggested
+    acc_spike_clamp_enabled: bool = True
+    acc_spike_clamp_ms2:     float = 2.5   # tethered tune: softens FSR/tilt impulses during active ink
 
     # Acceleration-bias random walk.
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
@@ -381,7 +396,7 @@ class FusionESKFConfig:
     # On pen-down rising edge, apply a position pseudo-measurement toward the
     # last known UWB fix so each letter starts at the correct board location.
     # Lower sigma_scale = stronger pull toward UWB at pen-down.
-    stroke_start_sigma_scale: float = 0.50    # multiplied onto sigma_uwb
+    stroke_start_sigma_scale: float = 0.90    # multiplied onto sigma_uwb
     stroke_start_uwb_max_age_s: float = 0.10  # skip snap if UWB is older than this
 
     # Phase 4 — in-stroke position bias (pos_bias EMA tracker).
@@ -391,9 +406,9 @@ class FusionESKFConfig:
     # the global placement slowly drifts toward UWB.
     # alpha = 0.01 → time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
     # a steady offset over a 2-second stroke.
-    bias_uwb_alpha: float = 0.03   # was 0.03
-    bias_decay:     float = 0.30
-    bias_max_m:     float = 0.10
+    bias_uwb_alpha: float = 0.055  # stronger visible-bias tracking during active ink
+    bias_decay:     float = 0.25
+    bias_max_m:     float = 0.045
 
     # Stroke-age drift guard — adaptive pos_gain_cap ramp.
     # Stage-9 result: ramp fires on abc handwriting at all tested start thresholds
@@ -403,6 +418,51 @@ class FusionESKFConfig:
     age_ramp_start_s:  float = 1.20   # (inactive while mult_max=1.0)
     age_ramp_end_s:    float = 2.75   # (inactive while mult_max=1.0)
     age_ramp_mult_max: float = 1.00    # 1.0 = disabled; Stage-9 winner
+
+    # Active-stroke UWB boundary guard.
+    # This is a safety net, not a normal correction path: if live IMU integration
+    # expands far away from the last accepted tip-corrected UWB point, gently pull
+    # the visible output back inside a local radius. It prevents large abc/cat loops
+    # while still allowing IMU shape within the UWB neighbourhood.
+    active_vel_cap_ms: float = 0.36
+    active_uwb_guard_enabled: bool = True
+    active_uwb_guard_radius_m: float = 0.030
+    active_uwb_guard_alpha: float = 0.78
+    active_uwb_guard_max_age_s: float = 0.85
+
+    # Fraction of the outward velocity component removed when visible fused ink
+    # is already drifting away from the latest tip-corrected UWB neighbourhood.
+    # 0.0 = disabled; 1.0 = remove all outward velocity; tangential velocity remains.
+    active_uwb_outward_velocity_damping: float = 0.85
+
+    # Mode-aware stationary-contact clamp.
+    # Goal: if the marker tip is physically on the board but not truly moving,
+    # the visible tip should stay put instead of integrating IMU noise.  This
+    # directly targets start/end hold artefacts and contact micro-pauses.
+    contact_static_lock_enabled: bool = True
+
+    # CONTACT_STATIC from contact.py is trusted immediately.  The thresholds
+    # below are a fallback for older logs or borderline frames where force/contact
+    # and IMU stillness are present but the diagnostic substate has not switched.
+    contact_static_lock_min_frames: int = 2
+    contact_static_lock_speed_thresh_ms: float = 0.035
+    contact_static_lock_acc_thresh_ms2: float = 0.65
+    contact_static_lock_omega_thresh_rads: float = 0.60
+
+    # UWB anchoring while the tip is locked.  Pen-down uses stronger UWB anchoring
+    # because no ink has been committed yet; mid-stroke pauses use a much smaller
+    # blend to avoid snapping corners/letter pauses away from their drawn shape.
+    contact_static_lock_uwb_max_age_s: float = 0.18
+    contact_static_lock_pen_down_uwb_blend: float = 0.85
+    contact_static_lock_micro_pause_uwb_blend: float = 0.02
+
+    # How hard to hold the visible tip at the lock anchor.  Position alpha is
+    # applied to p so b_p remains the normal global-placement bias.
+    contact_static_lock_pos_alpha: float = 0.92
+    contact_static_lock_vel_decay: float = 0.08
+    contact_static_lock_vel_zero_thresh_ms: float = 0.015
+    contact_static_lock_cov_vel_scale: float = 0.20
+    contact_static_lock_cov_pos_scale: float = 0.85
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.
@@ -423,9 +483,9 @@ class FusionESKFConfig:
     # DRAWING_FAST gate.
     # 4 frames at 180 Hz ≈ 22 ms.
     # This gives short IMU authority without letting drift dominate.
-    drawing_fast_speed_thresh: float = 0.30     # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
-    drawing_fast_min_frames: int = 8            # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
-    drawing_fast_burst_frames: int = 2          # hold fast authority briefly after trigger, then return to UWB anchoring
+    drawing_fast_speed_thresh: float = 0.36     # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
+    drawing_fast_min_frames: int = 10            # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
+    drawing_fast_burst_frames: int = 1          # hold fast authority briefly after trigger, then return to UWB anchoring
 
     # Per-mode parameter table.
     modes: FusionModeTable = field(default_factory=FusionModeTable)
@@ -444,7 +504,7 @@ class FusionESKFConfig:
 class StrokeCleanerConfig:
     # Batch/offline cleanup applied only after pen-up. Live ESKF output is still
     # emitted immediately, then the finished stroke is corrected before delivery.
-    enabled: bool = True
+    enabled: bool = False
 
     # Minimum useful stroke size. Shorter strokes are left untouched because
     # double-integrating a tiny segment is usually less reliable than the fused path.
@@ -470,11 +530,11 @@ class StrokeCleanerConfig:
 
     # Conservative blend between current fused ink and cleaned IMU-relative shape.
     # 0.0 = keep current pipeline output, 1.0 = full reference-style IMU cleanup.
-    shape_blend: float = 0.45
+    shape_blend: float = 0.0
 
     # Guard against a bad re-integration exploding a stroke. If the cleaned bbox is
     # outside this ratio versus the raw fused bbox, keep the raw fused stroke.
-    max_bbox_ratio: float = 3.0
+    max_bbox_ratio: float = 1.10
 
 # ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)

@@ -1,7 +1,11 @@
 import json
 from flask import Blueprint, render_template, redirect, url_for, session, Response
 from config import BROWSER_WS_PORT
-from background.image_generator import generate_frames
+from background.image_generator import (
+    generate_frames,
+    try_register_stream_client,
+    unregister_stream_client,
+)
 
 # Import globals
 import app.globals as g
@@ -132,9 +136,19 @@ def index():
 @stream_bp.route("/video_feed")
 def video_feed():
     """Archive Notes Streamline"""
-    
+
     if not g.admin_status.get_field("hosting_active"):
         print("[CLIENT] Access denied to /video_feed, no host available.")
-        return "Hosting is not active.", 403 
-    
-    return Response(generate_frames(), mimetype="multipart/x-mixed-replace; boundary=frame")
+        return "Hosting is not active.", 403
+
+    if not try_register_stream_client():
+        return "Stream is at capacity. Please try again later.", 503
+
+    def _gen():
+        try:
+            for chunk in generate_frames():
+                yield chunk
+        finally:
+            unregister_stream_client()
+
+    return Response(_gen(), mimetype="multipart/x-mixed-replace; boundary=frame")

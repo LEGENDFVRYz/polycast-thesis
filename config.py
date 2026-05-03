@@ -1,9 +1,51 @@
 import os
 import threading
-import socket
 import sys
 import glob
 import serial
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
+
+def _env_str(key, default):
+    val = os.environ.get(key)
+    return val if val is not None and val != "" else default
+
+
+def _env_int(key, default):
+    val = os.environ.get(key)
+    if val is None or val == "":
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
+def _env_float(key, default):
+    val = os.environ.get(key)
+    if val is None or val == "":
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        return default
+
+
+def _env_bool(key, default):
+    val = os.environ.get(key)
+    if val is None or val == "":
+        return default
+    return val.strip().lower() in ("1", "true", "yes", "on")
+
+
+APP_ENV = _env_str("APP_ENV", "dev").lower()
+IS_PROD = APP_ENV in ("prod", "production")
+
 
 # --- 2. Define the shared event here ---
 config_done_event = threading.Event()
@@ -14,17 +56,34 @@ prototype_reader_thread = None
 
 
 # Canvas dimensions
-CANVAS_WIDTH, CANVAS_HEIGHT = 1980, 1980
-MJPEG_WIDTH, MJPEG_HEIGHT = 600, 600
-MJPEG_FPS = 20
+CANVAS_WIDTH  = _env_int("CANVAS_WIDTH",  1980)
+CANVAS_HEIGHT = _env_int("CANVAS_HEIGHT", 1980)
+MJPEG_WIDTH   = _env_int("MJPEG_WIDTH",   600)
+MJPEG_HEIGHT  = _env_int("MJPEG_HEIGHT",  600)
+MJPEG_FPS     = _env_int("MJPEG_FPS",     6 if IS_PROD else 20)
+JPEG_QUALITY  = _env_int("JPEG_QUALITY",  65 if IS_PROD else 85)
+
+# Stream client cap
+MAX_STREAM_CLIENTS = _env_int("MAX_STREAM_CLIENTS", 40)
+
+# Autosave / archiver
+AUTOSAVE_INTERVAL_SEC    = _env_float("AUTOSAVE_INTERVAL_SEC",    1.0)
+AUTOSAVE_ONLY_WHEN_DIRTY = _env_bool ("AUTOSAVE_ONLY_WHEN_DIRTY", True)
+MIN_FREE_DISK_MB         = _env_int  ("MIN_FREE_DISK_MB",         1024)
+
+# SQLite
+SQLITE_BUSY_TIMEOUT_MS = _env_int("SQLITE_BUSY_TIMEOUT_MS", 5000)
+
+# Flask secret
+SECRET_KEY = _env_str("SECRET_KEY", "polycast-creator_BatsiKuruSyaniOmit")
 
 # Ports
-BROWSER_WS_PORT = 5001
-FLASK_PORT = 5050
+BROWSER_WS_PORT = _env_int("BROWSER_WS_PORT", 5001)
+FLASK_PORT      = _env_int("FLASK_PORT",      5050)
 
 # Paths
-ARCHIVE_DIR = "archive"
-LOG_DIR = "logs"
+ARCHIVE_DIR = _env_str("ARCHIVE_DIR", "archive")
+LOG_DIR     = _env_str("LOG_DIR",     "logs")
 
 # Flags
 IS_AUTO_ARCHIVING = False
@@ -34,27 +93,13 @@ os.makedirs(ARCHIVE_DIR, exist_ok=True)
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # Log paths
-CONN_LOG = os.path.join(LOG_DIR, "conn.logs")
+CONN_LOG  = os.path.join(LOG_DIR, "conn.logs")
 ERROR_LOG = os.path.join(LOG_DIR, "error.logs")
 
 
 class _Config:
-    # ==================================================
-    # SERIAL CONFIGURATION (New)
-    # ==================================================
-    # Windows: 'COM3', 'COM4', etc.
-    # Linux/Mac: '/dev/ttyUSB0', '/dev/ttyACM0', etc.
-    SERIAL_PORT = 'COM3' 
-    
-    # Must match the Serial.begin() in your ESP32 code
-    BAUD_RATE = 115200
-
-    # ==================================================
-    # DEPRECATED / REMOVED
-    # ==================================================
-    # UDP_PORT = 12345        <-- No longer listening for UDP broadcasts
-    # PROTOTYPE_IP = None     <-- Wired connection doesn't use IP
-    # ESP32_WS_URL = ...      <-- We are reading Serial, not WS
+    SERIAL_PORT = _env_str("SERIAL_PORT", "COM3")
+    BAUD_RATE   = _env_int("BAUD_RATE",   115200)
 
     def list_serial_ports(self):
         """Helper to print available ports if you don't know which one to use."""
@@ -76,5 +121,6 @@ class _Config:
             except (OSError, serial.SerialException):
                 pass
         return result
+
 
 prototype_config = _Config()

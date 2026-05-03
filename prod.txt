@@ -35,5 +35,8 @@ scipy==1.13.1
 # --- Auth ---
 bcrypt==4.2.0
 
+# --- Configuration ---
+python-dotenv==1.0.1
+
 # --- SQLAlchemy (pinned separately for clarity) ---
 SQLAlchemy==2.0.34

@@ -1,12 +1,11 @@
 from app import create_app, db
-from config import FLASK_PORT
+from config import FLASK_PORT, IS_PROD
 
 
 # ---------------------------------------------------------------------
 # Flask app initialization
 # ---------------------------------------------------------------------
 app = create_app()
-app.secret_key = "polycast-creator_BatsiKuruSyaniOmit"
 
 
 # ---------------------------------------------------------------------
@@ -17,7 +16,7 @@ def run_webserver(port):
     app.run(
         host="0.0.0.0",
         port=port,
-        debug=True,
+        debug=not IS_PROD,
         threaded=True # CRITICAL for SSE
     )
 

@@ -6,6 +6,7 @@ from sqlalchemy import event
 from sqlalchemy.engine import Engine
 from sqlite3 import Connection as SQLite3Connection
 import app.globals as g
+from config import SECRET_KEY, SQLITE_BUSY_TIMEOUT_MS
 
 
 @event.listens_for(Engine, "connect")
@@ -16,6 +17,7 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.execute("PRAGMA journal_mode=WAL;")
         cursor.execute("PRAGMA cache_size=-8000;")
         cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS};")
         cursor.close()
 
 # Initialize SQLAlchemy globally (used in models and services)
@@ -28,7 +30,7 @@ def create_app():
 
     # --- Configuration ---
     app.config.from_mapping(
-        SECRET_KEY="polycast-creator_BatsiKuruSyaniOmit",
+        SECRET_KEY=SECRET_KEY,
         SQLALCHEMY_DATABASE_URI="sqlite:///../instance/app.db",
         SQLALCHEMY_TRACK_MODIFICATIONS=False
     )
@@ -58,5 +60,9 @@ def create_app():
     app.register_blueprint(admin_bp)
     app.register_blueprint(gallery_bp)
     app.register_blueprint(stream_bp)
+
+    # Single encoder thread per worker — owns the only JPEG encode for /video_feed.
+    from background.image_generator import start_encoder_thread
+    start_encoder_thread()
 
     return app

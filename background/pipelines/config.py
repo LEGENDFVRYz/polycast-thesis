@@ -537,6 +537,42 @@ class StrokeCleanerConfig:
     max_bbox_ratio: float = 1.10
 
 # ------------------------------------------------------------------------
+# POST-PROCESS (pen-up corrections: centroid alignment + minimum-jerk)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class CentroidAlignConfig:
+    # Minimum UWB samples buffered during the stroke to trust the centroid estimate.
+    min_uwb_points: int = 3
+    # Reject the correction if IMU and UWB centroids diverge by more than this (metres).
+    # Prevents a bad UWB cluster from teleporting an otherwise good stroke.
+    max_translation_m: float = 0.10
+
+@dataclass(frozen=True)
+class MinJerkConfig:
+    # Skip smoothing for very short strokes (too few points to detect waypoints).
+    min_points_for_minjerk: int = 8
+    # Curvature threshold (1/m) above which a sample is a waypoint candidate.
+    # Lower = more waypoints (less smoothing); higher = fewer waypoints (more smoothing).
+    curvature_threshold: float = 30.0
+    # Minimum physical distance (metres) between consecutive accepted waypoints.
+    min_waypoint_spacing_m: float = 0.005
+    # Hard cap on waypoint count; top-N by curvature are kept when exceeded.
+    max_waypoints: int = 32
+    # Blend factor: 0.0 = keep raw aligned points, 1.0 = full min-jerk replacement.
+    shape_blend: float = 0.7
+    # Reject smoothed result if its bbox grows beyond this ratio vs the aligned bbox.
+    max_bbox_ratio: float = 1.10
+
+@dataclass(frozen=True)
+class PostprocessConfig:
+    enabled: bool = False
+    # Strokes shorter than this are passed through unchanged.
+    min_stroke_points: int = 5
+    centroid: CentroidAlignConfig = field(default_factory=CentroidAlignConfig)
+    minjerk: MinJerkConfig = field(default_factory=MinJerkConfig)
+
+
+# ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -550,6 +586,7 @@ class Config:
     marker: MarkerConfig = field(default_factory=MarkerConfig)
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
+    postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 
 
 # declare the config file

@@ -38,6 +38,7 @@ Rules:
 import math
 
 from background.pipelines.config import cfg
+from background.pipelines.postprocess import StrokePostprocessor, UWBStrokeBuffer
 
 
 def _pair_norm(v):
@@ -301,6 +302,8 @@ class StrokeReconstructor:
         self._closed_count = 0
         self._point_count = 0  # total points across all closed strokes
         self._imu_cleaner = StrokeFinalizationIMUCleaner()
+        self._postprocessor = StrokePostprocessor()
+        self._uwb_buffer = UWBStrokeBuffer()
 
     # ── Main entry ────────────────────────────────────────────────────────────
     def process_event(self, ev: dict) -> dict | None:
@@ -308,6 +311,12 @@ class StrokeReconstructor:
         Consume one fused event. Returns a closed stroke dict the moment a
         stroke finishes, else None.
         """
+        # Feed every event (IMU and UWB) to the buffer so we accumulate a UWB
+        # point cloud for centroid alignment at pen-up. Must happen before the
+        # IMU-only early return below.
+        if self._current is not None:
+            self._uwb_buffer.feed(ev)
+
         # Only IMU-originated fused events carry authoritative stroke state.
         # UWB corrections always set stroke_active=False; if we treated them
         # as a close signal, every UWB update mid-stroke would split the ink.
@@ -410,6 +419,10 @@ class StrokeReconstructor:
         self._current = None
 
         stroke = self._imu_cleaner.clean(stroke)
+
+        uwb_pts = self._uwb_buffer.drain(stroke['start_ts'], stroke['end_ts'])
+        stroke = self._postprocessor.process(stroke, uwb_pts)
+
         self._closed_count += 1
         self._point_count  += len(stroke['points'])
         return stroke

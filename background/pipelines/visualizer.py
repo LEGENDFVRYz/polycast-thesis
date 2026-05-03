@@ -302,6 +302,47 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     return '\n'.join(L)
 
 
+def _format_pp_debug(pp: dict) -> str:
+    """Compact postprocess block appended to the debug label."""
+    D = '─' * 28
+    L = ['', D, '  POSTPROCESS']
+    if not pp or not pp.get('applied'):
+        reason = (pp.get('reason', '—') if pp else 'no stroke yet')
+        L.append(f"  PP: OFF  ({reason})")
+        return '\n'.join(L)
+
+    ca = pp.get('centroid_align', {})
+    mj = pp.get('min_jerk', {})
+
+    align_on = ca.get('applied', False)
+    if align_on:
+        corr_mm  = ca.get('delta_m', 0.0) * 1000.0
+        rot_deg  = ca.get('rotation_deg', 0.0)
+        sc       = ca.get('scale', 1.0)
+        uwb_used = ca.get('uwb_used', ca.get('uwb_count', 0))
+        rot_meta = ca.get('rotation', {})
+        rot_method = rot_meta.get('method', '—')
+        rmse = rot_meta.get('rmse_after_m')
+        rmse_txt = f"  rmse:{float(rmse)*1000:.1f}mm" if isinstance(rmse, (int, float)) else ""
+        L += [
+            f"  PP: ON   pts:{pp.get('n_points','?')}  uwb:{uwb_used}",
+            f"  align: {corr_mm:+.1f}mm  rot:{rot_deg:+.1f}°  sc:{sc:.3f}",
+            f"  method: {rot_method}{rmse_txt}",
+        ]
+    else:
+        L += [
+            f"  PP: ON  align: OFF ({ca.get('reason','?')})",
+        ]
+
+    jerk_on = mj.get('applied', False)
+    if jerk_on:
+        L.append(f"  jerk: ON  wp:{mj.get('waypoints','?')}  blend:{mj.get('shape_blend',0):.2f}")
+    else:
+        L.append(f"  jerk: OFF ({mj.get('reason','?')})")
+
+    return '\n'.join(L)
+
+
 def _imu_curve_csv(imu_ev: dict) -> list:
     """Return IMU curve diagnostic columns as formatted strings.
 
@@ -367,6 +408,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.uwb_count     = 0
         self.closed_count  = 0
         self._stopping     = False
+        self._last_pp_meta: dict = {}
 
         # Mode strip rolling colour buffer (one entry per IMU sample)
         self._strip_colors = deque(maxlen=_MODE_STRIP_LEN)
@@ -575,6 +617,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                     self.cur_ink_x.clear()
                     self.cur_ink_y.clear()
                     self.closed_count += 1
+                    self._last_pp_meta = closed.get('postprocess', {})
 
                 self._write_csv_row(fused, p, 'IMU')
 
@@ -641,7 +684,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             self.latest_fused, self.latest_uwb_fused,
             self.latest_imu_ev, self.latest_uwb_ev,
             self.imu_count, self.uwb_count, self.closed_count,
-        )
+        ) + _format_pp_debug(self._last_pp_meta)
         self._debug_label.setText(txt)
 
     # ── Helpers ───────────────────────────────────────────────────────────────

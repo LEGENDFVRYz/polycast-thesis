@@ -311,36 +311,42 @@ class StrokeReconstructor:
         Consume one fused event. Returns a closed stroke dict the moment a
         stroke finishes, else None.
         """
-        # Feed every event (IMU and UWB) to the buffer so we accumulate a UWB
-        # point cloud for centroid alignment at pen-up. Must happen before the
-        # IMU-only early return below.
-        if self._current is not None:
-            self._uwb_buffer.feed(ev)
+        source = ev.get('source')
 
-        # Only IMU-originated fused events carry authoritative stroke state.
-        # UWB corrections always set stroke_active=False; if we treated them
-        # as a close signal, every UWB update mid-stroke would split the ink.
-        if ev.get('source') != 'IMU':
+        # UWB-originated correction events never create or close ink, but while
+        # a stroke is open they are the cleanest samples for the UWB centroid.
+        if source != 'IMU':
+            if self._current is not None:
+                self._uwb_buffer.feed(ev)
             return None
 
         active = bool(ev.get('stroke_active', False))
         sid    = int(ev.get('stroke_id', 0))
 
-        # Inactive IMU event — close any open stroke, emit it.
+        # Inactive IMU event — close any open stroke, emit it.  Do not feed this
+        # pen-up event to the UWB buffer because it belongs to the air/release
+        # phase, not the finished ink interval.
         if not active or sid == 0:
             return self._close_current()
 
         # Active event — ensure a current stroke exists under the right id.
         if self._current is None:
             self._start_stroke(sid, ev)
+            if self._current is not None:
+                self._uwb_buffer.feed(ev)
             return None
 
         if self._current['stroke_id'] != sid:
-            # Different stroke id while still active → boundary, emit old, start new.
+            # Different stroke id while still active → boundary.  Close old
+            # stroke before feeding this event so the first sample of the new
+            # stroke is not lost from the UWB buffer.
             closed = self._close_current()
             self._start_stroke(sid, ev)
+            if self._current is not None:
+                self._uwb_buffer.feed(ev)
             return closed
 
+        self._uwb_buffer.feed(ev)
         self._append_point(ev)
         return None
 
@@ -361,6 +367,7 @@ class StrokeReconstructor:
         self._current      = None
         self._closed_count = 0
         self._point_count  = 0
+        self._uwb_buffer.reset()
 
     # ── Internals ─────────────────────────────────────────────────────────────
     def _sample_from_event(self, ev: dict) -> dict:

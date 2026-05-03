@@ -543,9 +543,36 @@ class StrokeCleanerConfig:
 class CentroidAlignConfig:
     # Minimum UWB samples buffered during the stroke to trust the centroid estimate.
     min_uwb_points: int = 3
+
+    # Robust UWB centroid: remove the farthest points before computing the final
+    # UWB centre so a small NLOS arc does not drag the whole stroke.
+    trim_quantile: float = 0.85
+
     # Reject the correction if IMU and UWB centroids diverge by more than this (metres).
     # Prevents a bad UWB cluster from teleporting an otherwise good stroke.
     max_translation_m: float = 0.10
+
+    # Optional uniform scale correction.  Kept tightly clamped so letter shapes are preserved.
+    scale_enabled: bool = True
+    scale_percentile: float = 0.80
+    scale_min: float = 0.70
+    scale_max: float = 1.10
+
+    # Similarity alignment: after centroid translation, estimate one global
+    # 2D transform that can rotate and scale the finished stroke as a rigid
+    # object.  Procrustes uses resampled stroke↔UWB correspondences; PCA is kept
+    # as a fallback for older tests.
+    rotation_enabled: bool = True
+    rotation_max_deg: float = 20.0
+    procrustes_enabled: bool = True
+    procrustes_samples: int = 48
+    # Trim a small fraction only for estimating the transform.  The full stroke
+    # is still transformed and rendered.  This reduces pen-down/pen-up hooks from
+    # dominating the rotation estimate.
+    procrustes_endpoint_trim: float = 0.04
+    # Minimum eigenvalue ratio (λ_max / λ_min) required to trust PCA fallback.
+    # A ratio < 2 means the distribution is too round to have a reliable direction.
+    pca_min_eigenratio: float = 2.0
 
 @dataclass(frozen=True)
 class MinJerkConfig:
@@ -565,7 +592,7 @@ class MinJerkConfig:
 
 @dataclass(frozen=True)
 class PostprocessConfig:
-    enabled: bool = False
+    enabled: bool = True
     # Strokes shorter than this are passed through unchanged.
     min_stroke_points: int = 5
     centroid: CentroidAlignConfig = field(default_factory=CentroidAlignConfig)

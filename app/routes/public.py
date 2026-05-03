@@ -1,8 +1,48 @@
-from flask import Blueprint, render_template
+import shutil
+from flask import Blueprint, render_template, jsonify
+from sqlalchemy import text
 from app.globals import admin_status
+from app import db
+from background.image_generator import (
+    get_stream_client_count,
+    get_renderer_fps,
+    get_last_encoded_ts,
+)
+from config import ARCHIVE_DIR
 
 
 public_bp = Blueprint('public', __name__)
+
+
+@public_bp.route("/health")
+def health():
+    return jsonify(status="ok"), 200
+
+
+@public_bp.route("/api/status")
+def api_status():
+    db_ok = True
+    try:
+        db.session.execute(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    try:
+        free_mb = shutil.disk_usage(ARCHIVE_DIR).free // (1024 * 1024)
+    except Exception:
+        free_mb = None
+
+    return jsonify(
+        admin_name=admin_status.get_field("admin_name"),
+        admin_status=admin_status.get_field("status"),
+        hosting_active=admin_status.get_field("hosting_active"),
+        last_activity_ts=admin_status.get_field("last_activity"),
+        stream_clients=get_stream_client_count(),
+        renderer_fps=round(get_renderer_fps(), 2),
+        last_encoded_ts=get_last_encoded_ts(),
+        disk_free_mb=free_mb,
+        db_ok=db_ok,
+    )
 
 
 @public_bp.route("/")

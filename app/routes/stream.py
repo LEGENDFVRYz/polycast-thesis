@@ -140,13 +140,15 @@ def index():
 
 @stream_bp.route("/stream/playback")
 def playback():
+    import re
     IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+    CHECKPOINT_STEP = 10
 
     admin_name = str(g.admin_status.get_field('admin_name'))
     current_admin = Admin.query.filter_by(username=admin_name).first()
 
     def _empty(**kw):
-        return render_template("stream/playback.html", images=[], base_url="", **kw)
+        return render_template("stream/playback.html", images=[], base_url="", checkpoints=[], **kw)
 
     if not current_admin:
         return _empty(session_name=None, gallery_name=None, total=0)
@@ -173,13 +175,27 @@ def playback():
         str(latest_session.id)
     )
 
+    def _note_page_num(filename):
+        m = re.match(r'^note_(\d+)\.[^.]+$', filename, re.IGNORECASE)
+        return int(m.group(1)) if m else float('inf')
+
     images = []
     if os.path.isdir(folder_path):
         with os.scandir(folder_path) as entries:
-            images = sorted(
+            candidates = [
                 e.name for e in entries
                 if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE_EXTENSIONS
-            )
+            ]
+        images = sorted(candidates, key=_note_page_num)
+
+    total = len(images)
+
+    # Checkpoints: index of every CHECKPOINT_STEP-th note (0-based), skip index 0
+    checkpoints = [
+        {"label": f"Page {i + 1}", "index": i}
+        for i in range(0, total, CHECKPOINT_STEP)
+        if i > 0
+    ]
 
     base_url = f"{current_admin.id}/{latest_session.gallery_id}/{latest_session.id}"
     return render_template(
@@ -188,7 +204,9 @@ def playback():
         base_url=base_url,
         session_name=latest_session.name,
         gallery_name=latest_session.gallery.name,
-        total=len(images),
+        total=total,
+        start_index=total - 1 if total > 0 else 0,
+        checkpoints=checkpoints,
     )
 
 

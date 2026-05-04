@@ -25,7 +25,7 @@
             </h1>
             {% if total %}
                 <div class="status-pill">
-                    <span id="position-display">1 / {{ total }}</span>
+                    <span id="position-display">{{ total }} / {{ total }}</span>
                 </div>
             {% endif %}
         </div>
@@ -33,7 +33,7 @@
         {% if images %}
             <!-- Playback Viewer -->
             <div class="playback-viewer">
-                <button class="pb-nav-btn pb-prev" id="prevBtn" aria-label="Previous image" disabled>
+                <button class="pb-nav-btn pb-prev pb-desktop-btn" id="prevBtn" aria-label="Previous image" disabled>
                     <svg width="20" height="20" style="transform: rotate(180deg);">
                         <use href="#chevron-right"></use>
                     </svg>
@@ -41,20 +41,51 @@
 
                 <div class="pb-image-frame">
                     <img id="pb-image"
-                         src="/gallery_images/{{ base_url }}/{{ images[0] }}"
-                         alt="Session image 1 of {{ total }}"
+                         src="/gallery_images/{{ base_url }}/{{ images[-1] }}"
+                         alt="Session image {{ total }} of {{ total }}"
                          class="pb-img">
                 </div>
 
-                <button class="pb-nav-btn pb-next" id="nextBtn" aria-label="Next image"
-                        {% if total <= 1 %}disabled{% endif %}>
+                <button class="pb-nav-btn pb-next pb-desktop-btn" id="nextBtn" aria-label="Next image" disabled>
                     <svg width="20" height="20">
                         <use href="#chevron-right"></use>
                     </svg>
                 </button>
             </div>
 
-            <div class="pb-filename" id="pb-filename">{{ images[0] }}</div>
+            <!-- Mobile nav bar (hidden on desktop) -->
+            <div class="pb-mobile-controls">
+                <button class="pb-nav-btn" id="prevBtnMobile" aria-label="Previous image" disabled>
+                    <svg width="20" height="20" style="transform: rotate(180deg);">
+                        <use href="#chevron-right"></use>
+                    </svg>
+                </button>
+                <input id="pb-jump-input-mobile"
+                       type="number"
+                       min="1"
+                       max="{{ total }}"
+                       value="{{ total }}"
+                       aria-label="Jump to page number">
+                <button class="pb-nav-btn" id="nextBtnMobile" aria-label="Next image" disabled>
+                    <svg width="20" height="20">
+                        <use href="#chevron-right"></use>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- Footer: filename + page jump -->
+            <div class="pb-footer">
+                <span class="pb-filename" id="pb-filename">{{ images[-1] }}</span>
+                <div class="pb-jump">
+                    <label for="pb-jump-input">Go to page</label>
+                    <input id="pb-jump-input"
+                           type="number"
+                           min="1"
+                           max="{{ total }}"
+                           value="{{ total }}"
+                           aria-label="Jump to page number">
+                </div>
+            </div>
 
         {% else %}
             <!-- Empty State -->
@@ -80,13 +111,17 @@
             const images   = {{ images | tojson }};
             const baseUrl  = "/gallery_images/{{ base_url }}/";
             const total    = images.length;
-            let current    = 0;
+            let current    = {{ start_index }};
 
-            const imgEl      = document.getElementById('pb-image');
-            const prevBtn    = document.getElementById('prevBtn');
-            const nextBtn    = document.getElementById('nextBtn');
-            const posDisplay = document.getElementById('position-display');
-            const filenameEl = document.getElementById('pb-filename');
+            const imgEl           = document.getElementById('pb-image');
+            const prevBtn         = document.getElementById('prevBtn');
+            const nextBtn         = document.getElementById('nextBtn');
+            const prevBtnMobile   = document.getElementById('prevBtnMobile');
+            const nextBtnMobile   = document.getElementById('nextBtnMobile');
+            const posDisplay      = document.getElementById('position-display');
+            const filenameEl      = document.getElementById('pb-filename');
+            const jumpInput       = document.getElementById('pb-jump-input');
+            const jumpInputMobile = document.getElementById('pb-jump-input-mobile');
 
             function goTo(index) {
                 if (index < 0 || index >= total) return;
@@ -97,18 +132,39 @@
 
                 posDisplay.textContent = `${current + 1} / ${total}`;
                 filenameEl.textContent = images[current];
+                jumpInput.value        = current + 1;
+                jumpInputMobile.value  = current + 1;
 
-                prevBtn.disabled = (current === 0);
-                nextBtn.disabled = (current === total - 1);
+                prevBtn.disabled       = current === 0;
+                nextBtn.disabled       = current === total - 1;
+                prevBtnMobile.disabled = current === 0;
+                nextBtnMobile.disabled = current === total - 1;
             }
 
-            prevBtn.addEventListener('click', () => goTo(current - 1));
-            nextBtn.addEventListener('click', () => goTo(current + 1));
+            prevBtn.addEventListener('click',       () => goTo(current - 1));
+            nextBtn.addEventListener('click',       () => goTo(current + 1));
+            prevBtnMobile.addEventListener('click', () => goTo(current - 1));
+            nextBtnMobile.addEventListener('click', () => goTo(current + 1));
+
+            function wireJump(input) {
+                input.addEventListener('change', () => {
+                    const page = parseInt(input.value, 10);
+                    if (!isNaN(page)) goTo(Math.min(Math.max(page - 1, 0), total - 1));
+                });
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') input.dispatchEvent(new Event('change'));
+                });
+            }
+            wireJump(jumpInput);
+            wireJump(jumpInputMobile);
 
             document.addEventListener('keydown', (e) => {
+                if (document.activeElement === jumpInput || document.activeElement === jumpInputMobile) return;
                 if (e.key === 'ArrowLeft')  goTo(current - 1);
                 if (e.key === 'ArrowRight') goTo(current + 1);
             });
+
+            goTo(current);
         }());
     </script>
     {% endif %}

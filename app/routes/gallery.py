@@ -359,12 +359,12 @@ def api_recent_sessions():
                 str(s.gallery_id),
                 str(s.id)
             )
-            print(f"[DEBUG] GALLERY_PATH={g.GALLERY_PATH}")
-            print(f"[DEBUG] session_folder={session_folder}")
-            print(f"[DEBUG] exists={os.path.isdir(session_folder)}")
+            # print(f"[DEBUG] GALLERY_PATH={g.GALLERY_PATH}")
+            # print(f"[DEBUG] session_folder={session_folder}")
+            # print(f"[DEBUG] exists={os.path.isdir(session_folder)}")
             if os.path.isdir(session_folder):
                 all_files = os.listdir(session_folder)
-                print(f"[DEBUG] files={all_files}")
+                # print(f"[DEBUG] files={all_files}")
                 images = sorted(
                     f for f in all_files
                     if f.lower().endswith(('.jpg', '.jpeg', '.png'))

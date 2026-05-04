@@ -122,6 +122,7 @@ div.gallery-wrap {
         .folders-wrap {
             display: flex;
             width: 100%;
+            flex: 1;
             
             #folders-mount {
                 display: flex;

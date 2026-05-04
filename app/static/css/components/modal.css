@@ -247,26 +247,6 @@
     justify-content: center;
 }
 
-/* Shared button base inside modals */
-.modal-footer .btn,
-.modal-footer button,
-.modal-footer a {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 0.4rem;
-    padding: 0.5rem 1.125rem;
-    border-radius: 9999px;
-    font-size: 0.875rem;
-    font-weight: 500;
-    border: none;
-    cursor: pointer;
-    text-decoration: none;
-    transition: background 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
-    line-height: 1.4;
-
-    &:active { transform: scale(0.97); }
-}
 
 /* ============================================================
    PROFILE MODAL  (special centered layout)
@@ -345,7 +325,7 @@
         .btn,
         button,
         a {
-            width: 100%;
+            width: 80%;
         }
     }
 }

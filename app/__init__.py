@@ -61,8 +61,4 @@ def create_app():
     app.register_blueprint(gallery_bp)
     app.register_blueprint(stream_bp)
 
-    # Single encoder thread per worker — owns the only JPEG encode for /video_feed.
-    from background.image_generator import start_encoder_thread
-    start_encoder_thread()
-
     return app

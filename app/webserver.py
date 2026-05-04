@@ -1,11 +1,18 @@
+import os
 from app import create_app, db
 from config import FLASK_PORT, IS_PROD
+from background.image_generator import start_encoder_thread
 
 
 # ---------------------------------------------------------------------
 # Flask app initialization
 # ---------------------------------------------------------------------
 app = create_app()
+
+# Start the single encoder thread once per worker process.
+# Skip the Werkzeug reloader's parent watcher (it never serves requests).
+if not (os.environ.get("FLASK_ENV") == "development" and os.environ.get("WERKZEUG_RUN_MAIN") != "true" and not IS_PROD):
+    start_encoder_thread()
 
 
 # ---------------------------------------------------------------------

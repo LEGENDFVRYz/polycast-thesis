@@ -1,14 +1,20 @@
 /* --- Quick Actions (Icon Buttons) --- */
 .quick-actions {
-    display: grid;
-    grid-template-columns: repeat(2, 2fr);
+    display: flex;
+    flex-wrap: wrap;
     gap: 0.5rem;
     margin-bottom: 2rem;
+    width: 100%;
+    box-sizing: border-box;
     
     .qa-button {
         display: flex;
         align-items: center;
         gap: 1rem;
+
+        flex: 1 1 calc(50% - 0.25rem);
+        min-width: 0;
+        box-sizing: border-box;
 
         padding: 0.5rem 2rem;
         background-color: var(--color-background);

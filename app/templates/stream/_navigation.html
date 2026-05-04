@@ -1,14 +1,5 @@
 <!-- Stream Quick Actions -->
-<section class="quick-actions">
-    <a  href="{{ url_for('admin.index') }}"
-        class="qa-button {% if request.endpoint == 'admin.index' %}active{% endif %}"
-        data-icon-btn="config"
-    >
-        <svg class="qa-icon" width="20" height="20">
-            <use href="#strm-qa-config"></use>
-        </svg>
-        <span>Config</span>
-    </a>
+<section class="quick-actions quick-actions--3">
 
     <a  href="{{ url_for('stream.index') }}"
         class="qa-button {% if request.endpoint == 'stream.index' %}active{% endif %}"
@@ -29,4 +20,16 @@
         </svg>
         <span>Playback</span>
     </a>
+
+    {% if is_admin %}
+        <a  href="{{ url_for('admin.index') }}"
+            class="qa-button {% if request.endpoint == 'admin.index' %}active{% endif %}"
+            data-icon-btn="config"
+        >
+            <svg class="qa-icon" width="20" height="20">
+                <use href="#strm-qa-config"></use>
+            </svg>
+            <span class="qa-label-hide-mobile">Config</span>
+        </a>
+    {% endif %}
 </section>

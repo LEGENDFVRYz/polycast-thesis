@@ -610,13 +610,8 @@
             // ===========================================
             const recoverSessionForm = document.getElementById('recoverSessionForm');
             document.querySelectorAll('.recover-session-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation(); 
-                    
-                    // Get URL from button
+                button.addEventListener('click', function() {
                     const recoverUrl = this.dataset.recoverUrl;
-                    
-                    // Update Form Action
                     if (recoverSessionForm) {
                         recoverSessionForm.action = recoverUrl;
                     }
@@ -628,13 +623,8 @@
             // ===========================================
             const forceDeleteSessionForm = document.getElementById('forceDeleteSessionForm');
             document.querySelectorAll('.force-delete-btn').forEach(button => {
-                button.addEventListener('click', function(e) {
-                    e.stopPropagation(); 
-
-                    // Get URL from button
+                button.addEventListener('click', function() {
                     const forceUrl = this.dataset.forceUrl;
-
-                    // Update Form Action
                     if (forceDeleteSessionForm) {
                         forceDeleteSessionForm.action = forceUrl;
                     }

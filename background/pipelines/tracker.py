@@ -85,6 +85,7 @@ class PipelineTracker:
                         fused['fused_x'],
                         fused['fused_y'],
                         bool(fused.get('stroke_active', False)),
+                        fused.get('state', 'IDLE'),   # stroke_state for contact gating
                     )
 
             elif ev['sensor'] == 'UWB':

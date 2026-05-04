@@ -80,26 +80,31 @@ class PrototypeSerialThread(threading.Thread):
                             self._bm.on_fusion_done(line, time.perf_counter(), result)
                             
                             if result:
-                                meter_x, meter_y, is_drawing = result
-                                
+                                meter_x, meter_y, is_drawing, stroke_state = result
+
                                 # --- STEP 2: GRAPHICS (Pixels) ---
                                 # Convert meters to pixels
                                 px, py = self._map_meters_to_pixels(meter_x, meter_y)
-                                
+
+                                # Gate on physical contact, not the debounced stroke_active.
+                                # During pen-up debounce stroke_active stays True but
+                                # stroke_state is already AIR_MOVE — updating last_point
+                                # then would connect the next real stroke to a hover position.
+                                in_contact = stroke_state in ('CONTACT_DRAWING', 'CONTACT_STATIC')
+
                                 with image_lock:
-                                    if not is_drawing:
+                                    if not in_contact:
                                         self.last_point = None
                                     else:
-                                        if self.last_point:
-                                            # Draw stroke (p=3 is "Pen Down")
-                                            draw_segment(self.last_point[0], self.last_point[1], px, py, self.xpressure) 
+                                        if self.last_point and is_drawing:
+                                            draw_segment(self.last_point[0], self.last_point[1], px, py, self.xpressure)
+                                            print(f"[DRAW] ({self.last_point[0]},{self.last_point[1]}) → ({px},{py}) [{stroke_state}]")
                                         self.last_point = (px, py)
 
                                 # --- STEP 3: BROADCAST (Web) ---
                                 # if self.ws_server:
                                 #     payload = {"x": px, "y": py, "p": self.xpressure}
                                 #     self.ws_server.send_message_to_all(json.dumps(payload))
-                                print(f"[IMAGE RECIEVED] ({px}, {py})")
                                 
                         except Exception as e:
                             print(f"[SERIAL] Data processing error: {e}")

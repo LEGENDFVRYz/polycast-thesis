@@ -295,7 +295,9 @@ def draw_segment(x0, y0, x1, y1, p):
 
 
 def generate_frames():
-    """Yield the cached MJPEG frame paced at MJPEG_FPS. No per-client encode."""
+    """Yield the cached MJPEG frame only when the canvas is dirty.
+    Sends a keepalive frame every 5 s when the canvas is idle to keep the
+    browser connection alive."""
     try:
         from benchmark import get_logger as _get_bm_logger
         _bm = _get_bm_logger()
@@ -303,13 +305,25 @@ def generate_frames():
         _bm = None
 
     interval = 1.0 / max(1, MJPEG_FPS)
+    KEEPALIVE_SECS = 5.0
+
+    last_seen_seq  = -1
+    last_yield_ts  = 0.0
 
     while True:
         start = time.time()
-        with frame_lock:
-            payload = latest_jpeg_bytes
 
-        if payload:
+        with frame_lock:
+            current_seq = last_encoded_seq
+            payload     = latest_jpeg_bytes
+
+        now      = time.time()
+        is_new   = payload and current_seq != last_seen_seq
+        keepalive = payload and (now - last_yield_ts) >= KEEPALIVE_SECS
+
+        if is_new or keepalive:
+            last_seen_seq = current_seq
+            last_yield_ts = now
             if _bm is not None:
                 try:
                     _bm.on_broadcast(time.perf_counter())

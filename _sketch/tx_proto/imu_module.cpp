@@ -1,102 +1,117 @@
+/*
+ * imu_module.cpp  —  PolyCast Async IMU + FSR Contact Module (Raw Data)
+ * ==============================================================
+ * Hardware:
+ * - BNO085 IMU on I2C at address 0x4A, reset pin GPIO 4
+ * - FSR Voltage Divider: 3.3V -> FSR -> A0 -> 10k Resistor -> GND
+ * - FSR depresses when marker tip touches board -> A0 voltage rises
+ * * Note: All filtering, thresholds, and debouncing are offloaded 
+ * to the main processor's sensor fusion algorithm.
+ */
+
 #include "imu_module.h"
 #include <Wire.h>
 #include <Adafruit_BNO08x.h>
+#include <sh2.h>           // SH-2 API: sh2_saveDcdNow, sh2_setCalConfig
+#include <sh2_SensorValue.h>
 
-// SCALING FACTORS
-const float Q_SCALE = 32767.0f;    
-const float A_SCALE = 1000.0f;     
-const float F_SCALE = 1.0f;      
+// ── Hardware ──────────────────────────────────────────────────────────
+#define IMU_RESET_PIN 4
+#define FSR_PIN A0
 
-// >>> THE HARDWARE RESET FIX <<<
-#define IMU_RESET_PIN 4 
-
-// --- GLOBALS ---
-static Adafruit_BNO08x bno08x(IMU_RESET_PIN); 
+// ── Module globals ───────────────────────────────────────────────────
+static Adafruit_BNO08x   bno08x(IMU_RESET_PIN);
 static sh2_SensorValue_t sensorValue;
-static bool imuFound = false;
+static bool              imuFound = false;
 
-static uint32_t imuPacketCount = 0;      
-static PacketIMU currentImuPacket;       
-static uint8_t imuSampleIndex = 0;       
-
+// ── initIMU() ────────────────────────────────────────────────────────
 void initIMU() {
-    // Wait for power stabilization
-    delay(1000); 
-    
-    Wire.begin(); 
-    
-    // ESP32: If A0 fails, use a dedicated GPIO like 26 or 33
-    pinMode(A0, INPUT_PULLDOWN); 
+    // Power-on delay — allows USB CDC / powerbank voltage to stabilise
+    delay(1000);
 
-    Serial.println("[IMU] Searching for BNO08x...");
-    long start = millis();
-    while (millis() - start < 3000) {
-        if (bno08x.begin_I2C(0x4A, &Wire)) { 
-            imuFound = true; 
+    Wire.begin();
+    // 400 kHz I2C — required headroom for paired 200 Hz reports (Item D).
+    Wire.setClock(400000);
+
+    // The external 10k resistor acts as the hardware pulldown.
+    pinMode(FSR_PIN, INPUT);
+
+    // BNO085 initialisation with 3-second timeout
+    long startMs = millis();
+    while (millis() - startMs < 3000) {
+        if (bno08x.begin_I2C(0x4A, &Wire)) {
+            imuFound = true;
             break;
         }
         delay(50);
     }
-    
+
     if (imuFound) {
-        bno08x.enableReport(SH2_ROTATION_VECTOR, 10000); 
-        bno08x.enableReport(SH2_LINEAR_ACCELERATION, 10000);
-        Serial.println("[IMU] BNO08x Initialized Successfully.");
+        // 5 000 µs interval = 200 Hz paired reports (Item D).  Aggregate
+        // SHTP throughput on I2C tops out near 600 reports/sec; two paired
+        // reports at 200 Hz = 400/sec, comfortably under the limit.
+        bno08x.enableReport(SH2_ROTATION_VECTOR,     5000);
+        bno08x.enableReport(SH2_LINEAR_ACCELERATION,  5000);
+        Serial.println("[IMU] BNO085 initialised at 200 Hz paired. Raw FSR enabled.");
     } else {
-        Serial.println("[IMU] Failed! Check wiring/Reset Pin.");
+        Serial.println("[IMU] BNO085 init failed — check I2C wiring and RST pin.");
     }
 }
 
-bool processIMU(PacketIMU* out_packet) {
+
+// ── requestDcdSave() ─────────────────────────────────────────────────
+// Called via remote command (CAL).  Enables runtime self-cal on accel,
+// gyro, and mag, then persists the current DCD to chip flash.  On the
+// next power-up the BNO085 restores DCD automatically.
+int requestDcdSave() {
+    if (!imuFound) return -1;
+    // Keep all background self-cal sources enabled.
+    sh2_setCalConfig(SH2_CAL_ACCEL | SH2_CAL_GYRO | SH2_CAL_MAG);
+    return sh2_saveDcdNow();
+}
+
+
+// ── processIMU() ─────────────────────────────────────────────────────
+bool processIMU(ImuPacket* out) {
     if (!imuFound) return false;
-    
-    // Non-blocking check for new sensor data
     if (!bno08x.getSensorEvent(&sensorValue)) return false;
 
-    static float cache_qx = 0, cache_qy = 0, cache_qz = 0, cache_qw = 1;
+    // Cached quaternion — updated on every rotation vector report
+    static float cache_qx = 0.0f, cache_qy = 0.0f,
+                 cache_qz = 0.0f, cache_qw = 1.0f;
 
-    // 1. Update Rotation Cache
+    // ── Rotation vector report → cache and wait for accel ────────────
     if (sensorValue.sensorId == SH2_ROTATION_VECTOR) {
         cache_qx = sensorValue.un.rotationVector.i;
         cache_qy = sensorValue.un.rotationVector.j;
         cache_qz = sensorValue.un.rotationVector.k;
         cache_qw = sensorValue.un.rotationVector.real;
-    } 
-    
-    // 2. Process Acceleration and Button (The Trigger)
-    else if (sensorValue.sensorId == SH2_LINEAR_ACCELERATION) {
-        float ax = sensorValue.un.linearAcceleration.x;
-        float ay = sensorValue.un.linearAcceleration.y;
-        float az = sensorValue.un.linearAcceleration.z;
-
-        // Immediate button read
-        bool isPressed = (digitalRead(A0) == HIGH);
-
-        // Store Scaled Rotation
-        currentImuPacket.samples[imuSampleIndex].qx = (int16_t)constrain(round(cache_qx * Q_SCALE), -32767, 32767);
-        currentImuPacket.samples[imuSampleIndex].qy = (int16_t)constrain(round(cache_qy * Q_SCALE), -32767, 32767);
-        currentImuPacket.samples[imuSampleIndex].qz = (int16_t)constrain(round(cache_qz * Q_SCALE), -32767, 32767);
-        currentImuPacket.samples[imuSampleIndex].qw = (int16_t)constrain(round(cache_qw * Q_SCALE), -32767, 32767);
-        
-        // Store Scaled Acceleration
-        currentImuPacket.samples[imuSampleIndex].ax = (int16_t)constrain(round(ax * A_SCALE), -32767, 32767);
-        currentImuPacket.samples[imuSampleIndex].ay = (int16_t)constrain(round(ay * A_SCALE), -32767, 32767);
-        currentImuPacket.samples[imuSampleIndex].az = (int16_t)constrain(round(az * A_SCALE), -32767, 32767);
-        
-        // Store Scaled Force (3.0 -> 300, 30.0 -> 3000)
-        currentImuPacket.samples[imuSampleIndex].force = (int16_t)(isPressed ? 30 * F_SCALE : 3 * F_SCALE);
-
-        currentImuPacket.samples[imuSampleIndex].ts = micros();
-
-        // Increment index and check if packet is full
-        imuSampleIndex++;
-        if (imuSampleIndex >= 3) {
-            currentImuPacket.packetId = imuPacketCount++;
-            *out_packet = currentImuPacket; // Copy to output
-            imuSampleIndex = 0;   
-            return true;          
-        }
+        return false;   // not ready — wait for acceleration
     }
-    
-    return false; 
+
+    // ── Linear acceleration report → build packet ────────────────────
+    if (sensorValue.sensorId == SH2_LINEAR_ACCELERATION) {
+        out->type = 0x01;
+        // seq is set by the caller (sender.ino)
+
+        out->qx = cache_qx;
+        out->qy = cache_qy;
+        out->qz = cache_qz;
+        out->qw = cache_qw;
+
+        out->ax = sensorValue.un.linearAcceleration.x;
+        out->ay = sensorValue.un.linearAcceleration.y;
+        out->az = sensorValue.un.linearAcceleration.z;
+
+        // ── Read Raw Analog FSR Signal (0-4095) ──────────────────────
+        int rawFSR = analogRead(FSR_PIN);
+
+        // Cast the raw 12-bit integer to the float expected by the packet
+        out->force = (float)rawFSR;
+        
+        out->ts = micros();
+        return true;
+    }
+
+    return false;
 }

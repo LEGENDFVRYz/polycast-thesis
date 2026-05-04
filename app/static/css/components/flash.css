@@ -1,57 +1,101 @@
 #flash-container {
-    position: fixed;  /* Fixes it to the screen */
-    top: 20px;        /* Distance from top */
-    left: 50%;        /* Center horizontally */
-    transform: translateX(-50%); /* Actually centers the container */
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    z-index: 9999;    /* On top of everything */
-    width: 80%;      /* Let width adjust based on content */
-    max-width: 90%;   /* Prevent it from being too wide on mobile */
-    padding: 0 10px;  /* Small padding around the container */
-    align-items: center; /* Center messages inside container */
-}
+    gap: 8px;
+    z-index: 9999;
+    width: min(480px, calc(100% - 32px));
+    pointer-events: none;
 
-/* Individual flash message */
-.flash-message {
-    color: white;
-    padding: 15px 25px;  /* Add padding inside each message */
-    border-radius: 8px;  /* Rounded corners */
-    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-    min-width: 200px;    /* Optional minimum width */
-    text-align: center;  /* Center text inside message */
-    animation: slideIn 0.5s ease-out; /* Slide in animation */
-}
+    & .flash-message {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 16px;
+        border-radius: 10px;
+        border: 1px solid var(--color-border);
+        border-left-width: 4px;
+        background-color: var(--color-background);
+        box-shadow: 0 4px 16px hsl(var(--cl-shadow) / 0.10), 0 1px 4px hsl(var(--cl-shadow) / 0.06);
+        pointer-events: auto;
+        min-width: 0;
 
-/* Fade out effect */
-.flash-message.fade-out {
-    opacity: 0;
-    transform: translateY(-20px);
-    transition: opacity 0.5s ease-out, transform 0.5s ease-out;
-}
+        & .flash-icon {
+            flex-shrink: 0;
+            width: 18px;
+            height: 18px;
+            margin-top: 1px;
+        }
 
-/* Styles by category */
-.flash-message.error {
-    background-color: #dc3545;
-}
+        & .flash-body {
+            flex: 1;
+            min-width: 0;
 
-.flash-message.success {
-    background-color: #28a745;
-}
+            & .flash-title {
+                font-size: 0.8125rem;
+                font-weight: 600;
+                line-height: 1.4;
+                margin: 0 0 2px;
+            }
 
-.flash-message:not(.error):not(.success) {
-    background-color: #007aff;
-}
+            & .flash-text {
+                font-size: 0.8125rem;
+                font-weight: 400;
+                line-height: 1.5;
+                color: var(--color-foreground);
+                margin: 0;
+            }
+        }
 
-/* Slide in animation */
-@keyframes slideIn {
-    from {
-        opacity: 0;
-        transform: translateY(-20px);
-    }
-    to {
-        opacity: 1;
-        transform: translateY(0);
+        & .flash-close {
+            flex-shrink: 0;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+            color: var(--slate-400);
+            margin-top: 1px;
+            opacity: 0.7;
+
+            &:hover {
+                opacity: 1;
+            }
+
+            & svg {
+                display: block;
+                width: 14px;
+                height: 14px;
+            }
+        }
+
+        &.error {
+            border-left-color: #DC2626;
+
+            & .flash-icon { color: #DC2626; }
+            & .flash-title { color: #B91C1C; }
+        }
+
+        &.success {
+            border-left-color: var(--green-muted-fg);
+
+            & .flash-icon { color: var(--green-muted-fg); }
+            & .flash-title { color: #166534; }
+        }
+
+        &:not(.error):not(.success) {
+            border-left-color: var(--color-secondary);
+
+            & .flash-icon { color: var(--color-secondary); }
+            & .flash-title { color: var(--color-primary); }
+        }
+
+        &.fade-out {
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
     }
 }

@@ -23,17 +23,52 @@
 
     <!-- Flash Message Popups -->
     {% with messages = get_flashed_messages(with_categories=true) %}
-    {% if messages %}
-    <div id="flash-container">
-        {% for category, message in messages %}
-        <!-- The category (e.g., 'error') is added as a class -->
-        <div class="flash-message {{ category }}">
-            {{ message }}
-        </div>
-        {% endfor %}
-    </div>
-    {% endif %}
+        {% if messages %}
+            <div id="flash-container">
+                {% for category, message in messages %}
+                <div class="flash-message {{ category }}" role="alert" aria-live="assertive">
+
+                    {# Icon #}
+                    <span class="flash-icon" aria-hidden="true">
+                        {% if category == 'error' %}
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM8.28 7.22a.75.75 0 0 0-1.06 1.06L8.94 10l-1.72 1.72a.75.75 0 1 0 1.06 1.06L10 11.06l1.72 1.72a.75.75 0 1 0 1.06-1.06L11.06 10l1.72-1.72a.75.75 0 0 0-1.06-1.06L10 8.94 8.28 7.22z" clip-rule="evenodd"/>
+                        </svg>
+                        {% elif category == 'success' %}
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5z" clip-rule="evenodd"/>
+                        </svg>
+                        {% else %}
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor">
+                            <path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0zM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9z" clip-rule="evenodd"/>
+                        </svg>
+                        {% endif %}
+                    </span>
+
+                    {# Body #}
+                    <div class="flash-body">
+                        <p class="flash-title">
+                            {% if category == 'error' %}Error
+                            {% elif category == 'success' %}Success
+                            {% else %}Notice{% endif %}
+                        </p>
+                        <p class="flash-text">{{ message }}</p>
+                    </div>
+
+                    {# Close button #}
+                    <button class="flash-close" aria-label="Dismiss">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 14 14" fill="currentColor">
+                            <path d="M2.22 2.22a.75.75 0 0 1 1.06 0L7 5.94l3.72-3.72a.75.75 0 1 1 1.06 1.06L8.06 7l3.72 3.72a.75.75 0 1 1-1.06 1.06L7 8.06l-3.72 3.72a.75.75 0 0 1-1.06-1.06L5.94 7 2.22 3.28a.75.75 0 0 1 0-1.06z"/>
+                        </svg>
+                    </button>
+
+                </div>
+                {% endfor %}
+            </div>
+        {% endif %}
     {% endwith %}
+
+
 
     <!-- Header -->
     {{ layout_header('base', is_admin=is_admin) }}
@@ -121,32 +156,25 @@
 
 <!-- HIDDING FLASH MESSAGE -->
 <script>
-    document.addEventListener('DOMContentLoaded', (event) => {
-        const flashContainer = document.getElementById('flash-container');
-        if (flashContainer) {
+    document.addEventListener('DOMContentLoaded', () => {
+        const container = document.getElementById('flash-container');
+        if (!container) return;
 
-            const messages = flashContainer.querySelectorAll('.flash-message');
-
-            messages.forEach((message, index) => {
-                // Set a timeout to fade out the message
-                const fadeOutDelay = 3000 + (index * 500);
-                const removeDelay = fadeOutDelay + 500;
-
-                setTimeout(() => {
-                    message.classList.add('fade-out');
-                }, fadeOutDelay);
-
-                // Set another timeout to remove the element from the DOM
-                setTimeout(() => {
-                    message.remove();
-                    if (flashContainer.children.length === 0) {
-                        flashContainer.remove();
-                    }
-                }, removeDelay);
-            });
+        function dismiss(message) {
+            message.classList.add('fade-out');
+            setTimeout(() => {
+                message.remove();
+                if (container.children.length === 0) container.remove();
+            }, 300);
         }
+
+        container.querySelectorAll('.flash-message').forEach((message, index) => {
+            message.querySelector('.flash-close').addEventListener('click', () => dismiss(message));
+            setTimeout(() => dismiss(message), 4000 + index * 400);
+        });
     });
 </script>
+
 
 <!-- MODAL SCRIPT -->
 <script defer src="{{ url_for('static', filename='js/modal.js') }}"></script>

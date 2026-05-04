@@ -5,16 +5,19 @@
 
 {% block inclusion %}
     <link rel="stylesheet" href="{{ url_for('static', filename='css/admin.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/gallery/_quick-menu.css') }}">
+{% endblock %}
+
+{% block content_header %}
+    <!-- NAVIGATION: Render only if set-up properly -->
+    {% if current_status == 'HOSTING' %}
+        {% include "stream/_navigation.html" %}
+    {% endif %}
 {% endblock %}
 
 {% block content %}
     <div class="admin-ctn">
         <div class="admin-wrapper">
-
-            <!-- NAVIGATION: Render only if set-up properly -->
-            {% if current_status == 'HOSTING' %}
-                {% include "stream/_navigation.html" %}
-            {% endif %}
 
             <!-- PAGE TITILE -->
             {% if current_status != 'HOSTING' %}

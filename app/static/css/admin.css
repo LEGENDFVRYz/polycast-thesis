@@ -235,6 +235,8 @@
 
         /* --- Status header: When Hosting only --- */
         section.manage-block {
+            width: 80%;
+            margin: 0 auto;
 
             a {
                 background-color: #E63946; 
@@ -301,6 +303,11 @@
                 gap: 1rem;
 
                 width: 100%;
+            }
+
+            section.manage-block {
+                width: 100%;
+                margin: 0 auto;
             }
 
             form {

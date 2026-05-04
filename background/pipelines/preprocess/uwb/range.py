@@ -61,7 +61,7 @@ class UWBRangePreprocessor:
         
         # --- Anti-Lockout Counters ---
         self._jump_count = [0] * n
-        self.max_jumps = 5
+        self.max_jumps = cfg.uwb.max_jumps_n
 
         # Timestamp of last processed event (for time-aware EMA)
         self._prev_ts: int | None = None
@@ -219,9 +219,11 @@ class UWBRangePreprocessor:
             delta = abs(median_val - self._ema[idx])
 
             # Dynamic adjustment:
-            # If moving fast (> 10cm jump), triple the alpha to catch up instantly.
-            # If resting/slow, use base alpha to aggressively smooth out the noise.
-            if delta > 0.10:
+            # If moving fast (> 5cm jump), triple the alpha to catch up instantly.
+            # Threshold halved from 0.10 → 0.05 at 100 Hz: the median buffer refreshes
+            # slower per-sample so 10 cm median-EMA deltas occur from normal motion, not
+            # just noise. 5 cm still only fires on genuine fast motion at 10 ms intervals.
+            if delta > 0.05:
                 dynamic_alpha = min(base_alpha * 3.0, 1.0)
             else:
                 dynamic_alpha = base_alpha

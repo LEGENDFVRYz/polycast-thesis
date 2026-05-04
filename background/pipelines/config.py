@@ -135,11 +135,17 @@ class UWBConfig:
     ema_alpha: float = 0.25
 
     # Per-anchor range jump threshold.
-    # Larger values allow fast movement but risk accepting spikes.
-    max_range_jump_m: float = 0.40
+    # At 100 Hz, max physical per-sample pen displacement at 2 m/s is 20 mm.
+    # 250 mm gives 12x headroom while catching oscillating noise bursts.
+    max_range_jump_m: float = 0.25
+
+    # Anti-lockout: consecutive detected jumps before forcing EMA hard-reset.
+    # At 100 Hz set to 10 to maintain ~100 ms lockout duration (same wall-time as 5 @ 50 Hz).
+    max_jumps_n: int = 10
 
     # Median window for per-anchor range filtering.
-    median_window: int = 10
+    # At 100 Hz, 20 samples = ~200 ms temporal coverage (same as 10 @ 50 Hz).
+    median_window: int = 20
 
     # Position-level speed outlier gate.
     outlier_speed_limit_ms: float = 2.0
@@ -151,8 +157,8 @@ class UWBConfig:
     pos_ema_alpha: float = 0.75
 
     # Hard trilateration RMS rejection threshold.
-    # 0.12 rejects the worst geometric failures while keeping difficult motion.
-    trilat_max_residual: float = 0.12
+    # 0.14 adds a 20 mm buffer for inter-anchor timing skew at 100 Hz.
+    trilat_max_residual: float = 0.14
 
     # Alpha-Beta position smoother.
     # Higher alpha follows UWB faster; beta estimates UWB velocity.
@@ -164,8 +170,9 @@ class UWBConfig:
     stale_guess_timeout_us: int = 1_000_000
 
     # Time-aware EMA smoothing constant for ranges.
-    # Lower = more responsive; higher = smoother but laggier.
-    range_tau_s: float = 0.25
+    # At 100 Hz: tau=0.15 → alpha≈0.064, matched to the 20-sample median window.
+    # (Was 0.25 @ 50 Hz → alpha≈0.077; reducing tau compensates for doubled call rate.)
+    range_tau_s: float = 0.15
 
     # Weighted least squares weighting.
     # Higher power trusts nearer anchors more.

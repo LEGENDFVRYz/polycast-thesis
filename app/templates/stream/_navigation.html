@@ -1,105 +1,32 @@
-
-<!-- Quick Actions -->
+<!-- Stream Quick Actions -->
 <section class="quick-actions">
-    <a href="{{ url_for('admin.index') }}" 
-       class="qa-button {% if request.endpoint == 'admin_page' %}active{% endif %}" 
-       data-icon-btn="home">
-        <img src="{{ url_for('static', filename='images/icons/settings1.svg') }}" alt="Config">
+    <a  href="{{ url_for('admin.index') }}"
+        class="qa-button {% if request.endpoint == 'admin.index' %}active{% endif %}"
+        data-icon-btn="config"
+    >
+        <svg class="qa-icon" width="20" height="20">
+            <use href="#strm-qa-config"></use>
+        </svg>
         <span>Config</span>
     </a>
 
-    <a href="{{ url_for('stream.index') }}" 
-       class="qa-button {% if request.endpoint == 'stream_page' %}active{% endif %}" 
-       data-icon-btn="folder">
-        <img src="{{ url_for('static', filename='images/icons/stream3.svg') }}" alt="Live">
+    <a  href="{{ url_for('stream.index') }}"
+        class="qa-button {% if request.endpoint == 'stream.index' %}active{% endif %}"
+        data-icon-btn="live"
+    >
+        <svg class="qa-icon" width="20" height="20">
+            <use href="#strm-qa-live"></use>
+        </svg>
         <span>Live</span>
     </a>
 
-    <a href="#" 
-       class="qa-button {% if request.endpoint == 'playback_page' %}active{% endif %}" 
-       data-icon-btn="favorites">
-        <img src="{{ url_for('static', filename='images/icons/playback.svg') }}" alt="Playback">
+    <a  href="{{ url_for('stream.playback') }}"
+        class="qa-button {% if request.endpoint == 'stream.playback' %}active{% endif %}"
+        data-icon-btn="playback"
+    >
+        <svg class="qa-icon" width="20" height="20">
+            <use href="#strm-qa-playback"></use>
+        </svg>
         <span>Playback</span>
     </a>
 </section>
-
-
-<!-- Integrated Styles -->
-<style>
-    .quick-actions {
-        display: grid;
-        grid-template-columns: repeat(3, 1fr);
-        gap: 0.75rem;
-    
-        .qa-button {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            gap: 0.25rem;
-
-            padding: 1rem 0.5rem;
-            background-color: #ffffff;
-            border: 1px solid #000425;
-            border-radius: 1rem;
-
-            font-family: 'Poppins';
-            font-size: 0.875rem;
-            font-weight: 500;
-            cursor: pointer;
-            transition: all 0.2s ease-in-out;
-
-            color: inherit;        
-            text-decoration: none; 
-            
-            &:hover {
-                background-color: #DBEEFF;
-            }
-    
-            img {
-                width: 24px;
-                height: 24px;
-                filter: brightness(0) saturate(100%) invert(13%) sepia(27%) saturate(1489%) hue-rotate(173deg) brightness(95%) contrast(93%);
-                transition: color 0.2s;
-            }
-        }
-
-        #config {
-            // grid-column: span 2;
-        }
-    
-        .qa-button.active {
-            background-color: #DBEEFF;
-            border: none;
-            
-        }
-    }
-</style>
-
-
-<!-- Integrated JS -->
-<script>
-
-    document.addEventListener('DOMContentLoaded', () => {
-        // --- Quick Actions Button Navigation ---
-        const iconButtons = document.querySelectorAll('.qa-button');
-        const iconButtonsContainer = document.querySelector('.quick-actions');
-
-        iconButtonsContainer.addEventListener('click', (e) => {
-            const clickedButton = e.target.closest('.qa-button');
-            if (!clickedButton) return; // Exit if click wasn't on a button
-
-            // Remove active class from all buttons
-            iconButtons.forEach(btn => {
-                btn.classList.remove('active');
-            });
-
-            // Add active class to the clicked button
-            clickedButton.classList.add('active');
-
-            // You could add logic here based on the clicked button
-            // const activeBtn = clickedButton.dataset.iconBtn;
-            // console.log('Active button:', activeBtn);
-        });
-    });
-</script>

@@ -1,4 +1,5 @@
 import json
+import os
 from flask import Blueprint, render_template, redirect, url_for, session, Response
 from config import BROWSER_WS_PORT
 from background.image_generator import (
@@ -6,6 +7,10 @@ from background.image_generator import (
     try_register_stream_client,
     unregister_stream_client,
 )
+from app import db
+from app.models.admin import Admin
+from app.models.gallery import Gallery
+from app.models.session import Session as DBSession
 
 # Import globals
 import app.globals as g
@@ -131,6 +136,60 @@ def index():
         
     print("[CLIENT] Accessing /stream.")
     return render_template("stream/stream.html", ws_port=BROWSER_WS_PORT)
+
+
+@stream_bp.route("/stream/playback")
+def playback():
+    IMAGE_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+
+    admin_name = str(g.admin_status.get_field('admin_name'))
+    current_admin = Admin.query.filter_by(username=admin_name).first()
+
+    def _empty(**kw):
+        return render_template("stream/playback.html", images=[], base_url="", **kw)
+
+    if not current_admin:
+        return _empty(session_name=None, gallery_name=None, total=0)
+
+    latest_session = (
+        DBSession.query
+        .join(Gallery, DBSession.gallery_id == Gallery.id)
+        .filter(
+            Gallery.admin_id == current_admin.id,
+            Gallery.deleted_at.is_(None),
+            DBSession.deleted_at.is_(None),
+        )
+        .order_by(DBSession.last_activity_at.desc(), DBSession.created_at.desc())
+        .first()
+    )
+
+    if not latest_session:
+        return _empty(session_name=None, gallery_name=None, total=0)
+
+    folder_path = os.path.join(
+        g.GALLERY_PATH,
+        str(current_admin.id),
+        str(latest_session.gallery_id),
+        str(latest_session.id)
+    )
+
+    images = []
+    if os.path.isdir(folder_path):
+        with os.scandir(folder_path) as entries:
+            images = sorted(
+                e.name for e in entries
+                if e.is_file() and os.path.splitext(e.name)[1].lower() in IMAGE_EXTENSIONS
+            )
+
+    base_url = f"{current_admin.id}/{latest_session.gallery_id}/{latest_session.id}"
+    return render_template(
+        "stream/playback.html",
+        images=images,
+        base_url=base_url,
+        session_name=latest_session.name,
+        gallery_name=latest_session.gallery.name,
+        total=len(images),
+    )
 
 
 @stream_bp.route("/video_feed")

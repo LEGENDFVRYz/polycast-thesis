@@ -72,30 +72,34 @@
     <script defer src="{{ url_for('static', filename='js/modal.js') }}"></script>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            // Helper function to attach modal logic cleanly
-            function setupModal(btnClass, formId, actionAttr, isEdit = false) {
-                const form = document.getElementById(formId);
-                document.querySelectorAll(btnClass).forEach(button => {
-                    button.addEventListener('click', function(e) {
-                        e.stopPropagation();
-                        if (form) form.action = this.dataset[actionAttr];
-                        
-                        if (isEdit) {
-                            const editNameInput = document.getElementById('new_gallery_name');
-                            if (editNameInput) editNameInput.value = this.dataset.galleryName;
-                            if (form) form.action = '/gallery/' + this.dataset.galleryId + '/update';
-                        }
-                    });
-                });
-            }
+        // Delegated handler — runs before modal.js opens the modal, so form actions
+        // are always set even when cards are injected dynamically after DOMContentLoaded.
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-modal-target]');
+            if (!btn) return;
 
-            // Initialize all modal triggers
-            setupModal('.edit-session-btn', 'editGalleryForm', '', true);
-            setupModal('.delete-session-btn', 'deleteGalleryForm', 'deleteUrl');
-            setupModal('.recover-gallery-btn', 'recoverGalleryForm', 'recoverUrl');
-            setupModal('.force-delete-btn', 'forceDeleteGalleryForm', 'forceUrl');
-            setupModal('.favorite-gallery-btn', 'favoriteGalleryForm', 'favoriteUrl');
+            if (btn.classList.contains('edit-session-btn')) {
+                const form = document.getElementById('editGalleryForm');
+                const input = document.getElementById('new_gallery_name');
+                if (form) form.action = '/gallery/' + btn.dataset.galleryId + '/update';
+                if (input) input.value = btn.dataset.galleryName || '';
+
+            } else if (btn.classList.contains('delete-session-btn')) {
+                const form = document.getElementById('deleteGalleryForm');
+                if (form) form.action = btn.dataset.deleteUrl;
+
+            } else if (btn.classList.contains('recover-gallery-btn')) {
+                const form = document.getElementById('recoverGalleryForm');
+                if (form) form.action = btn.dataset.recoverUrl;
+
+            } else if (btn.classList.contains('force-delete-btn')) {
+                const form = document.getElementById('forceDeleteGalleryForm');
+                if (form) form.action = btn.dataset.forceUrl;
+
+            } else if (btn.classList.contains('favorite-gallery-btn')) {
+                const form = document.getElementById('favoriteGalleryForm');
+                if (form) form.action = btn.dataset.favoriteUrl;
+            }
         });
     </script>
 {% endblock %}

@@ -4,15 +4,12 @@ document.addEventListener('DOMContentLoaded', function() {
     // 1. GENERIC MODAL OPEN/CLOSE LOGIC
     // ===========================================
 
-    // --- Open Modals ---
-    // Find all buttons that have a [data-modal-target]
-    document.querySelectorAll('[data-modal-target]').forEach(button => {
-        button.addEventListener('click', () => {
-            const modal = document.querySelector(button.dataset.modalTarget);
-            if (modal) {
-                openModal(modal);
-            }
-        });
+    // --- Open Modals (delegated — handles dynamically-injected buttons) ---
+    document.addEventListener('click', e => {
+        const button = e.target.closest('[data-modal-target]');
+        if (!button) return;
+        const modal = document.querySelector(button.dataset.modalTarget);
+        if (modal) openModal(modal);
     });
 
     // --- Close Modals (with '[data-close-modal]' attribute) ---

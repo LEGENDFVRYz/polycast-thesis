@@ -52,14 +52,19 @@ def _get_session_counts(folders):
     return counts
 
 
-def _get_recent_sessions(limit=4):
+def _get_recent_sessions(admin_id, limit=4):
     """
-    Returns the most recently created or updated sessions across all galleries.
-    Returns a list of sessions ordered by last activity or creation date.
+    Returns the most recently created or updated sessions
+    belonging only to the given admin.
     """
     sessions = (
         db.session.query(DBSession)
-        .filter(DBSession.deleted_at.is_(None))
+        .join(Gallery, DBSession.gallery_id == Gallery.id)
+        .filter(
+            DBSession.deleted_at.is_(None),
+            Gallery.deleted_at.is_(None),
+            Gallery.admin_id == admin_id
+        )
         .order_by(DBSession.last_activity_at.desc().nulls_last(), DBSession.created_at.desc())
         .limit(limit)
         .all()
@@ -338,15 +343,45 @@ def api_gallery_list():
 def api_recent_sessions():
     """Return the 4 most recently active sessions as JSON for the gallery home App Shell."""
     is_current_user = ('user' in session) and (session['user'] == str(g.admin_status.get_field('admin_name')))
-    recent = _get_recent_sessions(limit=4)
+
+    admin = get_current_admin()
+    if not admin:
+        return jsonify({"sessions": [], "is_current_user": is_current_user})
+
+    recent = _get_recent_sessions(admin_id=admin.id, limit=4)
     data = []
     for s in recent:
+        thumbnail_url = None
+        try:
+            session_folder = os.path.join(
+                g.GALLERY_PATH,
+                str(s.gallery.admin_id),
+                str(s.gallery_id),
+                str(s.id)
+            )
+            print(f"[DEBUG] GALLERY_PATH={g.GALLERY_PATH}")
+            print(f"[DEBUG] session_folder={session_folder}")
+            print(f"[DEBUG] exists={os.path.isdir(session_folder)}")
+            if os.path.isdir(session_folder):
+                all_files = os.listdir(session_folder)
+                print(f"[DEBUG] files={all_files}")
+                images = sorted(
+                    f for f in all_files
+                    if f.lower().endswith(('.jpg', '.jpeg', '.png'))
+                )
+                if images:
+                    rel = f"{s.gallery.admin_id}/{s.gallery_id}/{s.id}/{images[-1]}"
+                    thumbnail_url = url_for('gallery.serve_image', filename=rel)
+        except Exception:
+            thumbnail_url = None
+
         data.append({
             "id": s.id,
             "name": s.name,
             "gallery_name": s.gallery.name,
             "gallery_id": s.gallery.id,
-            "view_url": url_for('gallery.view_page', galleryname=s.gallery.name, sessionname=s.name)
+            "view_url": url_for('gallery.view_page', galleryname=s.gallery.name, sessionname=s.name),
+            "thumbnail_url": thumbnail_url
         })
     return jsonify({"sessions": data, "is_current_user": is_current_user})
 

@@ -121,13 +121,12 @@ div.gallery-wrap {
 
         .folders-wrap {
             display: flex;
-            max-width: 100%;
-            flex: 1 1 0;
+            width: 100%;
             
             #folders-mount {
                 display: flex;
-                max-width: 100%;
-                flex: 1 1 0;
+                flex-direction: column;
+                width: 100%;
             }
         }
     }
@@ -262,6 +261,7 @@ div.gallery-wrap {
     }
 
     /* --- Recent Sessions Section --- */
+    /* --- Recent Sessions Section --- */
     .recent-sessions {
         flex: 0 0 auto;
 
@@ -281,7 +281,22 @@ div.gallery-wrap {
 
         .sessions-wrap {
             display: flex;
-            flex: 1;
+            width: 100%;
+            overflow: hidden;
+        }
+
+        .sessions-list {
+            display: flex;
+            flex-direction: row;
+            gap: 0.75rem;
+            overflow-x: auto;
+            padding-bottom: 0.5rem;
+            width: 100%;
+            scrollbar-width: none;
+
+            &::-webkit-scrollbar {
+                display: none;
+            }
         }
     }
 

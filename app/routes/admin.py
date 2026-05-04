@@ -315,10 +315,20 @@ def start_host():
     g.admin_status._update_state(status="HOSTING", hosting_active=True)
     session["gname"] = gallery_name
     session["sname"] = session_name
+
+    # Update last_activity_at so recent-sessions sorts correctly
+    try:
+        active_session = DBSession.query.get(session_id)
+        if active_session:
+            active_session.record_activity('ACTIVE')
+            db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        print(f"[ADMIN] Failed to record session activity: {e}")
     
     # Attempt to initialize the image generation
     try:
-        archive_path = os.path.join("archive", str(admin_name), str(gallery_id), str(session_id))
+        archive_path = os.path.join("archive", str(admin_id), str(gallery_id), str(session_id))
         g.set_archiver_manager(Archiver(initial_archive_path=archive_path))
         g.archiver_manager.start()
     except Exception as e:

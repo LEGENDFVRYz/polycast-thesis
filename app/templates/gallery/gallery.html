@@ -64,7 +64,10 @@
                     <a href="${s.view_url}" class="card-link-overlay"
                        aria-label="Open ${s.name} from ${s.gallery_name}"></a>
                     <div class="session-thumbnail">
-                        <div class="thumbnail-placeholder"></div>
+                        ${s.thumbnail_url
+                            ? `<img class="thumbnail-image" src="${s.thumbnail_url}" alt="${s.name}">`
+                            : `<div class="thumbnail-placeholder"></div>`
+                        }
                     </div>
                     <div class="session-info">
                         <h3 class="session-title">${s.name}</h3>
@@ -124,15 +127,17 @@
         }
 
         function buildEmptyFolders() {
-            return `<div class="empty-state">
-                <div class="empty-icon">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                        <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
-                              d="m22 19-2 2H4l-2-2V6l2-2h6l2 3h8l2 2z"/>
-                    </svg>
+            return `<div class="empty-state-wrapper">
+                <div class="empty-state">
+                    <div class="empty-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                            <path stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                                d="m22 19-2 2H4l-2-2V6l2-2h6l2 3h8l2 2z"/>
+                        </svg>
+                    </div>
+                    <h3>No galleries yet!</h3>
+                    <p>Start streaming to capture and organize your notes.</p>
                 </div>
-                <h3>No galleries yet!</h3>
-                <p>Start streaming to capture and organize your notes.</p>
             </div>`;
         }
 
@@ -170,8 +175,7 @@
                 }).join('');
                 foldersMount.innerHTML = '<div class="folders-list">' + folderHtml + '</div>';
             }).catch(function () {
-                document.getElementById('folders-mount').innerHTML =
-                    '<p class="error-notice">Could not load gallery data.</p>';
+                document.getElementById('folders-mount').innerHTML = buildEmptyFolders();
             });
         });
     }());

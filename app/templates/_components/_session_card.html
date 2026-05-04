@@ -8,7 +8,11 @@
 
         {# Thumbnail preview area #}
         <div class="session-thumbnail">
-            <div class="thumbnail-placeholder"></div>
+            {% if session.thumbnail_url %}
+                <img class="thumbnail-image" src="{{ session.thumbnail_url }}" alt="{{ session.name }}">
+            {% else %}
+                <div class="thumbnail-placeholder"></div>
+            {% endif %}
         </div>
 
         {# Session info #}

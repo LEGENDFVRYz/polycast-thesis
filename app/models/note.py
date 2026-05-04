@@ -50,9 +50,9 @@ class Note(db.Model):
         if not self.session or not self.session.gallery or not self.session.gallery.admin:
             return None
         
-        return os.path.join(
-            self.session.gallery.admin.username, 
+        return "/".join([
+            str(self.session.gallery.admin_id), 
             str(self.session.gallery.id), 
             str(self.session.id), 
             self.filename
-        )
+        ])

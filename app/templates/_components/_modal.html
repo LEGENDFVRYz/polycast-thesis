@@ -1,4 +1,11 @@
-{% macro modal_shell(modal_id, modal_title, modal_subtitle='', icon_class='', show_close=True) %}
+{#
+    modal_shell(modal_id, modal_title, modal_subtitle, icon_href, icon_class, show_close)
+
+    icon_href  — SVG sprite id, e.g. '#gllry-folder-bins'   (used as <use href="...">)
+    icon_class — extra modifier class, e.g. 'modal-icon--danger'
+    subtitle   — short description shown below the title
+#}
+{% macro modal_shell(modal_id, modal_title, modal_subtitle='', icon_href='', icon_class='', show_close=True) %}
     <div id="{{ modal_id }}" class="modal-overlay" style="display:none;">
         <div class="modal-content">
 
@@ -7,16 +14,18 @@
             {% endif %}
 
             <div class="modal-header">
-                {% if icon_class %}
+                {% if icon_href %}
                     <div class="modal-icon {{ icon_class }}">
-                        {{ caller('icon') if caller is defined and caller.supports('icon') else '' }}
+                        <svg width="20" height="20" aria-hidden="true">
+                            <use href="{{ icon_href }}"></use>
+                        </svg>
                     </div>
                 {% endif %}
 
                 <h3>{{ modal_title }}</h3>
 
                 {% if modal_subtitle %}
-                    <p>{{ modal_subtitle }}</p>
+                    <p class="modal-subtitle">{{ modal_subtitle }}</p>
                 {% endif %}
             </div>
 

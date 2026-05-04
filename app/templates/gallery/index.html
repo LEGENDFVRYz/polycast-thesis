@@ -107,57 +107,86 @@
 
 {# --- SHARED MODALS --- #}
 {% block modals %}
-    {# UPDATE MODAL #}
-    {% call modal_shell(modal_id='editGalleryModal', modal_title='Edit Gallery Name') %}
-        <form id="editGalleryForm" method="POST" action=""> 
+    {# ── EDIT GALLERY NAME ── #}
+    {% call modal_shell(
+        modal_id='editGalleryModal',
+        modal_title='Rename Gallery',
+        modal_subtitle='Enter a new name for this gallery.',
+        icon_href='#gllry-folder-edit',
+        icon_class='modal-icon--info'
+    ) %}
+        <form id="editGalleryForm" method="POST" action="">
             <div class="form-group">
-                <label for="new_gallery_name">Gallery Name:</label>
-                <input type="text" id="new_gallery_name" name="gallery_name" required>
+                <label for="new_gallery_name">Gallery Name</label>
+                <input type="text" id="new_gallery_name" name="gallery_name" placeholder="e.g. Science Lab Session" required>
             </div>
-            <button type="submit" class="btn btn-primary">Update Name</button>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
+            </div>
         </form>
     {% endcall %}
 
-    {# DELETE MODAL #}
-    {% call modal_shell(modal_id='deleteGalleryModal', modal_title='CONFIRM DELETION') %}
-        <p>Are you sure you want to move this gallery to the recycle bin?</p>
-        <p>This will also <span style="font-weight: bold; color: red;"> DELETE ALL </span> associated sessions.</p>
+    {# ── DELETE GALLERY (soft) ── #}
+    {% call modal_shell(
+        modal_id='deleteGalleryModal',
+        modal_title='Delete this gallery?',
+        modal_subtitle='This gallery will be moved to the recycle bin. You can restore it later from Trash.',
+        icon_href='#gllry-folder-bins',
+        icon_class='modal-icon--danger'
+    ) %}
         <form id="deleteGalleryForm" method="POST" action="">
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
+                <button type="submit" class="btn btn-danger">Move to Bin</button>
             </div>
         </form>
     {% endcall %}
 
-    {# RECOVER MODAL #}
-    {% call modal_shell(modal_id='recoverGalleryModal', modal_title='CONFIRM RECOVERY') %}
-        <p>Are you sure you want to restore this gallery?</p>
+    {# ── RECOVER GALLERY ── #}
+    {% call modal_shell(
+        modal_id='recoverGalleryModal',
+        modal_title='Restore this gallery?',
+        modal_subtitle='This gallery and its sessions will be moved back to your active list.',
+        icon_href='#gllry-folder-rev',
+        icon_class='modal-icon--success'
+    ) %}
         <form id="recoverGalleryForm" method="POST" action="">
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-success">Yes, Restore</button>
-            </div>
-        </form> 
-    {% endcall %}
-
-    {# FORCE DELETE MODAL #}
-    {% call modal_shell(modal_id='forceDeleteGalleryModal', modal_title='PERMANENT DELETION') %}
-        <div class="alert alert-danger"><strong>Warning:</strong> This action cannot be undone.</div>
-        <form id="forceDeleteGalleryForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+                <button type="submit" class="btn btn-success">Restore Gallery</button>
             </div>
         </form>
     {% endcall %}
 
-    {# FAVORITE MODAL #}
-    {% call modal_shell(modal_id='favoriteGalleryModal', modal_title='Manage Favorites') %}
+    {# ── FORCE DELETE GALLERY (permanent) ── #}
+    {% call modal_shell(
+        modal_id='forceDeleteGalleryModal',
+        modal_title='Permanently delete?',
+        modal_subtitle='This gallery and all its sessions will be erased from disk. This action cannot be undone.',
+        icon_href='#gllry-folder-del',
+        icon_class='modal-icon--danger'
+    ) %}
+        <form id="forceDeleteGalleryForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Delete Forever</button>
+            </div>
+        </form>
+    {% endcall %}
+
+    {# ── TOGGLE FAVORITE ── #}
+    {% call modal_shell(
+        modal_id='favoriteGalleryModal',
+        modal_title='Update Favorites',
+        modal_subtitle='Toggle this gallery in your favorites for quick access.',
+        icon_href='#gllry-folder-star',
+        icon_class='modal-icon--warning'
+    ) %}
         <form id="favoriteGalleryForm" method="POST" action="">
-            <div class="modal-footer justify-content-center">
-                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
-                <button type="submit" class="btn btn-warning text-white">Update Status</button>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-primary">Update Status</button>
             </div>
         </form>
     {% endcall %}

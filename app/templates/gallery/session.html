@@ -511,99 +511,98 @@
    ==========================================
 #}
 {% block modals %}
-    {# GALLERY DELETED MODAL #}
+    {# ── GALLERY IS IN TRASH (auto-opens, no close) ── #}
     {% if is_gallery_deleted %}
-        {% call modal_shell(modal_id='galleryDeletedModal', modal_title='Gallery in Trash') %}
-            <div style="text-align: center; padding: 1rem 0;">
-                <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin: 0 auto 1rem; color: #f59e0b;">
-                    <path d="M9 9v6h6V9z M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2H3V5z M3 7v12a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V7H3z"/>
-                </svg>
-                <h3 style="margin: 0 0 0.5rem 0; color: #1f2937;">This gallery is in the trash</h3>
-                <p style="margin: 0 0 1.5rem 0; color: #6b7280;">You need to recover this gallery before you can access its sessions.</p>
-            </div>
-            
-            <div class="modal-footer" style="gap: 1rem; justify-content: center;">
-                <a href="{{ url_for('gallery.trash') }}" class="btn btn-secondary" style="text-decoration: none;">Go to Trash</a>
+        {% call modal_shell(
+            modal_id='galleryDeletedModal',
+            modal_title='Gallery is in Trash',
+            modal_subtitle='You need to recover this gallery before accessing its sessions.',
+            icon_href='#gllry-qa-trash',
+            icon_class='modal-icon--warning',
+            show_close=False
+        ) %}
+            <div class="modal-footer modal-footer--center">
+                <a href="{{ url_for('gallery.trash') }}" class="btn btn-primary">Go to Trash</a>
             </div>
         {% endcall %}
-        <style>
-            #galleryDeletedModal .modal-close-btn {
-                display: none !important;
-            }
-        </style>
     {% endif %}
 
-    {# DELETE CONFIRMATION MODAL (SESSION) #}
-    {% call modal_shell(modal_id='deleteSessionModal', modal_title='CONFIRM SESSION DELETION') %}
-        <p>Are you sure you want to move this session to the recycle bin?</p>
-        
+    {# ── DELETE SESSION (soft) ── #}
+    {% call modal_shell(
+        modal_id='deleteSessionModal',
+        modal_title='Delete this session?',
+        modal_subtitle='This session will be moved to the recycle bin. You can restore it later from Trash.',
+        icon_href='#gllry-folder-bins',
+        icon_class='modal-icon--danger'
+    ) %}
         <form id="deleteSessionForm" method="POST" action="">
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Move to Bin</button>
+                <button type="submit" class="btn btn-danger">Move to Bin</button>
             </div>
         </form>
     {% endcall %}
-    
-    {# UPDATE CONFIRMATION MODAL (SESSION) #}
-    {% call modal_shell(modal_id='editSessionModal', modal_title='EDIT SESSION NAME') %}
-        <form id="editSessionForm" method="POST" action=""> 
+
+    {# ── EDIT SESSION NAME ── #}
+    {% call modal_shell(
+        modal_id='editSessionModal',
+        modal_title='Rename Session',
+        modal_subtitle='Enter a new name for this session.',
+        icon_href='#gllry-folder-edit',
+        icon_class='modal-icon--info'
+    ) %}
+        <form id="editSessionForm" method="POST" action="">
             <div class="form-group">
-                <label for="new_session_name">Session Name:</label>
-                <input type="text" id="new_session_name" name="session_name" required>
+                <label for="new_session_name">Session Name</label>
+                <input type="text" id="new_session_name" name="session_name" placeholder="e.g. Lab Notes - Week 3" required>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-primary">Update Name</button>
+                <button type="submit" class="btn btn-primary">Save Changes</button>
             </div>
         </form>
     {% endcall %}
-    
-    {# RECOVER CONFIRMATION MODAL (SESSION) #}
-    {% call modal_shell(modal_id='recoverSessionModal', modal_title='CONFIRM RECOVERY') %}
-        <p>Are you sure you want to restore this session?</p>
-        <p>It will be moved back to the active gallery.</p>
-        
+
+    {# ── RECOVER SESSION ── #}
+    {% call modal_shell(
+        modal_id='recoverSessionModal',
+        modal_title='Restore this session?',
+        modal_subtitle='This session will be moved back to the active gallery.',
+        icon_href='#gllry-folder-rev',
+        icon_class='modal-icon--success'
+    ) %}
         <form id="recoverSessionForm" method="POST" action="">
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-success">Yes, Restore Session</button>
-            </div>
-        </form> 
-    {% endcall %}
-    
-    {# FORCE DELETE MODAL (SESSION) #}
-    {% call modal_shell(modal_id='forceDeleteSessionModal', modal_title='PERMANENT DELETION') %}
-        <div class="alert alert-danger">
-            <strong>Warning:</strong> This action cannot be undone.
-        </div>
-        <p>Are you sure you want to <strong>permanently delete</strong> this session?</p>
-        <p>The folder and all images inside it will be erased from the disk.</p>
-        
-        <form id="forceDeleteSessionForm" method="POST" action="">
-            <div class="modal-footer">
-                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
-                <button type="submit" class="btn btn-danger">Yes, Delete Forever</button>
+                <button type="submit" class="btn btn-success">Restore Session</button>
             </div>
         </form>
     {% endcall %}
 
-    <!-- AUTO-OPEN DELETED GALLERY MODAL SCRIPT -->
+    {# ── FORCE DELETE SESSION (permanent) ── #}
+    {% call modal_shell(
+        modal_id='forceDeleteSessionModal',
+        modal_title='Permanently delete?',
+        modal_subtitle='The session folder and all images inside it will be erased from disk. This action cannot be undone.',
+        icon_href='#gllry-folder-del',
+        icon_class='modal-icon--danger'
+    ) %}
+        <form id="forceDeleteSessionForm" method="POST" action="">
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>
+                <button type="submit" class="btn btn-danger">Delete Forever</button>
+            </div>
+        </form>
+    {% endcall %}
+
+    {# ── AUTO-OPEN GALLERY DELETED MODAL ── #}
     {% if is_gallery_deleted %}
     <script>
         document.addEventListener('DOMContentLoaded', function() {
-            const openModal = (modal) => {
-                modal.classList.add('open');
-                modal.style.display = 'flex';
-            };
-
-            const galleryDeletedModal = document.getElementById('galleryDeletedModal');
-            if (galleryDeletedModal) {
-                // Find the parent overlay
-                const overlay = galleryDeletedModal.closest('.modal-overlay');
-                if (overlay) {
-                    openModal(overlay);
-                }
+            const overlay = document.getElementById('galleryDeletedModal');
+            if (overlay) {
+                overlay.classList.remove('closing');
+                overlay.style.display = 'flex';
             }
         });
     </script>

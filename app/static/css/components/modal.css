@@ -210,6 +210,27 @@
 }
 
 /* ============================================================
+   INPUT HINT  (character counter below text fields)
+   ============================================================ */
+.input-hint {
+    display: block;
+    margin-top: 0.3rem;
+    font-size: 0.75rem;
+    color: var(--cl-gray-light);
+    text-align: right;
+    transition: color 0.2s ease;
+
+    &.input-hint--warn {
+        color: #d97706;   /* amber — approaching limit */
+    }
+
+    &.input-hint--over {
+        color: #dc2626;   /* red — at/over limit */
+        font-weight: 600;
+    }
+}
+
+/* ============================================================
    MODAL FOOTER  (action buttons row)
    ============================================================ */
 .modal-footer {

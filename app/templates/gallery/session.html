@@ -577,19 +577,30 @@
             // ===========================================
             // "EDIT SESSION" MODAL
             // ===========================================
-            const editForm = document.getElementById('editSessionForm');
+            const editForm      = document.getElementById('editSessionForm');
             const editNameInput = document.getElementById('new_session_name');
+            const sessionCount  = document.getElementById('session_name_count');
+
+            function syncSessionCounter(input) {
+                const hint = input.closest('.form-group')?.querySelector('.input-hint');
+                if (sessionCount) sessionCount.textContent = input.value.length;
+                if (hint) hint.classList.toggle('input-hint--warn', input.value.length >= 72);
+                if (hint) hint.classList.toggle('input-hint--over', input.value.length >= 80);
+            }
+
+            if (editNameInput) {
+                editNameInput.addEventListener('input', () => syncSessionCounter(editNameInput));
+            }
 
             document.querySelectorAll('.edit-session-btn').forEach(button => {
                 button.addEventListener('click', function() {
-                    // Get data from the specific button clicked
-                    const sessionId = this.dataset.sessionId;
+                    const sessionId   = this.dataset.sessionId;
                     const sessionName = this.dataset.sessionName;
 
-                    // Build the form's "action" URL and set input value
                     if (editForm && editNameInput) {
-                        editForm.action = '/session/' + sessionId + '/update'; 
-                        editNameInput.value = sessionName;
+                        editForm.action      = '/session/' + sessionId + '/update';
+                        editNameInput.value  = sessionName;
+                        syncSessionCounter(editNameInput);
                     }
                 });
             });
@@ -682,7 +693,11 @@
         <form id="editSessionForm" method="POST" action="">
             <div class="form-group">
                 <label for="new_session_name">Session Name</label>
-                <input type="text" id="new_session_name" name="session_name" placeholder="e.g. Lab Notes - Week 3" required>
+                <input type="text" id="new_session_name" name="session_name"
+                       placeholder="e.g. Lab Notes - Week 3"
+                       maxlength="80" minlength="1"
+                       autocomplete="off" required>
+                <span class="input-hint"><span id="session_name_count">0</span>/80</span>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>

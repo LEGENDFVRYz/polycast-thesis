@@ -79,10 +79,16 @@
             if (!btn) return;
 
             if (btn.classList.contains('edit-session-btn')) {
-                const form = document.getElementById('editGalleryForm');
+                const form  = document.getElementById('editGalleryForm');
                 const input = document.getElementById('new_gallery_name');
-                if (form) form.action = '/gallery/' + btn.dataset.galleryId + '/update';
-                if (input) input.value = btn.dataset.galleryName || '';
+                const count = document.getElementById('gallery_name_count');
+                if (form)  form.action  = '/gallery/' + btn.dataset.galleryId + '/update';
+                if (input) {
+                    input.value = btn.dataset.galleryName || '';
+                    if (count) count.textContent = input.value.length;
+                    // Sync counter colour on pre-fill
+                    _syncGalleryCounter(input);
+                }
 
             } else if (btn.classList.contains('delete-session-btn')) {
                 const form = document.getElementById('deleteGalleryForm');
@@ -99,6 +105,24 @@
             } else if (btn.classList.contains('favorite-gallery-btn')) {
                 const form = document.getElementById('favoriteGalleryForm');
                 if (form) form.action = btn.dataset.favoriteUrl;
+            }
+        });
+
+        // Character counter for gallery rename input
+        function _syncGalleryCounter(input) {
+            const count = document.getElementById('gallery_name_count');
+            const hint  = input.closest('.form-group')?.querySelector('.input-hint');
+            if (!count) return;
+            const len = input.value.length;
+            count.textContent = len;
+            if (hint) hint.classList.toggle('input-hint--warn', len >= 58);   // warn at 90%
+            if (hint) hint.classList.toggle('input-hint--over', len >= 64);   // hard limit
+        }
+
+        document.addEventListener('DOMContentLoaded', function () {
+            const galleryInput = document.getElementById('new_gallery_name');
+            if (galleryInput) {
+                galleryInput.addEventListener('input', () => _syncGalleryCounter(galleryInput));
             }
         });
     </script>
@@ -118,7 +142,11 @@
         <form id="editGalleryForm" method="POST" action="">
             <div class="form-group">
                 <label for="new_gallery_name">Gallery Name</label>
-                <input type="text" id="new_gallery_name" name="gallery_name" placeholder="e.g. Science Lab Session" required>
+                <input type="text" id="new_gallery_name" name="gallery_name"
+                       placeholder="e.g. Science Lab Session"
+                       maxlength="64" minlength="1"
+                       autocomplete="off" required>
+                <span class="input-hint"><span id="gallery_name_count">0</span>/64</span>
             </div>
             <div class="modal-footer">
                 <button type="button" class="btn btn-secondary" data-close-modal>Cancel</button>

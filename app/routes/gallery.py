@@ -423,30 +423,48 @@ def update_gallery_name(gallery_id):
 
     # VALIDATION: Protect the operation to non-authorize person
     if "user" not in session:
-        flash("You must be admin in to perform this action.", "error")
+        flash("You must be logged in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
-    
+
     # CHECK: Find the specific gallery or return a 404 error
     gallery_item = Gallery.query.get_or_404(gallery_id)
-    
+
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if gallery_item.admin_id != session['id'] : abort(403)
-    
-    # FETCH: Get the new name from the form
+    if gallery_item.admin_id != session['id']: abort(403)
+
+    # FETCH + VALIDATE: Get the new name from the form
     new_name = request.form.get('gallery_name', '').strip()
+
     if not new_name:
-        flash('A gallery name is required.', 'error')
-        return redirect(url_for('admin.index'))
+        flash('Gallery name cannot be empty.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    if len(new_name) > 64:
+        flash(f'Gallery name is too long ({len(new_name)}/64 characters). Please shorten it.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    if new_name == gallery_item.name:
+        flash('No changes detected — the name is the same.', 'info')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    # CHECK: Duplicate name within the same admin's galleries
+    duplicate = Gallery.query.filter(
+        Gallery.admin_id == session['id'],
+        Gallery.name == new_name,
+        Gallery.id != gallery_id
+    ).first()
+    if duplicate:
+        flash(f'A gallery named "{new_name}" already exists. Choose a different name.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
 
     try:
         gallery_item.name = new_name
         db.session.commit()
-        
-        flash('Gallery name updated successfully.', 'success')
+        flash(f'Gallery renamed to "{new_name}".', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'Error: {e}', 'danger')
-    
+        flash(f'Could not update the gallery name. Please try again.', 'error')
+
     return redirect(request.referrer or url_for('gallery.index'))
 
 @gallery_bp.route("/gallery/<int:gallery_id>/recover", methods=['POST'])
@@ -549,15 +567,18 @@ def update_gallery_description(gallery_id):
     if gallery_item.admin_id != session['id'] : abort(403)
     
     try:
-        data = request.get_json()
-        new_description = data.get('description', '').strip()[:255]
-        
+        data = request.get_json(silent=True) or {}
+        new_description = data.get('description', '').strip()
+
+        if len(new_description) > 255:
+            return jsonify({"success": False, "message": f"Description is too long ({len(new_description)}/255 characters)."}), 400
+
         gallery_item.description = new_description
         db.session.commit()
-        return jsonify({"success": True, "description": gallery_item.description, "message": "Description updated successfully"})
+        return jsonify({"success": True, "description": gallery_item.description, "message": "Description updated."})
     except Exception as e:
         db.session.rollback()
-        return jsonify({"success": False, "error": str(e)}), 500
+        return jsonify({"success": False, "message": "Could not save description. Please try again."}), 500
 
 
 
@@ -593,30 +614,48 @@ def delete_session(session_id):
 def update_session_name(session_id):
     # VALIDATION: Protect the operation to non-authorize person
     if "user" not in session:
-        flash("You must be admin in to perform this action.", "error")
+        flash("You must be logged in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
-    
+
     # CHECK: Find the specific session or return a 404 error
     session_obj = DBSession.query.get_or_404(session_id)
-    
+
     # VALIDATION: Ensure the gallery belongs to the logged in admin
-    if session_obj.gallery.admin_id != session['id'] : abort(403)
-    
-    
-    # FETCH: Get the new name from the form
+    if session_obj.gallery.admin_id != session['id']: abort(403)
+
+    # FETCH + VALIDATE: Get the new name from the form
     new_name = request.form.get('session_name', '').strip()
+
     if not new_name:
-        flash('A session name is required.', 'error')
-        return redirect(request.referrer)
+        flash('Session name cannot be empty.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    if len(new_name) > 80:
+        flash(f'Session name is too long ({len(new_name)}/80 characters). Please shorten it.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    if new_name == session_obj.name:
+        flash('No changes detected — the name is the same.', 'info')
+        return redirect(request.referrer or url_for('gallery.index'))
+
+    # CHECK: Duplicate name within the same gallery
+    duplicate = DBSession.query.filter(
+        DBSession.gallery_id == session_obj.gallery_id,
+        DBSession.name == new_name,
+        DBSession.id != session_id
+    ).first()
+    if duplicate:
+        flash(f'A session named "{new_name}" already exists in this gallery. Choose a different name.', 'error')
+        return redirect(request.referrer or url_for('gallery.index'))
 
     try:
         session_obj.name = new_name
         db.session.commit()
-        flash('Session name updated successfully.', 'success')
+        flash(f'Session renamed to "{new_name}".', 'success')
     except Exception as e:
         db.session.rollback()
-        flash(f'Error: {e}', 'danger')
-    
+        flash('Could not update the session name. Please try again.', 'error')
+
     return redirect(request.referrer or url_for('gallery.index'))
 
 @gallery_bp.route("/session/<int:session_id>/recover", methods=['POST'])

@@ -10,7 +10,7 @@ class Gallery(db.Model, SoftDeleteMixin):
     
     id          = db.Column('id', db.Integer, primary_key=True)
     admin_id    = db.Column(db.Integer, db.ForeignKey('admins.id', ondelete='CASCADE'), nullable=False)     # Foreign Key to User (Many Gallery to One Admin)
-    name        = db.Column(db.String(80), nullable=False)
+    name        = db.Column(db.String(64), nullable=False)
     description = db.Column(db.String(255), nullable=True, default='')
     is_favorite = db.Column(db.Boolean, nullable=False, default=False, server_default='0')
     

@@ -30,7 +30,7 @@
                 {% endif %}
 
                 <!-- Phase 1 -->
-                <section 
+                <section
                     id="prototype-config"
                     class="
                         config-card
@@ -38,28 +38,27 @@
                     "
                 >
                     <h2>Prototype Configuration</h2>
-                    
+
                     {% if current_status == 'IDLE' %}
                         <form id="form1" action="{{ url_for('admin.configure') }}" method="POST">
                             <div class="input-group">
-                                <label for="serial_port">Device Serial Port</label>
+                                <label>Serial Port</label>
                                 <div class="input-with-button">
-                                    <select id="serial_port" name="serial_port" style="flex-grow: 1; padding: 10px;" required>
-                                        <option value="" disabled selected>Click 'Scan' to find ports...</option>
-                                    </select>
-
-                                    <button type="button" class="btn btn-secondary" id="scanBtn">
-                                        <img id="scanIcon" src="{{ url_for('static', filename='images/icons/scan1.svg') }}" alt="Scan" width=21>
-                                    </button>
+                                    <input type="text" value="{{ prototype_ip }}" disabled style="flex-grow: 1; padding: 10px; opacity: 0.65;">
                                 </div>
+                                <small style="color: var(--color-foreground-light); font-size: 0.75rem;">
+                                    Configured via <code>SERIAL_PORT</code> in <code>.env</code>
+                                </small>
                             </div>
-                            <button class="btn btn-primary btn-full" id="configure-btn" type="submit">Connect via USB</button>
+                            <button class="btn btn-primary btn-full" id="configure-btn" type="submit">
+                                Connect Prototype
+                            </button>
                         </form>
                     {% endif %}
 
                     <!-- Phase 1: After Successful connection -->
-                    {%if current_status in ['CONFIGURED', 'HOSTING'] %}
-                        <p>Connected: {{prototype_ip}}</p>
+                    {% if current_status in ['CONFIGURED', 'HOSTING'] %}
+                        <p>Connected: {{ prototype_ip }}</p>
                     {% endif %}
                 </section>
                 
@@ -132,70 +131,6 @@
     </div>
     
 
-    <!-- ESP SCANNER SCRIPT -->
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const scanBtn = document.getElementById('scanBtn'); // Button wrapper
-            const scanIcon = document.getElementById('scanIcon'); // The image inside
-            const portSelect = document.getElementById('serial_port'); // The dropdown
-
-            // Helper to create options easily
-            function addOption(text, value, isDisabled = false, isSelected = false) {
-                const option = document.createElement("option");
-                option.text = text;
-                option.value = value;
-                option.disabled = isDisabled;
-                option.selected = isSelected;
-                portSelect.add(option);
-            }
-
-            scanBtn.addEventListener('click', function() {
-                // 1. UI: Disable interaction and change icon
-                scanBtn.style.pointerEvents = 'none';
-                scanIcon.src = "{{ url_for('static', filename='images/icons/scan2.svg') }}";
-                
-                // Clear dropdown and show loading state
-                portSelect.innerHTML = "";
-                addOption("Scanning ports...", "", true, true);
-
-                // 2. API Call to the new Python Route
-                fetch("{{ url_for('admin.scan_ports') }}")
-                    .then(response => {
-                        if (!response.ok) {
-                            return response.json().then(err => { 
-                                throw new Error(err.message || 'Scan failed'); 
-                            });
-                        }
-                        return response.json();
-                    })
-                    .then(data => {
-                        portSelect.innerHTML = ""; // Clear "Scanning..." message
-
-                        if (data.success && data.ports.length > 0) {
-                            // Populate the dropdown with found ports
-                            data.ports.forEach(port => {
-                                addOption(port, port); 
-                            });
-                            // Select the first one automatically
-                            portSelect.selectedIndex = 0;
-                        } else {
-                            // Success response but empty list (no devices plugged in)
-                            addOption("No devices found", "", true, true);
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Fetch error:', error);
-                        portSelect.innerHTML = "";
-                        addOption(`Error: ${error.message}`, "", true, true);
-                    })
-                    .finally(() => {
-                        // 3. Cleanup: Re-enable click and reset icon
-                        scanBtn.style.pointerEvents = 'auto';
-                        scanIcon.src = "{{ url_for('static', filename='images/icons/scan1.svg') }}";
-                    });
-            });
-        });
-    </script>
 
     <!-- SIMPLIFIED COMBO BOX SCRIPT -->
 <script>

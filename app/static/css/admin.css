@@ -35,6 +35,9 @@
             flex-direction: column;
             flex: 1;
             gap: 1rem;
+
+            width: 80%;
+            margin: 0 auto;
         }
 
         form {
@@ -291,6 +294,15 @@
                 }
             }
             
+            div.forms{
+                display: flex;
+                flex-direction: column;
+                flex: 1;
+                gap: 1rem;
+
+                width: 100%;
+            }
+
             form {
                 margin-top: 1rem;
                 

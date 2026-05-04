@@ -168,60 +168,55 @@ def index():
 def configure():
     """
     Admin Panel Prototype Configuration (PHASE 1/2):
-    
-    - Primary purpose: Connect the prototype hardware to the system
-    - Acting as a bridge of communication between the hardware and system
-    - Selecting SERIAL PORT where the communication begins
-    
+
+    - Connects to the prototype using SERIAL_PORT and BAUD_RATE from .env
+    - Verifies the port is accessible before launching the background thread
+    - No user-selected port: the port is environment-configured
     """
-    
-    # Validation: Reject the request if there is no login admin yet.
+    import serial as _serial
+
     if "user" not in session:
         flash("You must be logged in to perform this action.", "error")
         return redirect(url_for("admin.login_page"))
 
-
-    # Get the proper SERIAL PORT, else halt the process
     admin_name = session["user"]
-    selected_port = request.form.get('serial_port')
+    port = prototype_config.SERIAL_PORT
+    baud = prototype_config.BAUD_RATE
 
-    if not selected_port:
-        flash("No Serial Port was selected.", "error")
+    g.admin_status._update_state(status="CONFIGURING", admin_name=admin_name)
+    print(f"[ADMIN] {admin_name} checking prototype on {port} @ {baud}...")
+
+    # --- Health check: verify the serial port opens before committing ---
+    try:
+        probe = _serial.Serial(port, baud, timeout=2)
+        probe.close()
+    except _serial.SerialException as e:
+        print(f"[ADMIN] Prototype not reachable on {port}: {e}")
+        g.admin_status._update_state(status="IDLE")
+        flash(f"Prototype not found on {port}. Check the device is connected and SERIAL_PORT is correct.", "error")
+        return redirect(url_for("admin.index"))
+    except Exception as e:
+        print(f"[ADMIN] Unexpected error probing {port}: {e}")
+        g.admin_status._update_state(status="IDLE")
+        flash(f"Unexpected error while connecting: {e}", "error")
         return redirect(url_for("admin.index"))
 
-    # Set status to "Configuring..."
-    g.admin_status._update_state(
-        status="CONFIGURING", 
-        admin_name=admin_name
-    )
-    print(f"[ADMIN] {admin_name} is configuring with Port: {selected_port}...")
-
-
-    # Attempt to start the background threads (prototype and image generation process)
+    # --- Port is reachable — start the background serial thread ---
     try:
-        # Update the config file
-        prototype_config.SERIAL_PORT = selected_port
-        
-        # thread manager will now initialize the Serial Port that we just set
         result = g.thread_manager.start()
-        
         if result:
             print("[PROTO] Serial thread started successfully")
         else:
             print("[PROTO] Thread was already running")
 
-        # Update the status flags
-        g.admin_status._update_state(
-            status="CONFIGURED",
-        )
-        print(f"[ADMIN] {admin_name} finished configuration.")
-        flash(f"Connected to device on {selected_port}!", "success")
-        
+        g.admin_status._update_state(status="CONFIGURED")
+        print(f"[ADMIN] {admin_name} finished configuration on {port}.")
+        flash(f"Prototype connected on {port}.", "success")
+
     except Exception as e:
-        # Feedback for failed attempt
-        print(f"[ADMIN] Configuration failed: {e}")
+        print(f"[ADMIN] Failed to start thread: {e}")
         g.admin_status._update_state(status="IDLE")
-        flash(f"Failed to open Serial Port {selected_port}. Error: {e}", "error")
+        flash(f"Failed to start prototype thread: {e}", "error")
 
     return redirect(url_for("admin.index"))
 
@@ -366,22 +361,12 @@ def endsession():
 # Admin Panel Helper routes
 # ---------------------------------------------------------------------
 
-# Scanning process for automatic finding right serial port
+# Returns the env-configured serial port (port selection is no longer user-facing)
 @admin_bp.route('/scan-ports')
 def scan_ports():
-    
-    # Validation: Reject the request if there is no login admin yet.
     if 'user' not in session:
         return jsonify({'success': False, 'message': 'User not authenticated'}), 401
-    
-    # Utilize the helper method in prototype_config
-    ports = ["COM3", "/dev/ttyUSB0", "/dev/ttyUSB1"]
-    
-    if ports:
-        # Return the list of found ports (e.g., ["COM3", "COM4"])
-        return jsonify({'success': True, 'ports': ports})
-    else:
-        return jsonify({'success': False, 'message': 'No serial ports found.'}), 404
+    return jsonify({'success': True, 'port': prototype_config.SERIAL_PORT})
 
 
 # Admin Authentication Synchronization

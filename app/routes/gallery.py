@@ -185,14 +185,15 @@ def session_page(galleryname):
 
     session_stats = {
         row.session_id: {
-            'note_count': row.note_count,
-            'file_size':  _fmt_size(row.total_bytes),
+            'note_count':  row.note_count,
+            'file_size':   _fmt_size(row.total_bytes),
+            'total_bytes': int(row.total_bytes),
         }
         for row in stats_rows
     }
     # Ensure every session has a default entry even if it has zero notes yet
     for s in sessions:
-        session_stats.setdefault(s.id, {'note_count': 0, 'file_size': '0 B'})
+        session_stats.setdefault(s.id, {'note_count': 0, 'file_size': '0 B', 'total_bytes': 0})
     
     
     return render_template(

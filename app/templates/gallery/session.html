@@ -147,22 +147,35 @@
 
             <div class="sessions-tabs">
                 <div class="tabs-list">
-                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='all') }}" 
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='all') }}"
                     class="tab-item {% if active_view == 'all' %}active{% endif %}">
                         All Sessions
                     </a>
-                    
-                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='trash') }}" 
+
+                    <a href="{{ url_for('gallery.session_page', galleryname=selected_gallery, view='trash') }}"
                     class="tab-item {% if active_view == 'trash' %}active{% endif %}">
                         Deleted
                     </a>
                 </div>
+
+                <button class="sort-trigger" id="sortTrigger" title="Sort sessions" aria-label="Sort sessions">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <line x1="3" y1="6"  x2="21" y2="6"/>
+                        <line x1="6" y1="12" x2="18" y2="12"/>
+                        <line x1="9" y1="18" x2="15" y2="18"/>
+                    </svg>
+                </button>
             </div>
 
             <div class="session-list">
-                {% if sessions %}  
+                {% if sessions %}
                     {% for session in sessions %}
-                        <div class="session-card">
+                        <div class="session-card"
+                             data-name="{{ session.name | lower }}"
+                             data-activity="{{ session.last_activity_at.timestamp() | int if session.last_activity_at else 0 }}"
+                             data-created="{{ session.created_at.timestamp() | int if session.created_at else 0 }}"
+                             data-notes="{{ session_stats[session.id].note_count }}"
+                             data-size="{{ session_stats[session.id].total_bytes }}">
                             <a href="{{ url_for('gallery.view_page', galleryname=selected_gallery, sessionname=session.name) }}" class="card-link-overlay"></a>
 
                             <div class="card-main">
@@ -425,6 +438,121 @@
         });
     </script>
 
+
+    <!-- SORT MODAL -->
+    <div class="sort-overlay" id="sortOverlay" role="dialog" aria-modal="true" aria-label="Sort sessions">
+        <div class="sort-sheet" id="sortSheet">
+            <div class="sort-sheet-header">
+                <span class="sort-sheet-title">Sort Sessions</span>
+                <button class="sort-sheet-close" id="sortClose" aria-label="Close">&times;</button>
+            </div>
+            <div class="sort-options" id="sortGroup">
+                <button class="sort-option active" data-sort="newest">
+                    <span class="sort-option-label">Newest First</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+                <button class="sort-option" data-sort="oldest">
+                    <span class="sort-option-label">Oldest First</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+                <button class="sort-option" data-sort="name-asc">
+                    <span class="sort-option-label">Name A → Z</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+                <button class="sort-option" data-sort="name-desc">
+                    <span class="sort-option-label">Name Z → A</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+                <button class="sort-option" data-sort="notes">
+                    <span class="sort-option-label">Most Notes</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+                <button class="sort-option" data-sort="size">
+                    <span class="sort-option-label">Largest Size</span>
+                    <span class="sort-option-check">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- SORT SCRIPT -->
+    <script>
+        (function () {
+            const trigger  = document.getElementById('sortTrigger');
+            const overlay  = document.getElementById('sortOverlay');
+            const sheet    = document.getElementById('sortSheet');
+            const closeBtn = document.getElementById('sortClose');
+            const group    = document.getElementById('sortGroup');
+            const list     = document.querySelector('.session-list');
+
+            if (!trigger || !overlay || !list) return;
+
+            const comparators = {
+                'newest':    (a, b) => +b.dataset.activity - +a.dataset.activity,
+                'oldest':    (a, b) => +a.dataset.activity - +b.dataset.activity,
+                'name-asc':  (a, b) => a.dataset.name.localeCompare(b.dataset.name),
+                'name-desc': (a, b) => b.dataset.name.localeCompare(a.dataset.name),
+                'notes':     (a, b) => +b.dataset.notes - +a.dataset.notes,
+                'size':      (a, b) => +b.dataset.size  - +a.dataset.size,
+            };
+
+            function applySort(key) {
+                const cards = Array.from(list.querySelectorAll('.session-card'));
+                if (!cards.length) return;
+                cards.sort(comparators[key]);
+                cards.forEach(c => list.appendChild(c));
+            }
+
+            function openSheet() {
+                overlay.classList.remove('sort-closing');
+                overlay.style.display = 'flex';
+                // tick so the display:flex is painted before the class triggers animation
+                requestAnimationFrame(() => overlay.classList.add('sort-open'));
+            }
+
+            function closeSheet() {
+                overlay.classList.add('sort-closing');
+                overlay.classList.remove('sort-open');
+                sheet.addEventListener('animationend', () => {
+                    overlay.style.display = 'none';
+                    overlay.classList.remove('sort-closing');
+                }, { once: true });
+            }
+
+            trigger.addEventListener('click', openSheet);
+            closeBtn.addEventListener('click', closeSheet);
+
+            overlay.addEventListener('click', function (e) {
+                if (e.target === overlay) closeSheet();
+            });
+
+            document.addEventListener('keydown', function (e) {
+                if (e.key === 'Escape' && overlay.style.display === 'flex') closeSheet();
+            });
+
+            group.addEventListener('click', function (e) {
+                const btn = e.target.closest('.sort-option');
+                if (!btn) return;
+                group.querySelectorAll('.sort-option').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                applySort(btn.dataset.sort);
+                // brief delay so user sees the selection tick before it closes
+                setTimeout(closeSheet, 160);
+            });
+        })();
+    </script>
 
     <!-- MODALS SCRIPT -->
     <script defer src="{{ url_for('static', filename='js/modal.js') }}"></script>

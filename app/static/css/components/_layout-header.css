@@ -257,7 +257,7 @@ header.app-wrapper {
         
         /* Navigation Section */
         .app-navigation {
-            background-color: var(--color-muted);
+            background-color: var(--color-accent);
             border-radius: 100rem;
             padding: 0rem;
             width: 25em;
@@ -273,11 +273,10 @@ header.app-wrapper {
             .app-tab {
                 padding: 0.75em;
                 background-color: #00000000;
-                color: var(--color-accent-foreground);
                 border-radius: 100rem;
                 flex: 1;
                 
-                color: var(--color-accent-foreground);
+                color: var(--color-secondary);
                 font: bold;
 
                 &:hover {

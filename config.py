@@ -78,7 +78,7 @@ SQLITE_BUSY_TIMEOUT_MS = _env_int("SQLITE_BUSY_TIMEOUT_MS", 5000)
 SECRET_KEY = _env_str("SECRET_KEY", "polycast-creator_BatsiKuruSyaniOmit")
 
 # Ports
-BROWSER_WS_PORT = _env_int("BROWSER_WS_PORT", 5001)
+BROWSER_WS_PORT = _env_int("BROWSER_WS_PORT", 5051)
 FLASK_PORT      = _env_int("FLASK_PORT",      5050)
 
 # Paths

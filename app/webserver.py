@@ -11,7 +11,9 @@ app = create_app()
 
 # Start the single encoder thread once per worker process.
 # Skip the Werkzeug reloader's parent watcher (it never serves requests).
-if not (os.environ.get("FLASK_ENV") == "development" and os.environ.get("WERKZEUG_RUN_MAIN") != "true" and not IS_PROD):
+# In dev, Werkzeug spawns a reloader parent that never serves requests;
+# only start the encoder in the child (WERKZEUG_RUN_MAIN=true) or in prod.
+if IS_PROD or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
     start_encoder_thread()
 
 

@@ -205,6 +205,7 @@ def session_page(galleryname):
         session_stats=session_stats,
         active_view=current_view,
         is_current_user=is_current_user,
+        is_gallery_deleted=False,
         now=datetime.utcnow()
     )
 

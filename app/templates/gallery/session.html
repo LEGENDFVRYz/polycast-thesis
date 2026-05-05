@@ -101,7 +101,7 @@
                         <div class="detail-content">
                             <span class="detail-label">Status</span>
                             <span class="detail-value">
-                                {{ "Inactive" if session.deleted_at else "Active" }}
+                                {{ "Inactive" if gallery.deleted_at else "Active" }}
                             </span>
                         </div>
                     </div>
@@ -304,8 +304,13 @@
                             </svg>
                         </div>
                         
-                        <h3>Everything is fine</h3>
-                        <p>There are currently no deleted sessions inside this gallery.</p>
+                        {% if active_view == 'trash' %}
+                            <h3>Everything is fine</h3>
+                            <p>There are currently no deleted sessions inside this gallery.</p>
+                        {% else %}
+                            <h3>No sessions yet</h3>
+                            <p>This gallery is empty. Sessions will appear here once created.</p>
+                        {% endif %}
                     </div>
                 {% endif %}
             </div>

@@ -24,6 +24,8 @@ import numpy as np
 from background.pipelines.config import cfg as global_cfg
 from background.pipelines.postprocess.centroid_align import align_centroid
 from background.pipelines.postprocess.minimum_jerk import minimum_jerk_smooth
+from background.pipelines.postprocess.shape_classifier import classify_shape
+from background.pipelines.postprocess.shape_snapper import snap_to_shape
 
 
 class StrokePostprocessor:
@@ -78,9 +80,46 @@ class StrokePostprocessor:
         pts_aligned, align_meta = align_centroid(pts_xy, uwb_xy, c.centroid)
 
         # ------------------------------------------------------------------
-        # Pass B: minimum-jerk smoothing (operates on aligned points)
+        # Pass B-shape: geometric shape classification + snapping.
+        # If a primitive is recognised with sufficient confidence, snap the
+        # stroke to the ideal shape and skip min-jerk (Pass B-jerk).
         # ------------------------------------------------------------------
-        pts_smoothed, jerk_meta = minimum_jerk_smooth(pts_aligned, ts_us, c.minjerk)
+        sc = c.shape
+        shape_meta = {'applied': False, 'kind': 'freeform', 'gated_minjerk': False}
+        jerk_meta  = {'applied': False, 'reason': 'not_run'}
+
+        if sc.enabled:
+            fit = classify_shape(pts_aligned, sc)
+            if fit.kind != 'freeform':
+                pts_snapped, snap_meta = snap_to_shape(pts_aligned, ts_us, fit, sc)
+                if snap_meta.get('applied'):
+                    pts_smoothed = pts_snapped
+                    shape_meta = {
+                        **snap_meta,
+                        'kind':        fit.kind,
+                        'confidence':  round(fit.confidence, 4),
+                        'params':      fit.params,
+                        'notes':       fit.notes,
+                        'gated_minjerk': True,
+                    }
+                    jerk_meta = {'applied': False, 'reason': 'gated_by_shape'}
+                else:
+                    # Snap rejected (bbox guard or unknown kind); fall through to min-jerk.
+                    shape_meta = {
+                        'applied': False,
+                        'kind': fit.kind,
+                        'confidence': round(fit.confidence, 4),
+                        'gated_minjerk': False,
+                        'snap_rejected': snap_meta,
+                    }
+                    pts_smoothed, jerk_meta = minimum_jerk_smooth(pts_aligned, ts_us, c.minjerk)
+            else:
+                # Freeform — run min-jerk as today.
+                shape_meta = {'applied': False, 'kind': 'freeform', 'gated_minjerk': False}
+                pts_smoothed, jerk_meta = minimum_jerk_smooth(pts_aligned, ts_us, c.minjerk)
+        else:
+            # Shape corrector disabled — run min-jerk as today.
+            pts_smoothed, jerk_meta = minimum_jerk_smooth(pts_aligned, ts_us, c.minjerk)
 
         # ------------------------------------------------------------------
         # Clamp to board boundaries (mirror UWB position filter's hard clamp).
@@ -103,6 +142,7 @@ class StrokePostprocessor:
             'n_points': len(points),
             'uwb_points_used': int(len(uwb_xy)),
             'centroid_align': align_meta,
+            'shape':    shape_meta,
             'min_jerk': jerk_meta,
         }
         return stroke

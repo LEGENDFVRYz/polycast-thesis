@@ -77,6 +77,7 @@ _ANCHOR_YS = [p[1] for p in cfg.anchors.positions]
 
 # PyQtGraph colour helpers (R, G, B, A  0–255)
 _C_INK    = (10,  10,  10,  255)
+_C_RAW    = (180, 100,  30,  90)   # faint amber overlay for pre-snap raw polyline
 _C_AIR    = (130, 130, 130, 140)
 _C_UWB    = (230, 140,  20, 140)
 _C_IMU    = (80,  130, 220, 140)
@@ -613,11 +614,17 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 closed = self.rec.process_event(fused)
                 if closed:
                     pts = [(pt[0], pt[1]) for pt in closed['points']]
-                    self._add_ink_stroke(pts)
+                    pp  = closed.get('postprocess', {})
+                    raw_pts = None
+                    if pp.get('shape', {}).get('applied'):
+                        raw = closed.get('raw_points') or []
+                        if raw:
+                            raw_pts = [(pt[0], pt[1]) for pt in raw]
+                    self._add_ink_stroke(pts, raw_pts=raw_pts)
                     self.cur_ink_x.clear()
                     self.cur_ink_y.clear()
                     self.closed_count += 1
-                    self._last_pp_meta = closed.get('postprocess', {})
+                    self._last_pp_meta = pp
 
                 self._write_csv_row(fused, p, 'IMU')
 
@@ -688,7 +695,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self._debug_label.setText(txt)
 
     # ── Helpers ───────────────────────────────────────────────────────────────
-    def _add_ink_stroke(self, pts: list):
+    def _add_ink_stroke(self, pts: list, raw_pts: list = None):
         if not pts:
             return
         xs = [p[0] for p in pts]
@@ -699,6 +706,16 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         )
         self._ink_items.append(item)
         self.ink_strokes.append(pts)
+        # Faint amber overlay showing the pre-snap raw polyline when shape
+        # correction was applied — lets the user see what got autocorrected.
+        if raw_pts:
+            rxs = [p[0] for p in raw_pts]
+            rys = [p[1] for p in raw_pts]
+            raw_item = self._plot_widget.plot(
+                rxs, rys,
+                pen=pg.mkPen(color=_C_RAW, width=1.2, style=pg.QtCore.Qt.DashLine),
+            )
+            self._ink_items.append(raw_item)
 
     def _write_csv_row(self, fused: dict, imu_ev: dict, source: str):
         e  = fused.get('eskf', {})

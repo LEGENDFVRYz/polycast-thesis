@@ -599,12 +599,58 @@ class MinJerkConfig:
     max_bbox_ratio: float = 1.10
 
 @dataclass(frozen=True)
+class ShapeCorrectorConfig:
+    enabled: bool = True
+
+    # Per-primitive kill switches (arc off by default — collides with letter strokes).
+    line_enabled: bool      = True
+    circle_enabled: bool    = True
+    arc_enabled: bool       = False
+    rectangle_enabled: bool = True
+    triangle_enabled: bool  = True
+
+    # Confidence thresholds — a fit must clear this to trigger a snap.
+    # Formula: conf = max(0, 1 - rms / (extent * residual_scale))
+    # At 2 mm RMS noise on typical strokes, these thresholds allow snapping while
+    # rejecting ambiguous strokes (e.g. a wavy line near a short arc).
+    line_confidence_min:      float = 0.80
+    circle_confidence_min:    float = 0.75
+    arc_confidence_min:       float = 0.80
+    rectangle_confidence_min: float = 0.60
+    triangle_confidence_min:  float = 0.60
+
+    # Geometric constraints.
+    min_line_length_m:    float = 0.03
+    min_circle_radius_m:  float = 0.015
+    circle_closure_max:   float = 0.20    # ||p0-pN|| / (2π·r); < this → closed circle
+    circle_min_arc_rad:   float = 5.65    # ~1.8π — minimum angular coverage for circle
+    arc_min_arc_rad:      float = 1.05    # ~60°
+    arc_max_arc_rad:      float = 5.59    # ~320°
+    dp_epsilon_m:         float = 0.008   # Douglas-Peucker tolerance (metres)
+    rect_angle_tol_deg:   float = 12.0    # max deviation from 90° for rectangle corners
+    axis_snap_deg:        float = 8.0     # snap rectangle to H/V axes if within this
+    polygon_closure_max:  float = 0.15    # ||p0-pN|| / perimeter; < this → closed polygon
+
+    # Residual-to-geometry scaling for confidence scoring.
+    # conf = 0 when rms_perp = length * line_residual_scale (i.e. 10% of stroke length).
+    # conf = 0 when rms_radial = radius * circle_residual_scale (i.e. 20% of radius).
+    line_residual_scale:   float = 0.10
+    circle_residual_scale: float = 0.20
+
+    # Snap strength (1.0 = full snap to ideal; 0.0 = no change).
+    snap_blend: float = 1.0
+
+    # Reject the snap if the snapped bbox grows beyond this ratio vs raw.
+    max_bbox_ratio: float = 1.15
+
+@dataclass(frozen=True)
 class PostprocessConfig:
     enabled: bool = True
     # Strokes shorter than this are passed through unchanged.
     min_stroke_points: int = 5
-    centroid: CentroidAlignConfig = field(default_factory=CentroidAlignConfig)
-    minjerk: MinJerkConfig = field(default_factory=MinJerkConfig)
+    centroid: CentroidAlignConfig  = field(default_factory=CentroidAlignConfig)
+    shape:    ShapeCorrectorConfig = field(default_factory=ShapeCorrectorConfig)
+    minjerk:  MinJerkConfig        = field(default_factory=MinJerkConfig)
 
 
 # ------------------------------------------------------------------------

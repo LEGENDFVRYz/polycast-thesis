@@ -109,19 +109,21 @@ body.error-page-body {
     }
 
     .error-right {
-        display: none;
+        display: flex;
         justify-content: center;
         align-items: center;
         z-index: 0;
+        order: -1;
     }
 
     .error-placeholder {
-        width: 100%;
-        max-width: 28rem;
+        width: 75%;
+        max-width: 15rem;
         aspect-ratio: 1 / 1;
         border-radius: 1.5rem;
         border: none;
         background-image: url("/static/images/error.webp");
+        background-size: 175% auto;
         background-position: center;
         background-repeat: no-repeat;
         padding: 0;
@@ -145,7 +147,11 @@ body.error-page-body {
         }
 
         .error-right {
-            display: flex;
+            order: 0;
+        }
+
+        .error-placeholder {
+            max-width: 28rem;
         }
     }
 }

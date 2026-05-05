@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 
 from flask import Blueprint, render_template, redirect, url_for, request, session, jsonify, flash, send_from_directory, abort
@@ -247,11 +248,15 @@ def view_page(galleryname, sessionname):
         print("FOLDER: Does not exist")
         return redirect(url_for("gallery.index"))
 
+    def _page_num(name):
+        m = re.match(r'^note_(\d+)\.[^.]+$', name, re.IGNORECASE)
+        return int(m.group(1)) if m else float('inf')
+
     try:
         with os.scandir(folder_path) as folder:
             images = sorted(
                 (item.name for item in folder if item.is_file() and os.path.splitext(item.name)[1].lower() in image_extensions),
-                key=str.lower
+                key=_page_num
             )
     except (FileNotFoundError, PermissionError):
         return redirect(url_for("gallery.index"))

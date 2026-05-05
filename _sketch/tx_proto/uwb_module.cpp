@@ -227,28 +227,13 @@ bool runUWBCycle(int* out_distances) {
             dwt_write32bitreg(SYS_STATUS_ID, 0xFFFFFFFF); 
         }
 
-        // TDMA Sleep Calculation — 100 Hz target
-        const int32_t SUPERFRAME_MS = 10;
-
+        // TDMA Sleep Calculation
         uint32_t elapsed_ms = millis() - superframe_start_ms;
-        int32_t sleep_time_ms = SUPERFRAME_MS - (int32_t)elapsed_ms;
-
-        if (latest_slot_corr != 0) {
-            sleep_time_ms += latest_slot_corr;
-        }
-
-        // Clamp to valid range
-        if (sleep_time_ms < 0) {
-            sleep_time_ms = 0;   // overrun, no sleep
-        }
-
-        if (sleep_time_ms > SUPERFRAME_MS) {
-            sleep_time_ms = SUPERFRAME_MS;
-        }
-
-        if (sleep_time_ms > 0) {
-            delay(sleep_time_ms);
-        }
+        int32_t sleep_time_ms = 10 - elapsed_ms;
+        if (latest_slot_corr != 0) sleep_time_ms += latest_slot_corr;
+        if (sleep_time_ms < 5 || sleep_time_ms > 10) sleep_time_ms = 10 - elapsed_ms; 
+        
+        if (sleep_time_ms > 0) delay(sleep_time_ms);
 
     } else {
         delay(5); 

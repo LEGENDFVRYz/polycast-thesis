@@ -129,7 +129,7 @@ class UWBConfig:
     # range_offsets_m: tuple = (-0.1366, -0.0627, -0.2483, -0.1691)
 
     # Nominal UWB rate.
-    rate_hz: float = 100.0
+    rate_hz: float = 50.0
 
     # Legacy range EMA alpha, kept for old modules.
     ema_alpha: float = 0.25

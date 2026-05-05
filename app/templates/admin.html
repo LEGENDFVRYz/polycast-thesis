@@ -124,7 +124,7 @@
                     <h2 class="section-title">Manage:</h2>
 
                     <a href="{{ url_for('admin.endsession') }}">
-                        <button>End Session</button>
+                        <button class="btn btn-danger">End Session</button>
                     </a>
 
                 </section>
@@ -366,10 +366,6 @@
             });
         });
     </script>
-
-<script>
-    document.getElementById("year").innerText = new Date().getFullYear();
-</script>
 
 {% endblock %}
 

@@ -312,7 +312,12 @@ def start_host():
     
     
     # Fetch the notes location and update status to "hosting"
-    g.admin_status._update_state(status="HOSTING", hosting_active=True)
+    g.admin_status._update_state(
+        status="HOSTING",
+        hosting_active=True,
+        stream_gallery=gallery_name,
+        stream_session=session_name,
+    )
     session["gname"] = gallery_name
     session["sname"] = session_name
 
@@ -349,7 +354,12 @@ def endsession():
         print("[PROTO] stopped" if result else "[PROTO] not running")
         
         # Update the all status
-        g.admin_status._update_state(status="IDLE", hosting_active=False)
+        g.admin_status._update_state(
+            status="IDLE",
+            hosting_active=False,
+            stream_gallery=None,
+            stream_session=None,
+        )
         
         if g.archiver_manager:
             g.archiver_manager.stop()

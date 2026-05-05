@@ -8,6 +8,8 @@ class AdminStatusManager:
             "admin_name": None,             # If none, "NO ADMIN YET"
             "status": "IDLE",               # IDLE, CONFIGURING, CONFIGURED, STARTING, HOSTING
             "hosting_active": False,
+            "stream_gallery": None,         # Gallery name while HOSTING
+            "stream_session": None,         # Session name while HOSTING
             "last_activity": 0              # Track timestamp
         }
         
@@ -36,12 +38,16 @@ class AdminStatusManager:
     # ------------------------------
     # WRITE operations
     # ------------------------------
-    def _update_state(self, status=None, admin_name=None, hosting_active=None):
+    _UNSET = object()   # sentinel: distinguishes "not passed" from None
+
+    def _update_state(self, status=None, admin_name=None, hosting_active=None,
+                      stream_gallery=_UNSET, stream_session=_UNSET):
         """
         Update a field in the status and notify others.
+        Pass stream_gallery=None or stream_session=None to explicitly clear them.
         """
         changed = False
-        
+
         with self._lock:
             updates = {}
             if status is not None:
@@ -50,6 +56,10 @@ class AdminStatusManager:
                 updates["admin_name"] = admin_name
             if hosting_active is not None:
                 updates["hosting_active"] = hosting_active
+            if stream_gallery is not self._UNSET:
+                updates["stream_gallery"] = stream_gallery
+            if stream_session is not self._UNSET:
+                updates["stream_session"] = stream_session
 
             if admin_name == "":
                 updates["admin_name"] = None    # Force reset the admin name if empty
@@ -94,8 +104,11 @@ class AdminStatusManager:
         """
         Resets the admin state.
         """
-        self._update_state(
-            status="IDLE",
-            admin_name="",
-            hosting_active=False
-        )
+        with self._lock:
+            self._status["status"] = "IDLE"
+            self._status["admin_name"] = None
+            self._status["hosting_active"] = False
+            self._status["stream_gallery"] = None
+            self._status["stream_session"] = None
+            self.status_changed.set()
+            self.status_changed.clear()

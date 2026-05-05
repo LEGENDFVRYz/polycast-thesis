@@ -36,6 +36,8 @@ def api_status():
         admin_name=admin_status.get_field("admin_name"),
         admin_status=admin_status.get_field("status"),
         hosting_active=admin_status.get_field("hosting_active"),
+        stream_gallery=admin_status.get_field("stream_gallery"),
+        stream_session=admin_status.get_field("stream_session"),
         last_activity_ts=admin_status.get_field("last_activity"),
         stream_clients=get_stream_client_count(),
         renderer_fps=round(get_renderer_fps(), 2),

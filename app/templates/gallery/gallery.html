@@ -12,6 +12,23 @@
         </div>
     </div>
 
+    <!-- Live Stream Banner -->
+    <section class="live-stream-banner" id="live-stream-banner" style="display:none;" aria-live="polite">
+        <div class="live-banner-left">
+            <span class="live-dot" aria-hidden="true"></span>
+            <div class="live-banner-text">
+                <span class="live-label">Live Now</span>
+                <span class="live-meta" id="live-meta">Loading stream info…</span>
+            </div>
+        </div>
+        <a href="/stream" class="live-banner-btn" id="live-banner-btn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <polygon points="5 3 19 12 5 21 5 3"/>
+            </svg>
+            Watch Live
+        </a>
+    </section>
+
     <!-- Recent Sessions -->
     <section class="recent-sessions" id="recent-sessions-section" style="display:none;">
         <div class="sessions-header">
@@ -140,6 +157,37 @@
                 </div>
             </div>`;
         }
+
+        // --- Live Stream Banner ---
+        (function () {
+            var banner  = document.getElementById('live-stream-banner');
+            var metaEl  = document.getElementById('live-meta');
+            var POLL_MS = 10000;
+            var timer;
+
+            function updateBanner() {
+                fetch('/api/status')
+                    .then(function (r) { return r.json(); })
+                    .then(function (data) {
+                        if (data.hosting_active) {
+                            var gallery = data.stream_gallery || '—';
+                            var sess    = data.stream_session  || '—';
+                            metaEl.textContent = gallery + ' · ' + sess;
+                            banner.style.display = '';
+                        } else {
+                            banner.style.display = 'none';
+                        }
+                    })
+                    .catch(function () {
+                        banner.style.display = 'none';
+                    });
+            }
+
+            document.addEventListener('DOMContentLoaded', function () {
+                updateBanner();
+                timer = setInterval(updateBanner, POLL_MS);
+            });
+        }());
 
         document.addEventListener('DOMContentLoaded', function () {
             // Fetch both endpoints in parallel

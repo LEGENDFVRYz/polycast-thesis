@@ -5,17 +5,17 @@ After=network.target
 [Service]
 User=polycastadmin
 Group=www-data
-WorkingDirectory=/home/polycastadmin/mock_server_v2
+WorkingDirectory=/home/polycastadmin/esp32_mock_webserver
 Environment=APP_ENV=prod
 Environment=PYTHONUNBUFFERED=1
-EnvironmentFile=/home/polycastadmin/mock_server_v2/.env
+EnvironmentFile=/home/polycastadmin/esp32_mock_webserver/.env
 ExecStart=/home/polycastadmin/venv/bin/gunicorn \
     -c gunicorn.conf.py \
     "app.webserver:app"
 Restart=on-failure
 RestartSec=5
-StandardOutput=append:/home/polycastadmin/mock_server_v2/logs/service.log
-StandardError=append:/home/polycastadmin/mock_server_v2/logs/service.log
+StandardOutput=append:/home/polycastadmin/esp32_mock_webserver/logs/service.log
+StandardError=append:/home/polycastadmin/esp32_mock_webserver/logs/service.log
 
 [Install]
 WantedBy=multi-user.target

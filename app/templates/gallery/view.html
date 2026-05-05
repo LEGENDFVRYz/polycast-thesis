@@ -80,8 +80,6 @@
                                 alt="{{ image }}"
                                 data-filename="{{ image }}"
                                 data-index="{{ loop.index0 }}"
-                                loading="lazy"
-                                decoding="async"
                                 class="lazy-image reader-frame__img">
 
                             <div class="reader-frame-toolbar">
@@ -292,10 +290,10 @@
     #}
 
     <!-- Uses JSZip (MIT License) - https://stuk.github.io/jszip/ -->
-    <script defer src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
-
+    <script src="{{ url_for('static', filename='js/jszip.min.js') }}"></script>
+    
     <!-- Uses FileSaver.js (MIT License) - https://github.com/eligrey/FileSaver.js/ -->
-    <script defer src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/FileSaver.min.js') }}"></script>
 
     <!-- Utilities for View Page -->
     <script>

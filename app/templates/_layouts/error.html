@@ -1,38 +1,38 @@
+{% from '_components/_footer.html' import layout_footer %}
+{% from '_components/_header.html' import layout_header %}
+
 <!DOCTYPE html>
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PolyCast - Error 500</title>
+        <title>PolyCast - Error {{ error_code }}</title>
         <link rel="stylesheet" href="{{ url_for('static', filename='css/global.css') }}">
         <link rel="stylesheet" href="{{ url_for('static', filename='css/web/error.css') }}">
     </head>
 
     <body class="error-page-body">
-        <!-- Header -->
-        <header class="error-header">
-            <div class="error-header-content">
-                <a href="{{ url_for('public.index') }}" class="error-logo">POLYCAST</a>
-                <a href="{{ url_for('public.about_page') }}" class="error-nav-link">About Us</a>
-            </div>
-        </header>
+        {% include '_includes/_icons-core.html' %}
+        {{ layout_header('index') }}
 
-        <!-- Main Error Content -->
         <main class="error-main">
             <div class="error-page-wrapper">
-                <div class="content-block --error --error-500">
+                <div class="content-block --error">
                     <div class="error-container">
-                        <div class="error-left error-left-500">
-                            <div class="error-placeholder"></div>
-                        </div>
-                        <div class="error-right error-right-500">
+                        <div class="error-left">
                             <h1 class="error-heading"><span class="error-code-prefix">{{ error_code }} Error:</span> {{ error_title }}</h1>
                             <p class="error-message">{{ error_message }}</p>
-                            <a href="javascript:location.reload()" class="error-button">Reload the Page</a>
+                            <a href="{{ url_for('public.index') }}" class="error-button">Back to Home Page</a>
+                        </div>
+                        <div class="error-right">
+                            <div class="error-placeholder"></div>
                         </div>
                     </div>
                 </div>
             </div>
         </main>
+
+        {{ layout_footer() }}
+        <script defer src="{{ url_for('static', filename='js/header.js') }}"></script>
     </body>
 </html>

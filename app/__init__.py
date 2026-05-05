@@ -61,4 +61,52 @@ def create_app():
     app.register_blueprint(gallery_bp)
     app.register_blueprint(stream_bp)
 
+    from flask import render_template
+
+    @app.errorhandler(404)
+    def error_404(e):
+        return render_template(
+            "_layouts/error.html",
+            error_code=404,
+            error_title="The Page Went Missing.",
+            error_message="Our PolyCast couldn't find this whiteboard space. The content you are looking for may have been moved, renamed, or archived elsewhere. Please verify the URL or return to the main hub to continue your session.",
+        ), 404
+
+    @app.errorhandler(500)
+    def error_500(e):
+        return render_template(
+            "_layouts/error.html",
+            error_code=500,
+            error_title="A Glitch in the Archive.",
+            error_message="We're experiencing an unexpected internal archiving issue. Our system admin team has been notified and is working on the case. We apologize for the interruption. Please try again shortly.",
+            is_server_error=True,
+        ), 500
+
+    @app.errorhandler(403)
+    def error_403(e):
+        return render_template(
+            "_layouts/error.html",
+            error_code=403,
+            error_title="Access Restricted.",
+            error_message="You don't have the necessary permissions to access this whiteboard space. If you believe this is a mistake, please contact your session administrator.",
+        ), 403
+
+    @app.errorhandler(401)
+    def error_401(e):
+        return render_template(
+            "_layouts/error.html",
+            error_code=401,
+            error_title="Archive Not Found.",
+            error_message="The gallery or session are missing. Either deleted by admin or expired.",
+        ), 401
+
+    @app.errorhandler(503)
+    def error_503(e):
+        return render_template(
+            "_layouts/error.html",
+            error_code=503,
+            error_title="Service Temporarily Unavailable.",
+            error_message="PolyCast is currently under maintenance or experiencing high load. Please wait a moment and try refreshing the page.",
+        ), 503
+
     return app

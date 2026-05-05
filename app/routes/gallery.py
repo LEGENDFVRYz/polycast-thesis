@@ -114,7 +114,7 @@ def session_page(galleryname):
     current_admin = Admin.query.filter_by(username=admin_name).first()
     
     if not current_admin:
-        return "Admin not found", 404
+        abort(403)
     
     # CHECK: If user is the currently logged in admin
     is_current_user = ('user' in session) and (session['user'] == admin_name)
@@ -124,7 +124,7 @@ def session_page(galleryname):
     gallery_item = Gallery.query.filter_by(name=galleryname, admin_id=current_admin.id).first()
 
     if not gallery_item:
-        return "Gallery not found", 404
+        abort(401)
     
     # CHECK: If gallery is deleted, show modal instead of error
     is_gallery_deleted = gallery_item.deleted_at is not None
@@ -221,7 +221,7 @@ def view_page(galleryname, sessionname):
     current_admin = Admin.query.filter_by(username=admin_name).first()
     
     if not current_admin:
-        return "Admin not found", 404
+        abort(403)
     
 
     # VALIDATION: Fetch the specific gallery of the selected session, 
@@ -230,14 +230,14 @@ def view_page(galleryname, sessionname):
                             .filter(Gallery.deleted_at.is_(None)) \
                             .first()
     if not gallery_item:
-        return "Gallery not found or deleted", 404
+        abort(401)
 
     # VALIDATION: Fetch the specific session reference, excluding soft-deleted
     session_obj =  DBSession.query.filter_by(name=sessionname, gallery_id=gallery_item.id) \
                             .filter(DBSession.deleted_at.is_(None)) \
                             .first()
     if not session_obj:
-        return "Session not found or deleted", 404
+        abort(401)
     
 
     # Path to the session folder using ids
@@ -286,7 +286,7 @@ def serve_image(filename):
 
     if not os.path.isfile(requested_path):
         print(f"File not found: {requested_path}")
-        abort(404)
+        abort(401)
     
     relative_path = os.path.relpath(requested_path, g.GALLERY_PATH).replace(os.sep, "/")
     return send_from_directory(g.GALLERY_PATH, relative_path)

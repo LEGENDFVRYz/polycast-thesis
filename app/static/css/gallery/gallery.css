@@ -222,6 +222,13 @@ div.gallery-wrap {
                 display: flex;
                 flex-direction: column;
                 width: 100%;
+
+                .empty-state-wrapper {
+                    display: flex;
+                    flex-direction: column;
+                    width: 100%;
+                    flex: 1;
+                }
             }
         }
     }

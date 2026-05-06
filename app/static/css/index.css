@@ -43,7 +43,7 @@
         .landing-banner-content {
             font-family: 'Poppins', sans-serif;
             max-width: 850px;
-            padding: 6rem 1rem;
+            padding: 4rem 1rem 9rem;
             
             h1 {
                 color: var(--color-primary);
@@ -446,7 +446,7 @@
 
             .landing-banner-content {
                 max-width: 850px;
-                padding: 6rem 1rem;
+                padding: 4rem 1rem 9rem;
                 
                 h1 {
                     font-size: 5rem;

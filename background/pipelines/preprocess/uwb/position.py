@@ -93,16 +93,23 @@ class UWBPositionFilter:
         self._prev_pos = (clamped_x, clamped_y)
         self._prev_ts = ts
 
-        # --- THE FIX: Explicit Axis Definition ---
-        # We keep 'pos_clean' untouched so your hardware plotting script doesn't break
-        ev['pos_clean']  = (round(clean_x, 4), round(clean_y, 4))
-        ev['speed_flag'] = speed_flag
+        # ── Three named position signals ──────────────────────────────────────
+        # pos_for_fusion:        boundary-clamped only; no alpha-beta smoothing.
+        #                        ESKF already models UWB noise — heavy smoothing
+        #                        here only adds lag to the Kalman update.
+        # pos_clean_for_display: alpha-beta smoothed — for plots and replay tools.
+        # pos_clean:             backward-compat alias so existing scripts are unaffected.
+        ev['pos_for_fusion']        = (round(clamped_x, 4), round(clamped_y, 4))
+        ev['pos_clean_for_display'] = (round(clean_x,   4), round(clean_y,   4))
+        ev['pos_clean']             = ev['pos_clean_for_display']
+        ev['speed_flag']            = speed_flag
 
-        # We add explicitly labeled axes for Module 7 (The Fusion Node)
+        # mapped_position feeds the ESKF (eskf.py reads board_width_x / board_height_y).
+        # Using pos_for_fusion here so the ESKF gets the clamped-only signal.
         ev['mapped_position'] = {
-            'board_width_x': round(clean_x, 4),
-            'board_height_y': round(clean_y, 4),
-            'depth_z': 0.07  # The physical offset of the anchors from the whiteboard
+            'board_width_x':  ev['pos_for_fusion'][0],
+            'board_height_y': ev['pos_for_fusion'][1],
+            'depth_z':        cfg.anchors.a0[2],   # from AnchorConfig — currently 0.01 m
         }
         ev['coordinate_frame'] = 'UWB_BOARD_XY'
 

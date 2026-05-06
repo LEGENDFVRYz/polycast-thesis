@@ -33,7 +33,7 @@ class SerialConfig:
 class IMUConfig:
     # Actual observed effective rate is closer to 170–180 Hz than ideal 250 Hz.
     # ESKF dt clamp depends on this value, so keep it near measured reality.
-    sample_rate_hz: float = 180.0
+    sample_rate_hz: float = 175.0
 
     # ZUPT / stillness detector.
     # These values are intentionally permissive enough to catch real pauses,
@@ -125,10 +125,10 @@ class ContactConfig:
 class UWBConfig:
     # Per-anchor range calibration offsets.
     # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)         # -- old validation
-    range_offsets_m: tuple = (-0.1366, -0.0127, -0.1983, -0.1191)
+    range_offsets_m: tuple = (-0.1585, -0.0339, -0.1984, -0.1201)
 
     # Nominal UWB rate.
-    rate_hz: float = 50.0
+    rate_hz: float = 45.0
 
     # Legacy range EMA alpha, kept for old modules.
     ema_alpha: float = 0.25
@@ -178,19 +178,19 @@ class UWBConfig:
 @dataclass(frozen=True)
 class AnchorConfig:
     board_size_x: float = 1.25
-    board_size_y: float = 1.24
+    board_size_y: float = 1.20
 
     # Anchors are mounted at board corners with slight depth offset.
-    a0: tuple[float, float, float] = (0.00, 0.00, 0.07)
-    a1: tuple[float, float, float] = (1.25, 0.00, 0.07)
-    a2: tuple[float, float, float] = (1.25, 1.24, 0.07)
-    a3: tuple[float, float, float] = (0.00, 1.24, 0.07)
+    a0: tuple[float, float, float] = (0.00, 0.00, 0.01)
+    a1: tuple[float, float, float] = (1.25, 0.00, 0.01)
+    a2: tuple[float, float, float] = (1.25, 1.20, 0.01)
+    a3: tuple[float, float, float] = (0.00, 1.20, 0.01)
 
     positions: tuple[tuple[float, float, float], ...] = (
-        (0.00, 0.00, 0.07),
-        (1.25, 0.00, 0.07),
-        (1.25, 1.24, 0.07),
-        (0.00, 1.24, 0.07),
+        (0.00, 0.00, 0.01),
+        (1.25, 0.00, 0.01),
+        (1.25, 1.20, 0.01),
+        (0.00, 1.20, 0.01),
     )
 
 
@@ -504,7 +504,7 @@ class FusionESKFConfig:
 class StrokeCleanerConfig:
     # Batch/offline cleanup applied only after pen-up. Live ESKF output is still
     # emitted immediately, then the finished stroke is corrected before delivery.
-    enabled: bool = False
+    enabled: bool = True
 
     # Minimum useful stroke size. Shorter strokes are left untouched because
     # double-integrating a tiny segment is usually less reliable than the fused path.
@@ -592,7 +592,7 @@ class MinJerkConfig:
 
 @dataclass(frozen=True)
 class PostprocessConfig:
-    enabled: bool = True
+    enabled: bool = False
     # Strokes shorter than this are passed through unchanged.
     min_stroke_points: int = 5
     centroid: CentroidAlignConfig = field(default_factory=CentroidAlignConfig)

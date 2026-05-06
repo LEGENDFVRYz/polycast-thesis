@@ -21,7 +21,7 @@ class UWBSolver:
         self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24)
 
         # Issue 5: Z-plane assumption. Pen is at Z=0.0.
-        # The anchors are at Z=0.07. The 3D distance math inherently handles this offset!
+        # The anchors are at Z=0.01 (per AnchorConfig). The 3D distance math inherently handles this offset!
         self.pen_z = 0.0
 
         # Bounds and initial guess

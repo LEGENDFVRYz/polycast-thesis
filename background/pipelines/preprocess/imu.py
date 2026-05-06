@@ -81,6 +81,9 @@ def _vmag(v):
 def _vsub(a, b):
     return tuple(x - y for x, y in zip(a, b))
 
+# Body-frame LPF divergence threshold for acc_clipped quality flag (m/s²).
+_ACC_CLIP_THRESHOLD_MS2 = 0.5
+
 def _project_board_axes(v):
     """Extracts 2D board coordinates based on the config axes map."""
     axis_map = {'x': 0, 'y': 1, 'z': 2}
@@ -228,7 +231,8 @@ class IMUPreprocessor:
 
         # --- Normalize quaternion; all derivative-sensitive math below is
         # --- filtered in the body frame BEFORE rotating to world coordinates.
-        q_norm = _qnormalize(q)
+        quat_norm_mag = _qnorm(q)
+        q_norm        = _qnormalize(q)
         R_body_to_world = _q_to_R(q_norm)
 
         # ==========================================================
@@ -242,15 +246,19 @@ class IMUPreprocessor:
         if gyro_ev is not None:
             try:
                 omega_body_raw = tuple(float(x) for x in gyro_ev)
+                gyro_source = 'hardware'
             except (TypeError, ValueError):
                 omega_body_raw = (0.0, 0.0, 0.0)
+                gyro_source = 'hardware'
         elif self._prev_quat_rb is not None and dt_s > 1e-6:
             q_delta = _quat_mul(q_norm, _quat_conj(self._prev_quat_rb))
             if q_delta[3] < 0:              # choose shorter arc
                 q_delta = (-q_delta[0], -q_delta[1], -q_delta[2], -q_delta[3])
             omega_body_raw = _vscale(q_delta[:3], 2.0 / dt_s)
+            gyro_source = 'quat_delta'
         else:
             omega_body_raw = (0.0, 0.0, 0.0)
+            gyro_source = 'quat_delta'
 
         if cfg.imu.pre_derivative_lpf_enabled:
             acc_body_clean = _ema_vec(self._acc_body_lpf, acc_ms2, cfg.imu.acc_lpf_alpha)
@@ -259,9 +267,13 @@ class IMUPreprocessor:
             acc_body_clean = acc_ms2
             omega_body = omega_body_raw
 
+        acc_clipped = _vmag(_vsub(acc_body_clean, acc_ms2)) > _ACC_CLIP_THRESHOLD_MS2
+
         # Dynamic deadband: silence near-zero gyro noise before it enters
         # centripetal correction, turn detection, ZUPT, or alpha derivation.
+        omega_body_pre_deadband = omega_body
         omega_body = _deadband_vec(omega_body, cfg.imu.omega_deadband_rads)
+        gyro_clipped = (omega_body == (0.0, 0.0, 0.0)) and (omega_body_pre_deadband != (0.0, 0.0, 0.0))
         omega_world = _matvec3(R_body_to_world, omega_body)
 
         # Alpha is the derivative of the already-filtered omega.  Then apply the
@@ -374,8 +386,9 @@ class IMUPreprocessor:
         # Runs on the tip-corrected signal so both rotational whip AND bias are removed.
         # Formula: y[n] = α·(y[n-1] + x[n] − x[n-1]),  α = RC/(RC+dt)
         if cfg.imu.hpf_enabled:
-            RC      = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
-            alpha_h = RC / (RC + dt_s)
+            RC        = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
+            hpf_alpha = RC / (RC + dt_s)
+            alpha_h   = hpf_alpha
             if self._acc_world_in_prev is None:
                 acc_world_hp     = (0.0, 0.0, 0.0)
                 acc_tip_world_hp = (0.0, 0.0, 0.0)
@@ -399,6 +412,7 @@ class IMUPreprocessor:
             acc_board_hp     = _project_board_axes(acc_world_hp)
             acc_board_hp_tip = _project_board_axes(acc_tip_world_hp)
         else:
+            hpf_alpha        = 0.0
             acc_board_hp     = acc_board
             acc_board_hp_tip = acc_board_tip
 
@@ -473,6 +487,18 @@ class IMUPreprocessor:
             'is_static':      self._zupt_active,
             'contact':        contact,
             'force':          force,
+            # --- debug / replay quality fields ---
+            'dt_s':        dt_s,
+            'hpf_alpha':   hpf_alpha,
+            'lever_arm_m': r_imu,
+            'gyro_source': gyro_source,
+            'imu_quality': {
+                'quat_norm_mag': quat_norm_mag,
+                'is_static':     self._zupt_active,
+                'gyro_clipped':  gyro_clipped,
+                'acc_clipped':   acc_clipped,
+                'hpf_active':    cfg.imu.hpf_enabled,
+            },
         }
 
     def reset(self):

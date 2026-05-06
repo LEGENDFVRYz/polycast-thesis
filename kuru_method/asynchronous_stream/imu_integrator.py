@@ -364,9 +364,14 @@ class IMUIntegrator:
         if norm > 0.15:
             self._init_headings.append(right_vec / norm)
             
-        # ---> THE LOCK LOGIC (Fully restored so it won't freeze!) <---
-        if len(self._init_headings) >= 50:
+        # Lock once enough heading samples have accumulated. Use the class
+        # constant, not a hard-coded 50, and snapshot the locked heading so
+        # the drift leash is relative to the actual board direction.
+        if len(self._init_headings) >= self.HEADING_INIT_SAMPLES:
             avg_vec = np.mean(self._init_headings, axis=0)
-            self._heading_vec = avg_vec / np.linalg.norm(avg_vec)
-            self._heading_locked = True
-            print(f"[IMUIntegrator] Heading locked: {self._heading_vec}")  
+            avg_norm = float(np.linalg.norm(avg_vec))
+            if avg_norm > 1e-9:
+                self._heading_vec = avg_vec / avg_norm
+                self._locked_heading = self._heading_vec.copy()
+                self._heading_locked = True
+                print(f"[IMUIntegrator] Heading locked: {self._heading_vec}")

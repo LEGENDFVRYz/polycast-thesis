@@ -31,6 +31,7 @@ import atexit
 import os
 import sys
 import time
+from collections import deque
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
@@ -44,12 +45,14 @@ from imu_calibrate  import trigger_dcd_save
 
 
 # -- Configuration ----------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
-DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
+from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
+DATASET_FILENAME = 'datasets_str_50hz/live_20260507_024059.csv'   # '' = live; 'path/to/data.csv' = playback
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier
 DIAG_INTERVAL_S  = 1.0   # console diagnostic print interval
+DEBUG_ASSISTANT  = True  # show rule-based live debugging panel
+USE_ONLINE_TRAIL_SMOOTHER = False  # False = draw raw causal EKF tip, True = 5-point causal display smoother
 
 # Nominal IMU rate — used for display-rate reporting only; dt in the EKF
 # comes from packet timestamps, not from this constant.
@@ -139,12 +142,17 @@ def _live_recorder_write(pkt: dict) -> None:
 
 _live_recorder_open()
 
-# Drawing trail — only positions where is_writing == True
-draw_x, draw_y   = [], []
-# Lifted trail — positions where is_writing == False (faint)
-lift_x, lift_y   = [], []
+# Writing trails
+# draw_x/draw_y = causal pen-tip trace used for comparison.
+draw_x, draw_y       = [], []
+# tag_draw_x/tag_draw_y = fused UWB tag XY trace.
+tag_draw_x, tag_draw_y = [], []
+# Lifted trail — positions where is_writing == False (faint pen-tip trace)
+lift_x, lift_y       = [], []
 # Rejected anchor scatter
-rej_x, rej_y     = [], []
+rej_x, rej_y         = [], []
+# RTS-smoothed per-stroke overlay. Kept separate from the causal EKF trace.
+rts_x, rts_y         = [], []
 
 _show_vel        = SHOW_VELOCITY
 _last_diag_time  = 0.0
@@ -152,8 +160,10 @@ _prev_writing    = False
 _eof_handled     = False
 _imu_subsample   = 0       # counter for trail subsampling
 
-# Latest position/velocity for artist updates (persists across packets)
-_last_pos = None
+# Latest positions/velocity for artist updates (persists across packets)
+_last_pos = None          # pen-tip position kept for compatibility
+_last_tip_pos = None
+_last_tag_pos = None
 _last_vel = None
 
 # Phase 8 Step 4b Pattern A — "snap-to-RTS on stroke completion".
@@ -169,6 +179,260 @@ _stroke_draw_start:    int | None = None   # index into draw_x
 # green RTS overlay at end-of-CSV (Layer-10-style slicing).
 _is_writing_stream:  list[bool] = []
 _history_idx_stream: list[int]  = []
+# Axis sample aligned with each EKF history record. Used to convert RTS tag XY to pen-tip XY.
+_axis_by_history_idx: list[np.ndarray] = []
+_last_rts_stats: dict = {}
+
+
+def _safe_axis_for_history(i: int) -> np.ndarray:
+    if 0 <= i < len(_axis_by_history_idx):
+        return _axis_by_history_idx[i]
+    return np.array([0.0, 0.0, 1.0], dtype=float)
+
+
+def _tag_xy_to_tip_xy(tag_xy: np.ndarray, axes_wb: np.ndarray) -> np.ndarray:
+    axes = np.asarray(axes_wb, dtype=float)
+    if axes.ndim == 1:
+        axes = np.tile(axes, (len(tag_xy), 1))
+    if len(axes) < len(tag_xy):
+        pad = np.tile(axes[-1] if len(axes) else np.array([0.0, 0.0, 1.0]),
+                      (len(tag_xy) - len(axes), 1))
+        axes = np.vstack([axes, pad])
+    return np.asarray(tag_xy, dtype=float) - TIP_OFFSET_FROM_TAG_M * axes[:len(tag_xy), :2]
+
+
+class DebugAssistant:
+    """Rule-based live diagnostic layer for main_ekf.py.
+
+    This is diagnostic-only: it never changes fusion behavior. It keeps
+    both the latest UWB update and the latest PEN_DOWN UWB update so the
+    panel remains useful after the pen enters hover_long.
+    """
+
+    RTS_SUSPECT_DELTA_M = 0.05
+
+    def __init__(self, maxlen: int = 250):
+        self.maxlen = maxlen
+        self.uwb_accept_counts = deque(maxlen=maxlen)
+        self.uwb_reject_counts = deque(maxlen=maxlen)
+        self.dropout_counts = deque(maxlen=maxlen)
+        self.quality = deque(maxlen=maxlen)
+        self.last_warnings: list[str] = []
+        self.last_rts = {}
+        self.last_mode = 'unknown'
+        self.last_contact = False
+        self.current_anchor_rows: list[str] = []
+        self.pen_down_anchor_rows: list[str] = []
+        self.pen_down_summary = 'No pen-down UWB update captured yet.'
+        self.last_pen_down_range_kf_lag_m = 0.0
+
+    def ingest_imu(self, is_writing: bool) -> None:
+        self.last_contact = bool(is_writing)
+        try:
+            self.last_mode = engine._pen_mode.mode.value
+        except Exception:
+            self.last_mode = 'unknown'
+
+    @staticmethod
+    def _fmt(v, width=5, prec=2):
+        try:
+            f = float(v)
+        except Exception:
+            return ' ' * max(0, width - 2) + '--'
+        if not np.isfinite(f):
+            return ' ' * max(0, width - 2) + '--'
+        return f'{f:{width}.{prec}f}'
+
+    def _make_anchor_rows(self, ekf_dists, weights, accepted, rejected,
+                          pre_pos=None, pre_P=None, pre_tag_z=None):
+        rows = []
+        z_in = np.asarray(ekf_dists, dtype=float)
+        qs = np.asarray(weights, dtype=float)
+        filt = np.asarray(engine.last_filtered_ranges, dtype=float)
+        try:
+            used = np.asarray(engine.last_ekf_ranges_used, dtype=float)
+        except Exception:
+            used = filt
+        accepted_set = set(accepted)
+        rejected_set = set(rejected)
+
+        for i, a in enumerate(engine.anchors):
+            mute_rem = int(engine.ekf._mute_remain[i]) if hasattr(engine.ekf, '_mute_remain') else 0
+            if i >= len(z_in) or not np.isfinite(z_in[i]):
+                status = 'MISS'
+            elif mute_rem > 0 and i in rejected_set:
+                status = 'MUTE'
+            elif i in accepted_set:
+                status = 'ACC '
+            elif i in rejected_set:
+                status = 'REJ '
+            else:
+                status = '----'
+
+            z_kf = float(filt[i]) if i < len(filt) else float('nan')
+            z_used = float(used[i]) if i < len(used) else z_kf
+            pred = np.nan
+            innov = np.nan
+            nis_g = np.nan
+
+            if pre_pos is not None and pre_P is not None and pre_tag_z is not None and i < len(z_in) and np.isfinite(z_in[i]):
+                dx = float(pre_pos[0] - a[0])
+                dy = float(pre_pos[1] - a[1])
+                dz = float(pre_tag_z - a[2])
+                pred = float(np.sqrt(dx*dx + dy*dy + dz*dz))
+                if np.isfinite(z_used) and pred > 1e-9:
+                    innov = z_used - pred
+                    H = np.array([[dx / pred, dy / pred, 0.0, 0.0, 0.0, 0.0]], dtype=float)
+                    try:
+                        hpht = float((H @ pre_P @ H.T).item())
+                        sg = hpht + engine.ekf.GATE_SIGMA_UWB ** 2
+                        if sg > 1e-12:
+                            nis_g = (innov * innov) / sg
+                    except Exception:
+                        nis_g = np.nan
+
+            q_i = qs[i] if i < len(qs) else np.nan
+            row = (
+                f'A{i} {status} q={self._fmt(q_i,4,2)} '
+                f'in={self._fmt(z_in[i] if i < len(z_in) else np.nan,5,2)} '
+                f'use={self._fmt(z_used,5,2)} '
+                f'kf={self._fmt(z_kf,5,2)} '
+                f'pr={self._fmt(pred,5,2)} '
+                f'ν={self._fmt(innov,6,3)} '
+                f'NISg={self._fmt(nis_g,5,2)}'
+            )
+            if mute_rem > 0:
+                row += f' mute={mute_rem:02d}'
+            rows.append(row)
+        return rows
+
+    def ingest_uwb(self, raw, ekf_dists, weights, accepted, rejected,
+                   pre_pos=None, pre_P=None, pre_tag_z=None,
+                   is_pen_down: bool = False) -> None:
+        ekf_arr = np.asarray(ekf_dists, dtype=float)
+        weights_arr = np.asarray(weights, dtype=float)
+        self.uwb_accept_counts.append(len(accepted))
+        self.uwb_reject_counts.append(len(rejected))
+        self.dropout_counts.append(int(np.sum(~np.isfinite(ekf_arr))))
+        if len(weights_arr):
+            self.quality.append(float(np.nanmean(weights_arr)))
+
+        rows = self._make_anchor_rows(ekf_dists, weights, accepted, rejected,
+                                      pre_pos=pre_pos, pre_P=pre_P, pre_tag_z=pre_tag_z)
+        self.current_anchor_rows = rows
+
+        # Preserve the most recent writing-time anchor diagnostics so after
+        # lift/hover we can still inspect what happened during the stroke.
+        if is_pen_down:
+            self.pen_down_anchor_rows = list(rows)
+            acc = len(accepted)
+            rej = len(rejected)
+            qmean = float(np.nanmean(weights_arr)) if len(weights_arr) else float('nan')
+            try:
+                kf = np.asarray(engine.last_filtered_ranges, dtype=float)
+                zin = np.asarray(ekf_dists, dtype=float)
+                self.last_pen_down_range_kf_lag_m = float(np.nanmax(np.abs(kf - zin)))
+            except Exception:
+                self.last_pen_down_range_kf_lag_m = 0.0
+            self.pen_down_summary = (f'Last pen-down UWB: acc={acc}, rej={rej}, q_mean={qmean:.2f}, '
+                                     f'max|kf-in|={self.last_pen_down_range_kf_lag_m*100:.1f}cm')
+
+    def ingest_rts(self, stats: dict) -> None:
+        self.last_rts = dict(stats)
+
+    def _window_reject_rate(self) -> float:
+        acc = float(np.sum(self.uwb_accept_counts))
+        rej = float(np.sum(self.uwb_reject_counts))
+        return rej / max(1.0, acc + rej)
+
+    def warnings(self) -> list[str]:
+        diag = engine.diagnostics
+        w = []
+        bias = diag.get('bias')
+        vel = diag.get('velocity')
+        speed = float(np.linalg.norm(vel)) if vel is not None else 0.0
+        pos = _last_tip_pos if _last_tip_pos is not None else _last_pos
+        heading_locked = bool(diag.get('heading_locked'))
+        outage = int(diag.get('consec_outage', 0))
+        rej_rate = self._window_reject_rate()
+        q_mean = float(np.mean(self.quality)) if self.quality else 1.0
+        drop_recent = int(np.sum(self.dropout_counts)) if self.dropout_counts else 0
+
+        if not heading_locked and diag.get('imu_steps', 0) > 100:
+            w.append('Heading still unlocked after >100 IMU predicts.')
+        if outage >= engine.ekf.MAX_CONSEC_OUTAGE:
+            w.append(f'UWB outage={outage}: EKF is mostly propagating on IMU.')
+        if rej_rate > 0.60 and len(self.uwb_reject_counts) > 20:
+            w.append(f'High UWB gate rejection window ({rej_rate*100:.0f}%).')
+        if q_mean < 0.35 and len(self.quality) > 20:
+            w.append(f'Low mean anchor quality ({q_mean:.2f}): likely NLOS / multipath.')
+        if drop_recent > 0:
+            w.append(f'Recent missing/invalid UWB anchor samples: {drop_recent}.')
+        if bias is not None and np.max(np.abs(bias)) > 0.095:
+            w.append('Accel bias is near clamp (±0.10 m/s²).')
+        if speed > 0.95 * engine.ekf.MAX_WRITING_SPEED:
+            w.append('Velocity is near hard cap: inspect dt / IMU spikes / UWB pull.')
+        if pos is not None:
+            x_max = float(np.max(engine.anchors[:, 0]))
+            y_max = float(np.max(engine.anchors[:, 1]))
+            if pos[0] < -0.10 or pos[0] > x_max + 0.10 or pos[1] < -0.10 or pos[1] > y_max + 0.10:
+                w.append('Displayed tip is outside board margin.')
+        if self.last_rts and self.last_rts.get('max_delta_m', 0.0) > self.RTS_SUSPECT_DELTA_M:
+            w.append(f'RTS SUSPECT: moved last stroke by {self.last_rts["max_delta_m"]*100:.1f} cm max.')
+        if self.last_pen_down_range_kf_lag_m > 0.04:
+            w.append(f'Range-KF lag suspect: max |kf-in| during pen-down was {self.last_pen_down_range_kf_lag_m*100:.1f} cm.')
+        self.last_warnings = w[:7]
+        return self.last_warnings
+
+    def text(self) -> str:
+        diag = engine.diagnostics
+        bias = diag.get('bias')
+        vel = diag.get('velocity')
+        speed = float(np.linalg.norm(vel)) if vel is not None else 0.0
+        bstr = f'{bias[0]:+.3f},{bias[1]:+.3f}' if bias is not None else '--'
+        acc_win = float(np.mean(self.uwb_accept_counts)) if self.uwb_accept_counts else 0.0
+        rej_win = float(np.mean(self.uwb_reject_counts)) if self.uwb_reject_counts else 0.0
+        q_mean = float(np.mean(self.quality)) if self.quality else 1.0
+        tip_tag_delta = None
+        if _last_tip_pos is not None and _last_tag_pos is not None:
+            tip_tag_delta = _last_tip_pos - _last_tag_pos
+
+        lines = [
+            'POLYCAST DEBUG ASSISTANT',
+            'FILTER SUMMARY',
+            f'mode={self.last_mode}  contact={int(self.last_contact)}  heading={"LOCKED" if diag.get("heading_locked") else "UNLOCKED"}',
+            f'tip=({_last_tip_pos[0]:+.3f},{_last_tip_pos[1]:+.3f}) m' if _last_tip_pos is not None else 'tip=--',
+            f'tag=({_last_tag_pos[0]:+.3f},{_last_tag_pos[1]:+.3f}) m' if _last_tag_pos is not None else 'tag=--',
+            (f'tip-tag Δ=({tip_tag_delta[0]:+.3f},{tip_tag_delta[1]:+.3f}) |Δ|={np.linalg.norm(tip_tag_delta):.3f} m'
+             if tip_tag_delta is not None else 'tip-tag Δ=--'),
+            f'speed={speed:.2f} m/s  bias={bstr}',
+            f'uwb acc/rej(win)={acc_win:.1f}/{rej_win:.1f}  outage={diag.get("consec_outage", 0)}  q_mean={q_mean:.2f}',
+        ]
+        if self.last_rts:
+            label = 'RTS SUSPECT' if self.last_rts.get('max_delta_m', 0.0) > self.RTS_SUSPECT_DELTA_M else 'RTS'
+            lines.append(f'{label}: meanΔ={self.last_rts.get("mean_delta_m", 0)*100:.1f}cm maxΔ={self.last_rts.get("max_delta_m", 0)*100:.1f}cm')
+        lines.append('')
+        lines.append('CURRENT UWB ANCHORS')
+        lines.append('A STAT q     in   use    kf    pr      ν     NISg')
+        lines.extend(self.current_anchor_rows or ['-- no current UWB update yet --'])
+        lines.append('')
+        lines.append('LAST PEN-DOWN UWB ANCHORS')
+        lines.append(self.pen_down_summary)
+        lines.append('A STAT q     in   use    kf    pr      ν     NISg')
+        lines.extend(self.pen_down_anchor_rows or ['-- waiting for pen-down UWB --'])
+        lines.append('')
+        warns = self.warnings()
+        if warns:
+            lines.append('WARNINGS / HINTS')
+            lines.extend([f'• {x}' for x in warns])
+        else:
+            lines.append('WARNINGS / HINTS: none')
+        lines.append('')
+        lines.append('Legend: in=offset/gated input, use=range used by EKF, kf=range-KF diagnostic, pr=predicted, ν=use-pr, NISg=gate score.')
+        return '\n'.join(lines)
+
+
+debugger = DebugAssistant()
 
 
 def _trim(lst, maxlen):
@@ -185,32 +449,62 @@ _HISTORY_KEEP     = 30_000
 
 
 def _snap_stroke_to_rts() -> None:
-    """At lift edge: replace the most-recent stroke's draw_x/draw_y with
-    the RTS-smoothed XY from the EKF history slice that covers it."""
-    global _stroke_history_start, _stroke_draw_start
-    if _stroke_history_start is None or _stroke_draw_start is None:
+    """At lift edge: compute RTS for the just-completed stroke and append it
+    to a separate overlay trace. The causal EKF trace is intentionally left
+    unchanged so smoothed vs. unsmoothed output can be compared."""
+    global _stroke_history_start, _stroke_draw_start, _last_rts_stats
+    if _stroke_history_start is None:
         return
     history = engine.ekf._history
     if not (0 <= _stroke_history_start < len(history)):
         _stroke_history_start = None
         _stroke_draw_start    = None
         return
-    slice_ = history[_stroke_history_start:]
-    if len(slice_) >= 2:
-        smoothed = note_smooth.smooth_stroke(slice_)
-        sub      = smoothed[::TRAIL_SUBSAMPLE]
-        n_replace = len(draw_x) - _stroke_draw_start
-        n_use     = min(len(sub), n_replace)
-        for i in range(n_use):
-            draw_x[_stroke_draw_start + i] = float(sub[i, 0])
-            draw_y[_stroke_draw_start + i] = float(sub[i, 1])
+
+    hist_slice = history[_stroke_history_start:]
+    if len(hist_slice) >= 2:
+        smoothed_tag = note_smooth.smooth_stroke(hist_slice)
+        axes = np.array([_safe_axis_for_history(i)
+                         for i in range(_stroke_history_start,
+                                        _stroke_history_start + len(smoothed_tag))])
+        smoothed_tip = _tag_xy_to_tip_xy(smoothed_tag, axes)
+        sub = smoothed_tip[::TRAIL_SUBSAMPLE]
+
+        # Compare RTS to the causal EKF samples from the same stroke.
+        if _stroke_draw_start is not None and _stroke_draw_start < len(draw_x):
+            causal = np.column_stack([
+                np.asarray(draw_x[_stroke_draw_start:], dtype=float),
+                np.asarray(draw_y[_stroke_draw_start:], dtype=float),
+            ])
+            causal = causal[np.all(np.isfinite(causal), axis=1)]
+            n = min(len(causal), len(sub))
+            if n > 0:
+                delta = np.linalg.norm(causal[:n] - sub[:n], axis=1)
+                _last_rts_stats = {
+                    'n': int(n),
+                    'mean_delta_m': float(np.mean(delta)),
+                    'max_delta_m': float(np.max(delta)),
+                }
+                debugger.ingest_rts(_last_rts_stats)
+
+        for x, y in sub:
+            rts_x.append(float(x))
+            rts_y.append(float(y))
+        rts_x.append(float('nan'))
+        rts_y.append(float('nan'))
+
+        if parser.mode != 'csv':
+            _trim(rts_x, MAX_TRAIL)
+            _trim(rts_y, MAX_TRAIL)
+
     _stroke_history_start = None
     _stroke_draw_start    = None
-    # Trim history if it has grown past the soft cap (live mode only —
-    # CSV mode runs its own end-of-replay RTS overlay and needs the full
-    # history; we still trim, but only past _HISTORY_KEEP).
+
+    # Trim history and aligned axis cache together in long live sessions.
     if len(history) > _HISTORY_SOFT_CAP:
-        del history[:len(history) - _HISTORY_KEEP]
+        n_drop = len(history) - _HISTORY_KEEP
+        del history[:n_drop]
+        del _axis_by_history_idx[:min(n_drop, len(_axis_by_history_idx))]
 
 
 def _run_rts_smoother():
@@ -223,6 +517,11 @@ def _run_rts_smoother():
     separate green line — same algorithm Layer 10 uses, just overlaid on
     the live axes.
     """
+    # In the debug visualizer, completed strokes are already overlaid at each
+    # FSR fall edge. Avoid duplicating them at EOF; this function is only a
+    # fallback for older CSVs or cases where no live fall edge was observed.
+    if rts_x:
+        return
     if not engine.ekf.record_history or len(engine.ekf._history) < 10:
         print("[RTS] Not enough history to smooth.")
         return
@@ -241,26 +540,23 @@ def _run_rts_smoother():
     print(f"[RTS] Per-stroke smoother on {len(strokes_hist)} strokes "
           f"({sum(len(s) for s in strokes_hist)} writing samples).")
 
-    ax = line_draw.axes
-    first = True
     for s in strokes_hist:
         if len(s) < 2:
             continue
-        xy = note_smooth.smooth_stroke(s)
-        ax.plot(xy[:, 0], xy[:, 1], '-', color='limegreen', lw=1.5,
-                alpha=0.85,
-                label='RTS smoothed (per-stroke)' if first else None,
-                zorder=5)
-        first = False
-    ax.legend(loc='upper right', fontsize=9)
-    ax.figure.canvas.draw_idle()
+        xy_tag = note_smooth.smooth_stroke(s)
+        xy_tip = xy_tag  # End-of-CSV fallback: exact per-sample axes may already be live-overlaid.
+        for x, y in xy_tip[::TRAIL_SUBSAMPLE]:
+            rts_x.append(float(x)); rts_y.append(float(y))
+        rts_x.append(float('nan')); rts_y.append(float('nan'))
+    line_rts.set_data(rts_x, rts_y)
+    line_draw.axes.figure.canvas.draw_idle()
     print(f"[RTS] Per-stroke trajectories overlaid.")
 
 
 # -- Animation callback -----------------------------------------------------
 def update(frame):
     global _last_diag_time, _prev_writing, _eof_handled
-    global _imu_subsample, _last_pos, _last_vel
+    global _imu_subsample, _last_pos, _last_tip_pos, _last_tag_pos, _last_vel
     global _stroke_history_start, _stroke_draw_start
 
     # Drain available packets
@@ -309,18 +605,25 @@ def update(frame):
                 continue
 
             # Pen-tip position (Item A): subtract the tip-to-tag offset
-            # projected onto the whiteboard plane.  Falls back to the tag
+            # projected onto the whiteboard plane. Falls back to the tag
             # position before heading lock.
             tip = engine.tip_position
-            draw_pt = pos
+            draw_pt = tip if tip is not None else pos
 
-            _last_pos = draw_pt
+            _last_tag_pos = np.asarray(pos, dtype=float).copy()
+            _last_tip_pos = np.asarray(draw_pt, dtype=float).copy()
+            _last_pos = _last_tip_pos
             _last_vel = vel
+            debugger.ingest_imu(is_writing)
 
             # Per-IMU-step streams for the per-stroke RTS overlay (edit 1).
-            if engine.ekf.initialized:
+            if engine.ekf.initialized and len(engine.ekf._history) > 0:
+                hist_idx = len(engine.ekf._history) - 1
                 _is_writing_stream.append(bool(is_writing))
-                _history_idx_stream.append(len(engine.ekf._history) - 1)
+                _history_idx_stream.append(hist_idx)
+                while len(_axis_by_history_idx) <= hist_idx:
+                    _axis_by_history_idx.append(engine.marker_axis_wb.copy())
+                _axis_by_history_idx[hist_idx] = engine.marker_axis_wb.copy()
 
             # Trail management (subsampled)
             _imu_subsample += 1
@@ -337,24 +640,30 @@ def update(frame):
                     _stroke_draw_start    = len(draw_x)
 
                 if is_writing:
-                    smoother.push(draw_pt[0], draw_pt[1])
-                    sx, sy = smoother.get()
+                    if USE_ONLINE_TRAIL_SMOOTHER:
+                        smoother.push(draw_pt[0], draw_pt[1])
+                        sx, sy = smoother.get()
+                    else:
+                        sx, sy = float(draw_pt[0]), float(draw_pt[1])
                     draw_x.append(sx)
                     draw_y.append(sy)
-                    # Edit 3: in CSV-playback mode keep every stroke visible.
+                    tag_draw_x.append(float(pos[0]))
+                    tag_draw_y.append(float(pos[1]))
+                    # In CSV-playback mode keep every stroke visible.
                     # Live mode still trims to bound memory.
                     if parser.mode != 'csv':
                         _trim(draw_x, MAX_TRAIL)
                         _trim(draw_y, MAX_TRAIL)
+                        _trim(tag_draw_x, MAX_TRAIL)
+                        _trim(tag_draw_y, MAX_TRAIL)
                 else:
                     # NaN break on pen lift transition
                     if falling:
-                        # Snap-to-RTS BEFORE inserting the NaN separator,
-                        # so the just-completed stroke's points get rewritten
-                        # in place with the offline-smoothed XY.
                         _snap_stroke_to_rts()
                         draw_x.append(float('nan'))
                         draw_y.append(float('nan'))
+                        tag_draw_x.append(float('nan'))
+                        tag_draw_y.append(float('nan'))
                         smoother.reset()
                     lift_x.append(draw_pt[0])
                     lift_y.append(draw_pt[1])
@@ -369,13 +678,23 @@ def update(frame):
             # filtered = viz-only (median + EMA). ekf_dists = offset+gate only.
             filtered, weights, ekf_dists = uwb_cleaner.process(*raw)
 
+            pre_pos = engine.ekf.position if engine.ekf.initialized else None
+            pre_P = engine.ekf._P.copy() if engine.ekf.initialized and engine.ekf._P is not None else None
+            pre_tag_z = engine.tag_z_wb if engine.ekf.initialized else None
+            was_pen_down = bool(engine.is_writing)
+
             pos, vel, accepted, rejected = engine.process_uwb(
                 ekf_dists, weights, ts=pkt.get('ts'))
+            debugger.ingest_uwb(raw, ekf_dists, weights, accepted, rejected,
+                                pre_pos=pre_pos, pre_P=pre_P,
+                                pre_tag_z=pre_tag_z, is_pen_down=was_pen_down)
 
             if pos is not None:
                 # Tip-aware drawing point (Item A) — see IMU branch above.
                 tip = engine.tip_position
-                _last_pos = tip if tip is not None else pos
+                _last_tag_pos = np.asarray(pos, dtype=float).copy()
+                _last_tip_pos = np.asarray(tip if tip is not None else pos, dtype=float).copy()
+                _last_pos = _last_tip_pos
                 _last_vel = vel
 
                 # Feed back predictions for NLOS tracking using the tilt-
@@ -393,21 +712,28 @@ def update(frame):
     # -- Plot update --------------------------------------------------------
     if _last_pos is not None:
         line_draw.set_data(draw_x, draw_y)
+        line_tag.set_data(tag_draw_x, tag_draw_y)
+        line_rts.set_data(rts_x, rts_y)
         scat_lift.set_data(lift_x, lift_y)
         scat_rej.set_data(rej_x, rej_y)
-        dot_cur.set_data([_last_pos[0]], [_last_pos[1]])
+        if _last_tip_pos is not None:
+            dot_tip.set_data([_last_tip_pos[0]], [_last_tip_pos[1]])
+        if _last_tag_pos is not None:
+            dot_tag.set_data([_last_tag_pos[0]], [_last_tag_pos[1]])
+        if DEBUG_ASSISTANT:
+            debug_text.set_text(debugger.text())
 
         # Velocity arrow
-        if _show_vel and _last_vel is not None:
+        if _show_vel and _last_vel is not None and _last_tip_pos is not None:
             spd = float(np.linalg.norm(_last_vel))
             if spd > 0.01:
-                vel_arrow.set_offsets([[_last_pos[0], _last_pos[1]]])
+                vel_arrow.set_offsets([[_last_tip_pos[0], _last_tip_pos[1]]])
                 vel_arrow.set_UVC(
                     [_last_vel[0] * VEL_SCALE],
                     [_last_vel[1] * VEL_SCALE],
                 )
             else:
-                vel_arrow.set_offsets([[_last_pos[0], _last_pos[1]]])
+                vel_arrow.set_offsets([[_last_tip_pos[0], _last_tip_pos[1]]])
                 vel_arrow.set_UVC([0], [0])
 
     # -- Console diagnostics -----------------------------------------------
@@ -433,12 +759,21 @@ def update(frame):
 
 # -- Keyboard handler -------------------------------------------------------
 def on_key(event):
-    global _show_vel, _prev_writing
+    global _show_vel, _prev_writing, DEBUG_ASSISTANT
     if event.key == 'v':
         _show_vel = not _show_vel
         print(f"[UI] Velocity arrow: {'ON' if _show_vel else 'OFF'}")
+    elif event.key == 'd':
+        DEBUG_ASSISTANT = not DEBUG_ASSISTANT
+        try:
+            debug_text.set_visible(DEBUG_ASSISTANT)
+        except NameError:
+            pass
+        print(f"[UI] Debug assistant: {'ON' if DEBUG_ASSISTANT else 'OFF'}")
     elif event.key == 'c':
         draw_x.clear(); draw_y.clear()
+        tag_draw_x.clear(); tag_draw_y.clear()
+        rts_x.clear();  rts_y.clear()
         lift_x.clear(); lift_y.clear()
         rej_x.clear();  rej_y.clear()
         smoother.reset()
@@ -448,6 +783,8 @@ def on_key(event):
         engine.ekf._x = None   # force re-initialisation
         engine._cold_buf.clear()
         engine.imu_integrator.reset_heading()
+        engine.ekf._history.clear()
+        _axis_by_history_idx.clear()
         print("[UI] EKF reset — will re-initialise from next IRLS fix.")
     elif event.key in ('q', 'escape'):
         plt.close('all')
@@ -464,7 +801,7 @@ def _parse_cli():
 
 
 def main():
-    global artists, line_draw, scat_lift, scat_rej, dot_cur, vel_arrow
+    global artists, line_draw, line_tag, line_rts, scat_lift, scat_rej, dot_tip, dot_tag, vel_arrow, debug_text
 
     args = _parse_cli()
     if args.calibrate:
@@ -474,7 +811,7 @@ def main():
     if not parser.connect():
         sys.exit(1)
 
-    fig, ax = plt.subplots(figsize=(9, 9))
+    fig, ax = plt.subplots(figsize=(11, 9))
     fig.canvas.manager.set_window_title('PolyCast — EKF Live Position (Async)')
     fig.canvas.mpl_connect('key_press_event', on_key)
 
@@ -487,16 +824,21 @@ def main():
 
     # Artists
     line_draw, = ax.plot([], [], '-', color='royalblue', lw=2.0,
-                         label='Pen tip (writing)', zorder=4)
+                         label='Pen tip XY (causal fused)', zorder=5)
+    line_tag,  = ax.plot([], [], '--', color='purple', lw=1.5, alpha=0.82,
+                         label='UWB tag XY', zorder=4)
+    line_rts,  = ax.plot([], [], '-', color='limegreen', lw=2.0, alpha=0.90,
+                         label='RTS smoothed pen tip (experimental)', zorder=6)
     scat_lift, = ax.plot([], [], '.', color='#888888', ms=4, alpha=0.5,
-                         label='Lifted (tracked, not drawn)', zorder=3)
+                         label='Lifted tip (tracked, not drawn)', zorder=3)
     scat_rej,  = ax.plot([], [], 'x', color='orange', ms=8,
                          markeredgewidth=1.8, alpha=0.7,
                          label='Anchor gate reject', zorder=4)
-    dot_cur,   = ax.plot([], [], 'o', color='royalblue', ms=12, zorder=6)
+    dot_tip,   = ax.plot([], [], 'o', color='royalblue', ms=10, zorder=7)
+    dot_tag,   = ax.plot([], [], 's', color='purple', ms=7, alpha=0.9, zorder=7)
     vel_arrow  = ax.quiver([], [], [], [], color='cyan', scale=1,
                            scale_units='xy', angles='xy',
-                           width=0.003, zorder=7)
+                           width=0.003, zorder=8)
 
     ax.set_xlim(-0.3, 1.55)
     ax.set_ylim(-0.3, 1.55)
@@ -509,10 +851,16 @@ def main():
 
     # Info text (bottom)
     ax.text(0.01, 0.01,
-            'V = velocity arrow   C = clear trail   R = reset EKF',
+            'Blue = pen tip XY   Purple = tag XY   Green = RTS experimental   V = velocity   C = clear   R = reset   D = debug',
             transform=ax.transAxes, fontsize=8, color='gray', va='bottom')
 
-    artists = (line_draw, scat_lift, scat_rej, dot_cur)
+    debug_text = ax.text(1.02, 0.98, 'DEBUG ASSISTANT\nwaiting for data...',
+                         transform=ax.transAxes, fontsize=7.6, color='black', va='top', ha='left',
+                         family='monospace', clip_on=False,
+                         bbox=dict(facecolor='white', alpha=0.88, edgecolor='gray', boxstyle='round,pad=0.4'))
+    debug_text.set_visible(DEBUG_ASSISTANT)
+
+    artists = (line_draw, line_tag, line_rts, scat_lift, scat_rej, dot_tip, dot_tag, debug_text)
 
     ani = FuncAnimation(fig, update, interval=20, blit=False,
                         cache_frame_data=False)

@@ -38,7 +38,7 @@ from config import (ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M,
                     ENABLE_ITEM_C_FEEDBACK, IMU_HZ,
                     ALPHA_R_HOVER, R_TOUCHDOWN_SCALE, GATE_CHI2_TOUCHDOWN,
                     NU_CLIP_M, LAMBDA_R_ADAPT,
-                    calibration_get)
+                    RATE_PROFILE, calibration_get)
 from pen_mode import PenMode
 from imu_integrator import IMUIntegrator, quat_to_rotmat
 from force_detector import ForceContactDetector
@@ -48,6 +48,23 @@ from range_kf       import PerAnchorRangeKFBank
 # Neutral-pose marker axis in whiteboard frame: board normal (wb-Z = +1).
 # Used as a fallback when no quaternion-derived axis is supplied.
 _NEUTRAL_MARKER_AXIS_WB = np.array([0.0, 0.0, 1.0])
+
+# IMU timestamp guard:
+# Use the measured p99 interval from rate_profile.json instead of the old
+# hard-coded 10 ms clamp. Live logs showed normal 11–12 ms gaps being
+# treated as anomalies; that under-integrates time and makes the EKF/RTS
+# timeline inconsistent. Clamp only real spikes.
+_IMU_DT_P99_S = float(RATE_PROFILE.get('imu_dt_p99_s', 0.0125))
+_MAX_IMU_DT_S = max(0.020, 1.5 * _IMU_DT_P99_S)
+_IMU_DT_WARN_EVERY = 25
+
+
+# Range-KF bypass experiment:
+# False = feed the EKF with the freshest offset/gated UWB ranges.
+# True  = feed the EKF with the per-anchor range-KF output.
+# Keep False while diagnosing handwriting lag/distortion; the range-KF is
+# still computed and shown in the debug panel as a diagnostic trace.
+USE_RANGE_KF_FOR_EKF = False
 
 
 # -------------------------------------------------------------------------
@@ -224,6 +241,7 @@ class TightlyCoupledEKF:
         # Latest (raw, filtered) ranges for verification logging.
         self._last_raw_ranges      = np.full(len(self.anchors), np.nan)
         self._last_filtered_ranges = np.full(len(self.anchors), np.nan)
+        self._last_ekf_ranges_used = np.full(len(self.anchors), np.nan)
 
         # Fix B: raw-accel ring buffer for variance-based ZUPT.  Stores
         # whiteboard-frame acceleration *before* bias subtraction so a
@@ -517,9 +535,14 @@ class TightlyCoupledEKF:
 
         raw_arr = np.asarray(raw_dists, dtype=float)
         filtered_ranges = self._range_bank.step_all(dt, raw_arr)
+        # Use either the range-KF output or the freshest offset/gated range for
+        # the actual EKF innovation. Default is raw_arr to avoid range-KF lag
+        # on fast handwritten strokes. Both are cached for the debug panel.
+        ekf_ranges = filtered_ranges if USE_RANGE_KF_FOR_EKF else raw_arr
         # Cache for verification / logging consumers.
         self._last_raw_ranges      = raw_arr.copy()
         self._last_filtered_ranges = filtered_ranges.copy()
+        self._last_ekf_ranges_used = np.asarray(ekf_ranges, dtype=float).copy()
 
         accepted, rejected = [], []
         px, py = self._x[0], self._x[1]
@@ -541,13 +564,13 @@ class TightlyCoupledEKF:
                 rejected.append(i)
                 continue
 
-            # Use the Item-B-filtered range for the EKF measurement.  Raw
-            # is preserved in self._last_raw_ranges for verification logs.
-            d_raw = float(filtered_ranges[i])
+            # Use the configured EKF measurement range. By default this is
+            # the offset/gated raw range, not the per-anchor range-KF output,
+            # because the KF can lag handwriting strokes. The range-KF value
+            # remains available for diagnostics.
+            d_raw = float(ekf_ranges[i])
             qw    = float(quality_weights[i])
 
-            # filtered_ranges[i] is also NaN if the per-anchor KF skipped
-            # update this cycle — same hard skip applies.
             if not np.isfinite(d_raw) or d_raw < 0.05:
                 self._dropout_count[i] += 1
                 continue
@@ -960,12 +983,21 @@ class AsyncEKFFusionEngine:
                 # update last ts to the new value so future samples use it as base
                 self._last_imu_ts = ts
             else:
-                # Convert microseconds to seconds
+                # Convert microseconds to seconds.
                 dt = dt_us / 1_000_000.0
-                # Clamp abnormally large dt to 10 ms (twice nominal period)
-                if dt > 0.010:
-                    print(f"[EKF] Warning: IMU dt {dt:.3f}s too large; clamping to 0.010s")
-                    dt = 0.010
+
+                # Clamp only real sender-clock / serial-buffering spikes.
+                # The previous 10 ms hard clamp was too strict for the measured
+                # stream: normal 11–12 ms intervals were constantly clipped,
+                # which under-integrated prediction time and polluted RTS
+                # history. The cap now follows RATE_PROFILE['imu_dt_p99_s'].
+                if dt > _MAX_IMU_DT_S:
+                    self._imu_dt_spike_count = getattr(self, '_imu_dt_spike_count', 0) + 1
+                    if self._imu_dt_spike_count % _IMU_DT_WARN_EVERY == 1:
+                        print(f"[EKF] Warning: IMU dt {dt:.3f}s spike; "
+                              f"clamping to {_MAX_IMU_DT_S:.3f}s "
+                              f"(p99={_IMU_DT_P99_S:.3f}s)")
+                    dt = _MAX_IMU_DT_S
         # Always record the timestamp for next iteration if available
         if ts is not None:
             self._last_imu_ts = ts
@@ -1276,8 +1308,13 @@ class AsyncEKFFusionEngine:
 
     @property
     def last_filtered_ranges(self) -> np.ndarray:
-        """Latest Item-B-filtered UWB ranges actually used in the EKF."""
+        """Latest Item-B per-anchor range-KF outputs (diagnostic)."""
         return self._ekf._last_filtered_ranges.copy()
+
+    @property
+    def last_ekf_ranges_used(self) -> np.ndarray:
+        """Latest range vector actually used by the EKF update."""
+        return self._ekf._last_ekf_ranges_used.copy()
 
     @property
     def diagnostics(self) -> dict:

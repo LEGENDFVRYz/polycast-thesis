@@ -17,7 +17,7 @@ SERIAL_PORT = 'COM5'
 BAUD_RATE   = 921600
 
 # -- Physical geometry ------------------------------------------------------
-MARKER_LENGTH = 0.21   # m -- tip to UWB tag antenna
+MARKER_LENGTH = 0.215   # m -- tip to UWB tag antenna
 
 # Along the marker long axis from the pen tip (s=0) toward the rear:
 #   s = 0                        -> pen tip (tactile button)
@@ -30,24 +30,24 @@ MARKER_LENGTH = 0.21   # m -- tip to UWB tag antenna
 # Body frame convention (see imu_integrator.py docstring):
 #   body X -> Z_wb (board normal). Marker axis in body frame = (1, 0, 0).
 #   So e_w = R(q)[:, 0] (first column of the body->world rotation matrix).
-IMU_S_FROM_TIP_M     = 0.13             # m -- IMU distance from tip
-IMU_OFFSET_FROM_TAG_M = 0.08            # m -- tag to IMU along the marker axis
+IMU_S_FROM_TIP_M     = 0.125           # m -- IMU distance from tip
+IMU_OFFSET_FROM_TAG_M = 0.09           # m -- tag to IMU along the marker axis
 TIP_OFFSET_FROM_TAG_M = MARKER_LENGTH   # m -- tag to tip along the marker axis
 
 # Anchor antenna positions (metres), measured antenna-to-antenna from A0.
 # Z = mount height above whiteboard surface.
 ANCHORS = np.array([
-    [0.00, 0.00, 0.05],   # A0 -- bottom-left (origin)
-    [1.25, 0.00, 0.05],   # A1 -- bottom-right
-    [1.25, 1.24, 0.05],   # A2 -- top-right
-    [0.00, 1.24, 0.05],   # A3 -- top-left
+    [0.00, 0.00, 0.01],   # A0 -- bottom-left (origin)
+    [1.25, 0.00, 0.01],   # A1 -- bottom-right
+    [1.25, 1.20, 0.01],   # A2 -- top-right
+    [0.00, 1.20, 0.01],   # A3 -- top-left
 ], dtype=float)
 
 # -- UWB calibration offsets (from calibrate.py) ----------------------------
 # Per-anchor distance correction applied to raw UWB measurements.
 # Re-run calibrate.py and paste the new tuple here after each recalibration.
-# UWB_OFFSETS = (-0.1326, -0.0332, -0.1785, -0.1318)
-UWB_OFFSETS = (-0.1538, -0.0134, -0.1833, -0.0960)
+# UWB_OFFSETS = (-0.1024, -0.0080, -0.1415, -0.0756)
+UWB_OFFSETS = (-0.1585, -0.0339, -0.1984, -0.1201)
 
 # -- EKF feature flags ------------------------------------------------------
 # Item C (Zou 2023, §3.3): feed the EKF posterior range back into each

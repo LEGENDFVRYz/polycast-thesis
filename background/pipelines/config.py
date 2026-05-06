@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM20"
+    port: str = "COM3"
     baud: int = 921600
 
 
@@ -38,8 +38,8 @@ class IMUConfig:
     # ZUPT / stillness detector.
     # These values are intentionally permissive enough to catch real pauses,
     # but not so permissive that small handwriting corners get velocity-killed.
-    zupt_acc_threshold: float = 0.25
-    zupt_jerk_threshold: float = 140.0
+    zupt_acc_threshold: float = 0.40
+    zupt_jerk_threshold: float = 200.0
     zupt_min_duration_s: float = 0.06
     zupt_omega_threshold: float = 0.25
 
@@ -84,8 +84,8 @@ class IMUConfig:
     # omega and body acceleration, then take the derivative.  The alpha values
     # below use new-sample weight: 0.20 means current = 20%, previous = 80%.
     pre_derivative_lpf_enabled: bool = True
-    gyro_lpf_alpha: float = 0.20
-    acc_lpf_alpha: float = 0.20
+    gyro_lpf_alpha: float = 0.25
+    acc_lpf_alpha: float = 0.25
 
     # Dynamic deadbanding / noise floor for stationary marker behaviour.
     # When the smoothed angular velocity is below this floor, snap it to zero
@@ -124,9 +124,11 @@ class ContactConfig:
 @dataclass(frozen=True)
 class UWBConfig:
     # Per-anchor range calibration offsets.
-    # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)         # -- old validation
-    range_offsets_m: tuple = (-0.1366, -0.0127, -0.1983, -0.1191)
-    # range_offsets_m: tuple = (-0.1366, -0.0627, -0.2483, -0.1691)
+    # Computed from board center (0.625, 0.600) with correct 1.25x1.20m board, 15cm depth.
+    # Expected center-to-corner distance = 0.8793m.
+    # Old offsets (3.5cm depth, 1.24m height): (-0.1366, -0.0127, -0.1983, -0.1191)
+    range_offsets_m: tuple = (-0.1714, -0.0231, -0.1342, -0.1819)
+
 
     # Nominal UWB rate.
     rate_hz: float = 50.0
@@ -145,11 +147,11 @@ class UWBConfig:
 
     # Median window for per-anchor range filtering.
     # At 100 Hz, 20 samples = ~200 ms temporal coverage (same as 10 @ 50 Hz).
-    median_window: int = 20
+    median_window: int = 5
 
     # Position-level speed outlier gate.
     outlier_speed_limit_ms: float = 2.0
-    drop_speed_outliers: bool = True
+    drop_speed_outliers: bool = False
 
     num_anchors: int = 4
 
@@ -157,14 +159,15 @@ class UWBConfig:
     pos_ema_alpha: float = 0.75
 
     # Hard trilateration RMS rejection threshold.
-    # 0.14 adds a 20 mm buffer for inter-anchor timing skew at 100 Hz.
-    trilat_max_residual: float = 0.14
+    # Tightened from 0.14 — better GDOP at 15cm depth means clean solves
+    # have lower residual. Rejects more NLOS/multipath solutions.
+    trilat_max_residual: float = 0.09
 
     # Alpha-Beta position smoother.
-    # Higher alpha follows UWB faster; beta estimates UWB velocity.
-    # For handwriting, avoid too much beta because it can create UWB tail drift.
-    pos_alpha: float = 0.55
-    pos_beta: float = 0.035
+    # Raised alpha — better geometry means UWB positions are more trustworthy.
+    # Lower beta — less velocity prediction needed with tighter geometry.
+    pos_alpha: float = 0.65
+    pos_beta: float = 0.025
 
     # If UWB pauses too long, reset solver initial guess.
     stale_guess_timeout_us: int = 1_000_000
@@ -172,12 +175,49 @@ class UWBConfig:
     # Time-aware EMA smoothing constant for ranges.
     # At 100 Hz: tau=0.15 → alpha≈0.064, matched to the 20-sample median window.
     # (Was 0.25 @ 50 Hz → alpha≈0.077; reducing tau compensates for doubled call rate.)
-    range_tau_s: float = 0.15
+    range_tau_s: float = 0.04
 
     # Weighted least squares weighting.
     # Higher power trusts nearer anchors more.
     wls_power: float = 2.0
     wls_epsilon: float = 0.01
+
+    # Per-anchor 1D Kalman filter.
+    # At 15cm depth, ranges are slightly longer and multipath geometry changes.
+    # sigma_r tightened slightly — better angles reduce per-anchor noise floor.
+    # sigma_q unchanged — pen acceleration physics don't change with depth.
+    kalman_sigma_q:          float = 15.0
+    kalman_max_speed_ms:     float = 2.0
+    kalman_sigma_r_per_anchor: tuple = (0.035, 0.025, 0.022, 0.055)
+    # A3 has 52mm raw std — much noisier than others, higher sigma_r makes
+    # the Kalman more skeptical of A3 and rely more on velocity prediction.
+
+    # Cross-anchor simultaneous dropout detector.
+    # If >= dropout_min_anchors anchors report <= dropout_zero_thresh in the same
+    # packet, treat all of them as invalid and hold their last good values.
+    dropout_zero_thresh:   float = 0.05   # metres — below this is considered a zero/dropout
+    dropout_min_anchors:   int   = 2      # how many must drop at once to trigger hold
+
+
+# ------------------------------------------------------------------------
+# RANGE DENOISER (per-anchor CNN)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class RangeDenoiserConfig:
+    enabled:     bool  = False
+    window_size: int   = 40      # samples (~400 ms at 100 Hz)
+    assets_dir:  str   = "background/pipelines/preprocess/uwb/range_denoiser/assets"
+
+    # Training
+    # All anchors use the same 3Hz cutoff — this is below all multipath frequencies
+    # and preserves the real pen motion envelope cleanly.
+    butterworth_cutoff_hz_per_anchor: tuple = (3.0, 3.0, 3.0, 3.0)
+    butterworth_order:     int   = 4
+    dropout:               float = 0.35
+    val_frac:              float = 0.20
+    epochs:                int   = 80
+    batch_size:            int   = 256
+    lr:                    float = 5e-4
 
 
 # ------------------------------------------------------------------------
@@ -186,19 +226,19 @@ class UWBConfig:
 @dataclass(frozen=True)
 class AnchorConfig:
     board_size_x: float = 1.25
-    board_size_y: float = 1.24
+    board_size_y: float = 1.20   # corrected from 1.24
 
-    # Anchors are mounted at board corners with slight depth offset.
-    a0: tuple[float, float, float] = (0.00, 0.00, 0.07)
-    a1: tuple[float, float, float] = (1.25, 0.00, 0.07)
-    a2: tuple[float, float, float] = (1.25, 1.24, 0.07)
-    a3: tuple[float, float, float] = (0.00, 1.24, 0.07)
+    # Anchors at board corners, protruding 0.15m forward from board surface.
+    a0: tuple[float, float, float] = (0.00, 0.00, 0.15)
+    a1: tuple[float, float, float] = (1.25, 0.00, 0.15)
+    a2: tuple[float, float, float] = (1.25, 1.20, 0.15)
+    a3: tuple[float, float, float] = (0.00, 1.20, 0.15)
 
     positions: tuple[tuple[float, float, float], ...] = (
-        (0.00, 0.00, 0.07),
-        (1.25, 0.00, 0.07),
-        (1.25, 1.24, 0.07),
-        (0.00, 1.24, 0.07),
+        (0.00, 0.00, 0.15),
+        (1.25, 0.00, 0.15),
+        (1.25, 1.20, 0.15),
+        (0.00, 1.20, 0.15),
     )
 
 
@@ -270,25 +310,25 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.42,   # tethered tune: UWB owns stroke scale, IMU adds short-term detail
-        drag_inv_s     = 1.67,   # stronger residual velocity kill for multi-stroke writing
+        sigma_scale    = 0.42,
+        drag_inv_s     = 1.67,
         dir_penalty    = 1.0,
         jump_speed_max = 1.8,
         pos_floor      = 0.012,
-        acc_scale      = 0.50,   # reduce IMU double-integration growth
-        pos_gain_cap   = 0.095
+        acc_scale      = 0.50,
+        pos_gain_cap   = 0.045   # hard cap — K_pos was 0.60, must be below 0.10
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.52,   # fast strokes keep detail but remain tethered to UWB scale
+        sigma_scale    = 0.52,
         drag_inv_s     = 1.70,
         dir_penalty    = 1.0,
         jump_speed_max = 2.2,
         pos_floor      = 0.020,
         acc_scale      = 0.48,
-        pos_gain_cap   = 0.085
+        pos_gain_cap   = 0.040   # tighter — fast strokes need IMU shape authority
     ))
 
     # Pen lifted / air movement.
@@ -324,30 +364,40 @@ class FusionESKFConfig:
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
     # Too high makes UWB dominate; too low makes IMU drift dominate.
-    sigma_a: float = 2.8
+    sigma_a: float = 0.3
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
     acc_spike_clamp_enabled: bool = True
     acc_spike_clamp_ms2:     float = 2.5   # tethered tune: softens FSR/tilt impulses during active ink
 
     # Acceleration-bias random walk.
-    # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
-    sigma_b_a: float = 0.0001
+    # Raised — b_a was 0.098 m/s² during stroke causing ~20cm drift.
+    # Faster random walk lets UWB correct the bias more aggressively.
+    sigma_b_a: float = 0.001
 
     # ZUPT velocity measurement noise.
     sigma_zupt: float = 0.005
 
     # Base UWB measurement noise before mode scaling.
-    sigma_uwb: float = 0.060
+    # Raised back — K_pos was hitting 0.60 meaning UWB dominated ink shape.
+    # IMU must own stroke shape; UWB only corrects global placement.
+    sigma_uwb: float = 0.090
+
+    # Camera measurement noise (metres). Much tighter than UWB.
+    # Inflated by 1/confidence when detection quality is low.
+    sigma_camera: float = 0.005
 
     # Trilateration quality threshold for UWB velocity pseudo-update.
-    sigma_trilat: float = 0.09
+    # Tightened to match new trilat_max_residual.
+    sigma_trilat: float = 0.06
 
     # NLOS adaptive R parameters.
-    k_nlos: float = 0.5     # tuner Stage-4 winner: less aggressive NLOS scaling on current datasets
-    r_scale_max: float = 10.0  # tuner Stage-4 winner: cap R inflation earlier
-    hard_reject_mult: float = 3.0  # tighter hard rejection for bad trilateration periods
-    innov_hard_reject_m: float = 0.50  # UWB innovation magnitude hard reject (m); >25 cm UWB↔IMU disagreement is non-physical in board writing
+    # k_nlos reduced — fewer NLOS events expected with better geometry.
+    # r_scale_max reduced — less inflation needed.
+    k_nlos: float = 0.35
+    r_scale_max: float = 6.0
+    hard_reject_mult: float = 3.0
+    innov_hard_reject_m: float = 0.55  # raised — IMU bias causes large innovations that are still valid
     # Recovery: after this many consecutive innovation-gate rejections with clean
     # UWB geometry the filter is assumed lost and _snap_to_uwb() re-localizes.
     # At 50 Hz UWB this is ~120 ms before recovery triggers.
@@ -404,8 +454,8 @@ class FusionESKFConfig:
     # On pen-down rising edge, apply a position pseudo-measurement toward the
     # last known UWB fix so each letter starts at the correct board location.
     # Lower sigma_scale = stronger pull toward UWB at pen-down.
-    stroke_start_sigma_scale: float = 0.90    # multiplied onto sigma_uwb
-    stroke_start_uwb_max_age_s: float = 0.10  # skip snap if UWB is older than this
+    stroke_start_sigma_scale: float = 0.50    # stronger snap toward UWB at pen-down
+    stroke_start_uwb_max_age_s: float = 0.50  # accept UWB up to 500ms old at pen-down
 
     # Phase 4 — in-stroke position bias (pos_bias EMA tracker).
     # During CONTACT_DRAWING or DRAWING_FAST, each accepted UWB fix nudges a
@@ -466,11 +516,11 @@ class FusionESKFConfig:
 
     # How hard to hold the visible tip at the lock anchor.  Position alpha is
     # applied to p so b_p remains the normal global-placement bias.
-    contact_static_lock_pos_alpha: float = 0.92
-    contact_static_lock_vel_decay: float = 0.08
+    contact_static_lock_pos_alpha: float = 0.98
+    contact_static_lock_vel_decay: float = 0.02
     contact_static_lock_vel_zero_thresh_ms: float = 0.015
-    contact_static_lock_cov_vel_scale: float = 0.20
-    contact_static_lock_cov_pos_scale: float = 0.85
+    contact_static_lock_cov_vel_scale: float = 0.05
+    contact_static_lock_cov_pos_scale: float = 0.30
 
     # Stroke-end reset.
     # Hard zero is good for letters because pen-up should break momentum.
@@ -550,36 +600,33 @@ class StrokeCleanerConfig:
 @dataclass(frozen=True)
 class CentroidAlignConfig:
     # Minimum UWB samples buffered during the stroke to trust the centroid estimate.
-    min_uwb_points: int = 3
+    # Raised from 3 — short letter strokes need more UWB fixes for a reliable centroid.
+    min_uwb_points: int = 5
 
     # Robust UWB centroid: remove the farthest points before computing the final
     # UWB centre so a small NLOS arc does not drag the whole stroke.
-    trim_quantile: float = 0.85
+    trim_quantile: float = 0.80
 
     # Reject the correction if IMU and UWB centroids diverge by more than this (metres).
-    # Prevents a bad UWB cluster from teleporting an otherwise good stroke.
-    max_translation_m: float = 0.10
+    # Tightened for handwriting — letters are small (2-5cm), 6cm max prevents
+    # a bad UWB fix from moving an entire letter to the wrong position.
+    max_translation_m: float = 0.06
 
-    # Optional uniform scale correction.  Kept tightly clamped so letter shapes are preserved.
-    scale_enabled: bool = True
+    # Scale correction disabled for handwriting — letter aspect ratios must be
+    # preserved exactly. Scale drift is handled by centroid translation alone.
+    scale_enabled: bool = False
     scale_percentile: float = 0.80
-    scale_min: float = 0.70
+    scale_min: float = 0.90
     scale_max: float = 1.10
 
-    # Similarity alignment: after centroid translation, estimate one global
-    # 2D transform that can rotate and scale the finished stroke as a rigid
-    # object.  Procrustes uses resampled stroke↔UWB correspondences; PCA is kept
-    # as a fallback for older tests.
-    rotation_enabled: bool = True
-    rotation_max_deg: float = 20.0
-    procrustes_enabled: bool = True
+    # Rotation: disabled for handwriting. A global rotation of even 5° makes
+    # letters illegible. UWB cannot reliably estimate the small rotations
+    # involved in handwriting (pen tilt, wrist angle).
+    rotation_enabled: bool = False
+    rotation_max_deg: float = 8.0
+    procrustes_enabled: bool = False
     procrustes_samples: int = 48
-    # Trim a small fraction only for estimating the transform.  The full stroke
-    # is still transformed and rendered.  This reduces pen-down/pen-up hooks from
-    # dominating the rotation estimate.
     procrustes_endpoint_trim: float = 0.04
-    # Minimum eigenvalue ratio (λ_max / λ_min) required to trust PCA fallback.
-    # A ratio < 2 means the distribution is too round to have a reliable direction.
     pca_min_eigenratio: float = 2.0
 
 @dataclass(frozen=True)
@@ -587,20 +634,26 @@ class MinJerkConfig:
     # Skip smoothing for very short strokes (too few points to detect waypoints).
     min_points_for_minjerk: int = 8
     # Curvature threshold (1/m) above which a sample is a waypoint candidate.
-    # Lower = more waypoints (less smoothing); higher = fewer waypoints (more smoothing).
-    curvature_threshold: float = 30.0
+    # Handwriting has tighter curves than geometric shapes — lower threshold
+    # detects letter corners/loops as waypoints so they are preserved, not smoothed.
+    curvature_threshold: float = 8.0
     # Minimum physical distance (metres) between consecutive accepted waypoints.
-    min_waypoint_spacing_m: float = 0.005
-    # Hard cap on waypoint count; top-N by curvature are kept when exceeded.
-    max_waypoints: int = 32
+    # Tighter spacing preserves close letter features (dot of 'i', serif curves).
+    min_waypoint_spacing_m: float = 0.003
+    # Hard cap on waypoint count; raised for complex handwriting strokes.
+    max_waypoints: int = 64
     # Blend factor: 0.0 = keep raw aligned points, 1.0 = full min-jerk replacement.
-    shape_blend: float = 0.7
+    # 0.55 smooths UWB noise (~3cm) while keeping letter shape recognizable.
+    shape_blend: float = 0.55
     # Reject smoothed result if its bbox grows beyond this ratio vs the aligned bbox.
-    max_bbox_ratio: float = 1.10
+    max_bbox_ratio: float = 1.08
 
 @dataclass(frozen=True)
 class ShapeCorrectorConfig:
-    enabled: bool = True
+    # Disabled for handwriting mode — shape snapping maps letter curves to geometric
+    # primitives (circle, line, rect) which destroys handwriting character.
+    # Re-enable only for diagram/sketch mode when drawing intentional shapes.
+    enabled: bool = False
 
     # Per-primitive kill switches (arc off by default — collides with letter strokes).
     line_enabled: bool      = True
@@ -654,6 +707,55 @@ class PostprocessConfig:
 
 
 # ------------------------------------------------------------------------
+# LEARNED ODOMETRY CONFIG
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class OdometryConfig:
+    enabled:     bool  = False
+    window_size: int   = 200    # frames (~1 s at 200 Hz)
+    stride:      int   = 40     # frames between inferences (~5 Hz)
+    hidden_size: int   = 256    # LSTM hidden units
+    q_odom:      float = 0.005  # position noise (m²) — for future ESKF wiring
+    assets_dir:  str   = "background/pipelines/fusion/learned_odometry/assets"
+
+
+# ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+# CAMERA CONFIG
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class CameraConfig:
+    enabled:         bool  = False
+    camera_index:    int   = 1        # USB webcam index (1 = detected webcam)
+    frame_width:     int   = 1280
+    frame_height:    int   = 720
+    fps:             int   = 30
+
+    # Red marker cap detection — HSV thresholds
+    # Red wraps around in HSV so two ranges needed
+    red_lower1: tuple = (0,   120,  70)   # lower red range
+    red_upper1: tuple = (10,  255, 255)
+    red_lower2: tuple = (170, 120,  70)   # upper red range (wraps)
+    red_upper2: tuple = (180, 255, 255)
+
+    # Minimum contour area in pixels to accept as marker cap detection
+    min_contour_area: int = 30
+
+    # Pen length from tip to back end (where red cap is)
+    pen_length_m: float = 0.215
+
+    # ESKF measurement noise for camera position (metres).
+    # Much tighter than UWB — camera gives ~3mm accuracy.
+    sigma_camera: float = 0.005
+
+    # Homography calibration file path
+    homography_file: str = "background/pipelines/camera/homography.npy"
+
+    # How long before a camera detection is considered stale (seconds)
+    stale_timeout_s: float = 0.10
+
+
+# ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -668,6 +770,9 @@ class Config:
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    odometry:       OdometryConfig      = field(default_factory=OdometryConfig)
+    range_denoiser: RangeDenoiserConfig = field(default_factory=RangeDenoiserConfig)
+    camera:         CameraConfig        = field(default_factory=CameraConfig)
 
 
 # declare the config file

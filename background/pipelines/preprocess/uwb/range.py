@@ -36,44 +36,142 @@ import math
 import statistics
 from collections import deque
 from background.pipelines.config import cfg
+from background.pipelines.preprocess.uwb.range_denoiser import (
+    RangeDenoiserBuffer, RangeDenoiserInferer,
+)
+
+
+class _AnchorKalman:
+    """
+    1D Kalman filter for a single UWB anchor range.
+
+    State: [distance, velocity]  (metres, metres/s)
+    Models pen as constant-velocity with process noise sigma_q (m/s²).
+    Measurement noise sigma_r (m) tuned to BU03 static noise floor.
+
+    Rejects measurements implying speed > max_speed_ms by holding the
+    predicted state instead — this kills multipath oscillations which
+    would require physically impossible accelerations to be real.
+    """
+
+    def __init__(self, sigma_r: float, sigma_q: float, max_speed_ms: float):
+        self._sigma_r     = sigma_r
+        self._sigma_q     = sigma_q
+        self._max_speed   = max_speed_ms
+        self._x: "list[float] | None" = None  # [dist, vel]
+        self._P = [[1.0, 0.0], [0.0, 1.0]]    # 2×2 covariance
+
+    @property
+    def ready(self) -> bool:
+        return self._x is not None
+
+    def seed(self, dist: float) -> None:
+        self._x = [dist, 0.0]
+        self._P = [[self._sigma_r ** 2, 0.0], [0.0, 0.25]]
+
+    def update(self, z: float, dt: float) -> tuple[float, bool]:
+        """
+        Predict + update for one measurement.
+        Returns (filtered_distance, was_rejected).
+        rejected=True means z implied impossible speed; predicted state held.
+        """
+        if self._x is None:
+            self.seed(z)
+            return z, False
+
+        # ── Predict ──────────────────────────────────────────────────
+        x0, x1 = self._x
+        x0_p = x0 + x1 * dt
+        x1_p = x1
+
+        q = self._sigma_q ** 2
+        P00 = self._P[0][0] + dt * (self._P[1][0] + self._P[0][1]) + dt * dt * self._P[1][1] + q * dt**4 / 4
+        P01 = self._P[0][1] + dt * self._P[1][1] + q * dt**3 / 2
+        P10 = self._P[1][0] + dt * self._P[1][1] + q * dt**3 / 2
+        P11 = self._P[1][1] + q * dt**2
+
+        # ── Speed gate — reject if measurement implies impossible velocity ──
+        implied_speed = abs(z - x0_p) / max(dt, 1e-6)
+        if implied_speed > self._max_speed:
+            # Hold predicted state, inflate covariance slightly
+            self._x = [x0_p, x1_p]
+            self._P = [[P00, P01], [P10, P11]]
+            return x0_p, True
+
+        # ── Update ───────────────────────────────────────────────────
+        S  = P00 + self._sigma_r ** 2
+        K0 = P00 / S
+        K1 = P10 / S
+        y  = z - x0_p
+
+        self._x = [x0_p + K0 * y, x1_p + K1 * y]
+        self._P = [
+            [(1 - K0) * P00,       (1 - K0) * P01],
+            [P10 - K1 * P00,       P11 - K1 * P01],
+        ]
+        return self._x[0], False
+
+    def reset(self) -> None:
+        self._x = None
+        self._P = [[1.0, 0.0], [0.0, 1.0]]
 
 
 class UWBRangePreprocessor:
     """
-    Stateful per-anchor range cleaner
+    Stateful per-anchor range cleaner.
 
-    Maintains a rolling buffer and EMA state for each of the 4 anchors.
+    Pipeline per anchor:
+        1. Hardware blind-spot / zero check
+        2. Offset calibration
+        3. Sanity check (physical range bounds)
+        4. Cross-anchor simultaneous dropout detection (holds last good on burst)
+        5. Median pre-filter (window=5) — removes single-sample spikes
+        6. Per-anchor 1D Kalman filter (position + velocity state)
+           — rejects multipath oscillations via speed gate
     """
 
     def __init__(self, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
         n = cfg.uwb.num_anchors
-        
-        # Hardware calibration offsets (antenna delay)
         self.offsets = offsets
-        
-        # Rolling raw-value buffer for median filter
-        self._history:     list[deque] = [
-            deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
-        # Last EMA output per anchor (None = not seeded yet)
-        self._ema:         list[float | None] = [None] * n
-        # Last filtered value used for jump detection
-        self._prev_clean:  list[float | None] = [None] * n
-        
-        # --- Anti-Lockout Counters ---
-        self._jump_count = [0] * n
-        self.max_jumps = cfg.uwb.max_jumps_n
 
-        # Timestamp of last processed event (for time-aware EMA)
+        # Median pre-filter buffers
+        self._history: list[deque] = [
+            deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
+
+        # Per-anchor 1D Kalman filters — each anchor gets its own sigma_r
+        sigma_r_list = cfg.uwb.kalman_sigma_r_per_anchor
+        self._kf: list[_AnchorKalman] = [
+            _AnchorKalman(
+                sigma_r     = sigma_r_list[i],
+                sigma_q     = cfg.uwb.kalman_sigma_q,
+                max_speed_ms= cfg.uwb.kalman_max_speed_ms,
+            ) for i in range(n)
+        ]
+
+        # Last accepted clean value per anchor (for dropout hold)
+        self._last_good: list[float | None] = [None] * n
+
+        # Anti-lockout: consecutive speed-gate rejections before hard reset
+        self._reject_count: list[int] = [0] * n
+
         self._prev_ts: int | None = None
+
+        # Per-anchor CNN denoiser (active when model assets exist)
+        rd = cfg.range_denoiser
+        if rd.enabled:
+            self._dn_buf: list[RangeDenoiserBuffer] = [
+                RangeDenoiserBuffer(rd.window_size) for _ in range(n)]
+            self._dn_inf: list[RangeDenoiserInferer] = [
+                RangeDenoiserInferer(i, rd.window_size) for i in range(n)]
+        else:
+            self._dn_buf = None
+            self._dn_inf = None
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def feed(self, events: list[dict]) -> list[dict]:
-        """
-        Process a batch of normalized UWB events.
-        """
         out = []
         for ev in events:
             if ev.get('sensor') != 'UWB':
@@ -84,38 +182,88 @@ class UWBRangePreprocessor:
         return out
 
     def process_one(self, ev: dict) -> dict | None:
-        """
-        Process one normalized UWB event through the full per-anchor pipeline.
-
-        Returns None if the event is missing required fields.
-        """
         ts    = ev.get('ts_hw')
         dists = ev.get('dists')
-
         if ts is None or dists is None:
             return None
         if len(dists) != cfg.uwb.num_anchors:
-            return None    # unexpected anchor count
+            return None
 
-        # Compute dt for time-aware EMA; fall back to nominal rate on first sample
-        if self._prev_ts is not None:
-            dt_s = (ts - self._prev_ts) / 1_000_000.0
-            if dt_s <= 0:
-                dt_s = 1.0 / cfg.uwb.rate_hz
-        else:
-            dt_s = 1.0 / cfg.uwb.rate_hz
+        dt_s = (
+            max((ts - self._prev_ts) / 1_000_000.0, 1e-6)
+            if self._prev_ts is not None
+            else 1.0 / cfg.uwb.rate_hz
+        )
+        dt_s = min(dt_s, 0.5)   # clamp absurd gaps (reconnect, pause)
         self._prev_ts = ts
 
-        raw_dists    = tuple(dists)
-        clean_dists  = []
-        valid_mask   = []
-        outlier_flags = []
+        raw_dists     = tuple(dists)
+        n             = cfg.uwb.num_anchors
 
-        for i, d_raw in enumerate(raw_dists):
-            valid, outlier, d_clean = self._process_anchor(i, d_raw, dt_s)
-            clean_dists.append(d_clean)
-            valid_mask.append(valid)
-            outlier_flags.append(outlier)
+        # ── Stage 1: offset + sanity per anchor ──────────────────────────
+        offset_dists: list[float | None] = []
+        for i, d in enumerate(raw_dists):
+            if d is None or (isinstance(d, float) and math.isnan(d)) or d <= cfg.uwb.dropout_zero_thresh:
+                offset_dists.append(None)   # hard zero / NaN
+            else:
+                od = d + self.offsets[i]
+                sane = cfg.pipeline.uwb_min_range_m <= od <= cfg.pipeline.uwb_max_range_m
+                offset_dists.append(od if sane else None)
+
+        # ── Stage 2: dropout detection — both simultaneous and single-anchor ──
+        # Any anchor reporting None (zero/NaN/insane) is substituted with its
+        # last good value regardless of how many dropped. The cross-anchor check
+        # was previously required to avoid false-positives from the old EMA, but
+        # with the Kalman speed gate handling noise, a single-anchor hold is safe.
+        offset_dists = [
+            (self._last_good[i] if od is None else od)
+            for i, od in enumerate(offset_dists)
+        ]
+
+        # ── Stages 3–4: median + Kalman per anchor ───────────────────────
+        clean_dists:   list[float] = []
+        valid_mask:    list[bool]  = []
+        outlier_flags: list[bool]  = []
+
+        for i, od in enumerate(offset_dists):
+            if od is None:
+                # No good value and no last_good — hold whatever Kalman predicts
+                fallback = self._last_good[i] if self._last_good[i] is not None else -1.0
+                clean_dists.append(fallback)
+                valid_mask.append(False)
+                outlier_flags.append(True)
+                continue
+
+            # Median pre-filter
+            self._history[i].append(od)
+            median_val = statistics.median(self._history[i])
+
+            # 1D Kalman
+            filtered, rejected = self._kf[i].update(median_val, dt_s)
+
+            if rejected:
+                self._reject_count[i] += 1
+                if self._reject_count[i] >= cfg.uwb.max_jumps_n:
+                    # Locked out too long — snap Kalman to current reality
+                    self._kf[i].seed(median_val)
+                    self._reject_count[i] = 0
+                    filtered = median_val
+                    rejected = False
+            else:
+                self._reject_count[i] = 0
+
+            self._last_good[i] = filtered
+
+            # ── CNN denoiser (runs on top of Kalman output) ───────────────
+            if self._dn_buf is not None and not rejected:
+                window = self._dn_buf[i].push(filtered)
+                if window is not None:
+                    filtered = self._dn_inf[i].predict(window)
+                    self._last_good[i] = filtered
+
+            clean_dists.append(filtered)
+            valid_mask.append(not rejected)
+            outlier_flags.append(rejected)
 
         return {
             'sensor':        'UWB',
@@ -128,112 +276,18 @@ class UWBRangePreprocessor:
         }
 
     def reset(self):
-        """
-        Reset all per-anchor state.
-        """
         n = cfg.uwb.num_anchors
-        self._history    = [deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
-        self._ema        = [None] * n
-        self._prev_clean = [None] * n
-        self._prev_ts    = None
-
-    # ------------------------------------------------------------------
-    # Per-anchor pipeline
-    # ------------------------------------------------------------------
-
-    def _process_anchor(self, idx: int, d_raw: float, dt_s: float = None) -> tuple[bool, bool, float]:
-        """
-        Run the multi-stage pipeline for one anchor.
-
-        Returns (valid, outlier, clean_value):
-            
-            - valid         : anchor reading is considered trustworthy
-            - outlier       : this specific sample was suspicious (flagged but corrected)
-            - clean_value   : best filtered value to use (falls back to prev if bad)
-        """
-        
-        # --- 1. Hardware Blind Spot Check (The Fix) ---
-        # If the hand blocks the anchor, it might report 0.0, <= 0.05, or NaN.
-        # We reject this immediately to prevent median buffer corruption.
-        if d_raw is None or math.isnan(d_raw) or d_raw <= 0.05:
-            # Hold the last known good state. If there is no history yet, flag as -1.0
-            clean_val = self._ema[idx] if self._ema[idx] is not None else -1.0
-            return False, True, clean_val
-
-        # --- 2. Offset Application ---
-        raw_with_offset = d_raw + self.offsets[idx]
-
-        # --- 3. Sanity check ---
-        sane = (cfg.pipeline.uwb_min_range_m <= raw_with_offset <= cfg.pipeline.uwb_max_range_m)
-
-        # --- 4. Jump detection ---
-        jump = False
-        if sane and self._prev_clean[idx] is not None:
-            delta = abs(raw_with_offset - self._prev_clean[idx])
-            if delta > cfg.uwb.max_range_jump_m:
-                jump = True
-
-        # --- 5. Anti-Lockout Recovery Logic ---
-        if jump:
-            self._jump_count[idx] += 1
-            if self._jump_count[idx] >= self.max_jumps:
-                # We have been locked out for too long. Force a hard reset to reality.
-                jump = False
-                self._jump_count[idx] = 0
-                self._ema[idx] = raw_with_offset  # Instantly snap EMA to current location
-                self._history[idx].clear()
-        else:
-            self._jump_count[idx] = 0  # Reset counter if normal movement
-        
-        outlier = (not sane) or jump
-        valid   = sane and not jump
-        
-        if outlier:
-            # Use previous clean value if available, else skip seeding
-            if self._ema[idx] is not None:
-                clean_val = self._ema[idx] 
-            elif sane:
-                # First sample ever but jumped — still seed with raw offset (no history)
-                clean_val = raw_with_offset
-                valid = True
-                outlier = False
-            else:
-                # Insane and no history → return raw offset as a placeholder
-                clean_val = raw_with_offset
-            return valid, outlier, clean_val
-
-        # --- 6. Median filter --- 
-        self._history[idx].append(raw_with_offset)
-        median_val = statistics.median(self._history[idx])
-
-        # --- 7. Stage 3b: ADAPTIVE TIME-AWARE EMA ---
-        # Base alpha derived from actual inter-sample dt so smoothing is consistent
-        # regardless of serial/UWB jitter (α = 1 - exp(-dt/τ)).
-        _dt = dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
-        base_alpha = 1.0 - math.exp(-_dt / cfg.uwb.range_tau_s)
-
-        if self._ema[idx] is None:
-            self._ema[idx] = median_val
-        else:
-            # Calculate the physical distance between current state and new reading
-            delta = abs(median_val - self._ema[idx])
-
-            # Dynamic adjustment:
-            # If moving fast (> 5cm jump), triple the alpha to catch up instantly.
-            # Threshold halved from 0.10 → 0.05 at 100 Hz: the median buffer refreshes
-            # slower per-sample so 10 cm median-EMA deltas occur from normal motion, not
-            # just noise. 5 cm still only fires on genuine fast motion at 10 ms intervals.
-            if delta > 0.05:
-                dynamic_alpha = min(base_alpha * 3.0, 1.0)
-            else:
-                dynamic_alpha = base_alpha
-                
-            self._ema[idx] = dynamic_alpha * median_val + (1.0 - dynamic_alpha) * self._ema[idx]
-
-        clean_val = self._ema[idx]
-        self._prev_clean[idx] = clean_val
-
-        return True, False, clean_val
+        sigma_r_list = cfg.uwb.kalman_sigma_r_per_anchor
+        self._history     = [deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
+        self._kf          = [
+            _AnchorKalman(sigma_r_list[i], cfg.uwb.kalman_sigma_q,
+                          cfg.uwb.kalman_max_speed_ms) for i in range(n)]
+        self._last_good   = [None] * n
+        self._reject_count= [0] * n
+        self._prev_ts     = None
+        if self._dn_buf is not None:
+            for buf in self._dn_buf:
+                buf.reset()
 
 
 

@@ -44,6 +44,14 @@ except ImportError as _e:
 
 import numpy as np
 
+# ── Odometry helper ───────────────────────────────────────────────────────────
+def _extract_odom_frame(imu_ev: dict) -> np.ndarray:
+    """Pack acc_board_tip + quat into the 6-feature vector expected by OdometryNet."""
+    ax, ay = imu_ev.get('acc_board_tip', (0.0, 0.0))
+    qx, qy, qz, qw = imu_ev.get('quat', (0.0, 0.0, 0.0, 1.0))
+    return np.array([ax, ay, qw, qx, qy, qz], dtype=np.float32)
+
+
 # ── Pipeline imports ──────────────────────────────────────────────────────────
 from background.pipelines.config import cfg
 from background.pipelines.cleaner.unpacker              import SerialStreamer
@@ -56,7 +64,9 @@ from background.pipelines.preprocess.uwb.trilateration import UWBSolver
 from background.pipelines.preprocess.uwb.position      import UWBPositionFilter
 from background.pipelines.fusion.eskf                  import ESKF
 from background.pipelines.fusion.baseline              import FusionEngine
+from background.pipelines.fusion.learned_odometry      import IMUOdometryBuffer, OdometryInferer, OdometryDataCollector
 from background.pipelines.reconstruct                  import StrokeReconstructor
+from background.pipelines.camera                       import MarkerCapDetector
 
 
 # ── Layout / rolling-buffer constants ────────────────────────────────────────
@@ -81,6 +91,7 @@ _C_RAW    = (180, 100,  30,  90)   # faint amber overlay for pre-snap raw polyli
 _C_AIR    = (130, 130, 130, 140)
 _C_UWB    = (230, 140,  20, 140)
 _C_IMU    = (80,  130, 220, 140)
+_C_ODOM   = (50,  210,  90, 180)   # green — learned odometry (NN) overlay
 _C_ANCHOR = (220,  30,  30, 255)
 _C_BOARD  = (60,   60,  60, 200)
 
@@ -130,7 +141,10 @@ class _IMUTrack:
 
 # ── Debug text formatter ───────────────────────────────────────────────────────
 def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
-                  imu_count, uwb_count, closed_count) -> str:
+                  imu_count, uwb_count, closed_count,
+                  odom_buf_fill: float = 0.0,
+                  odom_last_delta: tuple = (0.0, 0.0),
+                  odom_ready: bool = False) -> str:
     L = []
     D = '─' * 28
 
@@ -292,6 +306,16 @@ def _format_debug(latest_fused, latest_uwb_fused, latest_imu, latest_uwb,
     else:
         L.append('  (waiting for IMU data)')
 
+    # Odometry panel
+    L += ['', D, '  ODOMETRY (NN)']
+    status = 'READY' if odom_ready else 'NO MODEL'
+    dx, dy = odom_last_delta
+    L += [
+        f"  Status  : {status}",
+        f"  Buf fill: {odom_buf_fill * 100:.0f}%",
+        f"  Last Δ  : ({dx*1000:+.1f}, {dy*1000:+.1f}) mm",
+    ]
+
     # Session counts
     L += [
         '', D, '  SESSION',
@@ -369,11 +393,16 @@ def _imu_curve_csv(imu_ev: dict) -> list:
 # ── PyQtGraph application window ──────────────────────────────────────────────
 class VisualizerWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, fusion_mode: str):
+    def __init__(self, fusion_mode: str, collect_mode: bool = False,
+                 collect_path: str = "odometry_training_data.npz"):
         super().__init__()
-        self.fusion_mode = fusion_mode
+        self.fusion_mode  = fusion_mode
+        self.collect_mode = collect_mode
+        self.collect_path = collect_path
         self.setWindowTitle(
-            f'PolyCast Visualizer  ·  fusion={fusion_mode}  ·  {cfg.serial.port}'
+            f'PolyCast Visualizer  ·  fusion={fusion_mode}'
+            + ('  ·  [COLLECTING DATA]' if collect_mode else '')
+            + f'  ·  {cfg.serial.port}'
         )
         self.resize(1280, 700)
 
@@ -390,10 +419,51 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.imu_trk    = _IMUTrack()
         self.fusion     = ESKF() if fusion_mode == 'eskf' else FusionEngine(fusion_alpha=0.15)
 
+        # ── Learned odometry (overlay only — does not affect ESKF state) ─────
+        self._odom_buf   = IMUOdometryBuffer(cfg.odometry.window_size, cfg.odometry.stride)
+        self._odom_infer = OdometryInferer()
+        self._odom_pos   = [BW / 2.0, BH / 2.0]
+        self._odom_last_delta = (0.0, 0.0)
+        self._prev_stroke_active = False
+
+        # ── Data collector (only active with --collect) ───────────────────────
+        self._collector: "OdometryDataCollector | None" = (
+            OdometryDataCollector(
+                window_size=cfg.odometry.window_size,
+                stride=cfg.odometry.window_size,
+            ) if collect_mode else None
+        )
+
+        # ── Camera detector (only when enabled in config) ─────────────────
+        self._cam_cap    = None
+        self._cam_det: "MarkerCapDetector | None" = None
+        self._cam_timer  = None
+        self._latest_imu_quat = None
+        if cfg.camera.enabled:
+            try:
+                import cv2
+                self._cam_det = MarkerCapDetector()
+                if self._cam_det.calibrated:
+                    import time as _ct
+                    self._cam_cap = cv2.VideoCapture(cfg.camera.camera_index)
+                    _ct.sleep(2.0)   # Windows MSMF init delay
+                    self._cam_cap.set(cv2.CAP_PROP_FRAME_WIDTH,  cfg.camera.frame_width)
+                    self._cam_cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cfg.camera.frame_height)
+                    self._cam_timer = QtCore.QTimer(self)
+                    self._cam_timer.setInterval(int(1000 / cfg.camera.fps))
+                    self._cam_timer.timeout.connect(self._poll_camera)
+                    self._cam_timer.start()
+                    print(f"[Camera] Started on index {cfg.camera.camera_index}")
+                else:
+                    print("[Camera] Not calibrated — run calibrate_camera.py first.")
+            except Exception as exc:
+                print(f"[Camera] Failed to start: {exc}")
+
         # ── Data accumulators ─────────────────────────────────────────────────
-        self.air_x = deque(maxlen=AIR_TRAIL); self.air_y = deque(maxlen=AIR_TRAIL)
-        self.imu_x = deque(maxlen=IMU_TRAIL); self.imu_y = deque(maxlen=IMU_TRAIL)
-        self.uwb_x = deque(maxlen=UWB_TRAIL); self.uwb_y = deque(maxlen=UWB_TRAIL)
+        self.air_x  = deque(maxlen=AIR_TRAIL); self.air_y  = deque(maxlen=AIR_TRAIL)
+        self.imu_x  = deque(maxlen=IMU_TRAIL); self.imu_y  = deque(maxlen=IMU_TRAIL)
+        self.uwb_x  = deque(maxlen=UWB_TRAIL); self.uwb_y  = deque(maxlen=UWB_TRAIL)
+        self.odom_x = deque(maxlen=3000);      self.odom_y = deque(maxlen=3000)
 
         self.ink_strokes   = []   # list of completed np arrays [(x,y), ...]
         self.cur_ink_x     = []
@@ -438,6 +508,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             'acc_hp_tip_x', 'acc_hp_tip_y', 'acc_hp_tip_mag',
             'acc_tip_x', 'acc_tip_y', 'acc_tip_mag',
             'omega_mag', 'alpha_mag',
+            'odom_x', 'odom_y',
         ])
 
         # ── Qt layout ─────────────────────────────────────────────────────────
@@ -529,9 +600,10 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         # ── Dynamic plot items (updated each frame) ───────────────────────────
         def _pen(c, w=1.5): return pg.mkPen(color=c, width=w)
 
-        self._imu_curve  = self._plot_widget.plot([], [], pen=_pen(_C_IMU),  name='IMU dead-reck.')
-        self._uwb_curve  = self._plot_widget.plot([], [], pen=_pen(_C_UWB),  name='UWB clean')
-        self._air_curve  = self._plot_widget.plot([], [], pen=_pen(_C_AIR),  name='Air (fused)')
+        self._imu_curve  = self._plot_widget.plot([], [], pen=_pen(_C_IMU),      name='IMU dead-reck.')
+        self._uwb_curve  = self._plot_widget.plot([], [], pen=_pen(_C_UWB),      name='UWB clean')
+        self._air_curve  = self._plot_widget.plot([], [], pen=_pen(_C_AIR),      name='Air (fused)')
+        self._odom_curve = self._plot_widget.plot([], [], pen=_pen(_C_ODOM),     name='Odometry (NN)')
         self._cur_curve  = self._plot_widget.plot([], [], pen=_pen(_C_INK, 2.2), name='Current stroke')
         # Completed strokes stored as individual PlotDataItem objects
         self._ink_items  = []
@@ -541,6 +613,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         legend.addItem(self._imu_curve,  'IMU dead-reck.')
         legend.addItem(self._uwb_curve,  'UWB clean')
         legend.addItem(self._air_curve,  'Air (fused)')
+        legend.addItem(self._odom_curve, 'Odometry (NN)')
         legend.addItem(self._cur_curve,  'Open stroke')
 
         # ── QTimers ───────────────────────────────────────────────────────────
@@ -561,7 +634,14 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         print(f'  [VISUALIZER]  {cfg.serial.port}  fusion={fusion_mode}')
         print(f'  CSV  → {CSV_FILENAME}')
         print(f'  PNG  → {PNG_FILENAME}  (on Ctrl+C / window close)')
-        print('  Draw strokes. Close window or Ctrl+C to stop and export.')
+        if collect_mode:
+            import os as _os
+            _abs = _os.path.abspath(collect_path)
+            print(f'  [COLLECT]  Output → {_abs}')
+            print('  Draw real strokes on the board. More strokes = better model.')
+            print('  Target: 2000+ samples. Close window or Ctrl+C when done.')
+        else:
+            print('  Draw strokes. Close window or Ctrl+C to stop and export.')
         print('=' * 62)
 
     # ── Serial poll (called every POLL_MS) ────────────────────────────────────
@@ -589,6 +669,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 self.imu_x.append(self.last_imu_p[0])
                 self.imu_y.append(self.last_imu_p[1])
                 self.latest_imu_ev = p
+                self._latest_imu_quat = p.get('quat')
 
                 s     = self.contact.process_one(p)
                 fused = self.fusion.process_event(s)
@@ -598,6 +679,33 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 self.imu_count   += 1
                 self.latest_fused = fused
                 self._dirty       = True
+
+                # ── Learned odometry overlay (read-only, non-blocking) ────────
+                if cfg.odometry.enabled:
+                    odom_frame = _extract_odom_frame(p)
+                    window = self._odom_buf.push_packet([odom_frame])
+                    if window is not None:
+                        delta = self._odom_infer.predict(window)
+                        if delta is not None:
+                            self._odom_pos[0] += float(delta[0])
+                            self._odom_pos[1] += float(delta[1])
+                            self._odom_last_delta = (float(delta[0]), float(delta[1]))
+                            self.odom_x.append(self._odom_pos[0])
+                            self.odom_y.append(self._odom_pos[1])
+
+                    # Reset buffer on stroke end to avoid cross-stroke contamination
+                    stroke_now = fused.get('stroke_active', False)
+                    if self._prev_stroke_active and not stroke_now:
+                        self._odom_buf.reset()
+                        if self._collector:
+                            self._collector.on_stroke_end()
+                    self._prev_stroke_active = stroke_now
+
+                # ── Data collection: IMU frame feed ───────────────────────────
+                if self._collector:
+                    odom_frame = _extract_odom_frame(p)
+                    stroke_now = fused.get('stroke_active', False)
+                    self._collector.on_imu_frame(odom_frame, stroke_now)
 
                 # Mode strip — one entry per IMU sample (store mode name string)
                 self._strip_colors.append(fused.get('fusion_mode', 'AIR_MOVE'))
@@ -650,6 +758,38 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                         self.latest_uwb_fused  = fused
                         self._dirty            = True
 
+                    # ── Data collection: UWB ground-truth label ───────────────
+                    if self._collector:
+                        uwb_xy = np.array(pc[:2], dtype=np.float32)
+                        stroke_now = (fused.get('stroke_active', False)
+                                      if fused else False)
+                        self._collector.on_uwb_fix(uwb_xy, stroke_now)
+
+    # ── Camera poll (called every 1000/fps ms) ────────────────────────────────
+    def _poll_camera(self):
+        if self._stopping or self._cam_cap is None or self._cam_det is None:
+            return
+        ret, frame = self._cam_cap.read()
+        if not ret:
+            return
+
+        result = self._cam_det.process_frame(frame, self._latest_imu_quat)
+        if result is None:
+            return
+
+        # Build a camera event and feed into ESKF
+        import time
+        cam_ev = {
+            'sensor':     'CAMERA',
+            'ts_hw':      int(time.time() * 1_000_000),
+            'tip_board':  result['tip_board'],
+            'confidence': result['confidence'],
+        }
+        fused = self.fusion.process_event(cam_ev)
+        if fused:
+            self.latest_fused = fused
+            self._dirty = True
+
     # ── Render refresh (called every 1000/RENDER_HZ ms) ───────────────────────
     def _refresh_display(self):
         if not self._dirty:
@@ -663,6 +803,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             self._uwb_curve.setData(list(self.uwb_x), list(self.uwb_y))
         if self.air_x:
             self._air_curve.setData(list(self.air_x), list(self.air_y))
+        if self.odom_x:
+            self._odom_curve.setData(list(self.odom_x), list(self.odom_y))
         if self.cur_ink_x:
             self._cur_curve.setData(self.cur_ink_x, self.cur_ink_y)
         else:
@@ -691,6 +833,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             self.latest_fused, self.latest_uwb_fused,
             self.latest_imu_ev, self.latest_uwb_ev,
             self.imu_count, self.uwb_count, self.closed_count,
+            odom_buf_fill=self._odom_buf.fill_ratio(),
+            odom_last_delta=self._odom_last_delta,
+            odom_ready=self._odom_infer._ready,
         ) + _format_pp_debug(self._last_pp_meta)
         self._debug_label.setText(txt)
 
@@ -774,6 +919,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             f'{min(e.get("age_cap_mult", 1.0) * (cfg.fusion_eskf.modes.drawing_fast if e.get("drawing_fast") else cfg.fusion_eskf.modes.drawing).pos_gain_cap, 1.0):.5f}',
             # IMU curve diagnostics
             *_imu_curve_csv(imu_ev),
+            # Odometry overlay
+            f'{self._odom_pos[0]:.4f}', f'{self._odom_pos[1]:.4f}',
         ])
 
     # ── Shutdown (window close or Ctrl+C) ─────────────────────────────────────
@@ -797,7 +944,13 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             self.closed_count += 1
 
         self.streamer.close()
+        if self._cam_cap is not None:
+            self._cam_cap.release()
         self._csvf.close()
+
+        # Save collected training data (if in collect mode)
+        if self._collector:
+            self._collector.save(self.collect_path)
 
         # Final refresh for PNG
         self._dirty = True
@@ -805,7 +958,11 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 
         # Export PNG using pyqtgraph's exporter
         try:
-            exporter = pg.exporters.ImageExporter(self._plot_widget.getPlotItem())
+            try:
+                from pyqtgraph.exporters import ImageExporter
+            except ImportError:
+                ImageExporter = pg.exporters.ImageExporter
+            exporter = ImageExporter(self._plot_widget.getPlotItem())
             exporter.parameters()['width'] = 1600
             exporter.export(PNG_FILENAME)
             print(f'[EXPORT] PNG  → {PNG_FILENAME}')
@@ -820,16 +977,33 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 def main() -> None:
-    fusion_mode = 'eskf'
-    for i, arg in enumerate(sys.argv):
+    import os
+    _HERE = os.path.dirname(os.path.abspath(__file__))
+    _PROJECT_ROOT = os.path.abspath(os.path.join(_HERE, '..', '..', '..', '..'))
+
+    fusion_mode   = 'eskf'
+    collect_mode  = False
+    collect_path  = os.path.join(_PROJECT_ROOT, 'data', 'odometry_training_data.npz')
+
+    i = 1
+    while i < len(sys.argv):
+        arg = sys.argv[i]
         if arg == '--fusion' and i + 1 < len(sys.argv):
-            fusion_mode = sys.argv[i + 1]
+            fusion_mode = sys.argv[i + 1]; i += 2
         elif arg.startswith('--fusion='):
-            fusion_mode = arg.split('=', 1)[1]
+            fusion_mode = arg.split('=', 1)[1]; i += 1
+        elif arg == '--collect':
+            collect_mode = True; i += 1
+        elif arg.startswith('--collect='):
+            collect_mode = True
+            collect_path = arg.split('=', 1)[1]; i += 1
+        else:
+            i += 1
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 
-    win = VisualizerWindow(fusion_mode)
+    win = VisualizerWindow(fusion_mode, collect_mode=collect_mode,
+                           collect_path=collect_path)
     win.show()
 
     # Let Ctrl+C in the terminal trigger a clean shutdown

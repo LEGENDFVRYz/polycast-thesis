@@ -18,7 +18,7 @@ class UWBSolver:
         # Anchor configurations
         self.anchors = np.array(cfg.anchors.positions)
         self.board_width = cfg.anchors.board_size_x
-        self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24)
+        self.board_height = cfg.anchors.board_size_y
 
         # Issue 5: Z-plane assumption. Pen is at Z=0.0.
         # The anchors are at Z=0.07. The 3D distance math inherently handles this offset!
@@ -52,6 +52,7 @@ class UWBSolver:
 
         # Trilateration fundamentally requires at least 3 valid spheres to intersect
         if len(valid_dists) < 3:
+            print("[UWB SKIPPED] Trilateration fundamentally requires at least 3 valid spheres")
             return None
 
         # Stale-guess recovery: if pen was lifted/relocated, re-seed from anchor centroid
@@ -61,8 +62,11 @@ class UWBSolver:
             self._guess = np.mean(valid_anchors[:, :2], axis=0)
 
         try:
-            # IDW weights: closer anchors trusted more (shorter range = less multipath opportunity)
-            raw_w = 1.0 / (valid_dists ** cfg.uwb.wls_power + cfg.uwb.wls_epsilon)
+            # IDW weights: closer anchors trusted more (shorter range = less multipath opportunity).
+            # Floor at 0.25m prevents near-field anchors (<25cm) from dominating the solve
+            # with astronomically high weights when the pen is near a corner.
+            floored_dists = np.maximum(valid_dists, 0.25)
+            raw_w = 1.0 / (floored_dists ** cfg.uwb.wls_power + cfg.uwb.wls_epsilon)
             weights = raw_w * (len(raw_w) / raw_w.sum())  # normalize so mean weight = 1
 
             res = least_squares(
@@ -83,6 +87,7 @@ class UWBSolver:
             ) - valid_dists
             rms_error = float(np.sqrt(np.mean(unweighted ** 2)))
             if rms_error > cfg.uwb.trilat_max_residual:
+                print("[UWB SKIPPED] Math converged, but to a garbage location (RMS ERROR)")
                 return None  # Math converged, but to a garbage location
 
             low_confidence = rms_error > 0.08  # warning band: 0.08–0.12 m

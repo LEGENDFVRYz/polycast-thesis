@@ -33,6 +33,7 @@ class UWBPositionFilter:
 
     def process_one(self, ev: dict) -> dict | None:
         if ev.get('sensor') != 'POSITION' or 'pos_raw' not in ev:
+            print("[UWB SKIPPED] pos_raw not exist")
             return None
 
         raw_x, raw_y = ev['pos_raw']
@@ -49,6 +50,7 @@ class UWBPositionFilter:
                 if speed > self.max_speed_ms:
                     speed_flag = True
                     if cfg.uwb.drop_speed_outliers:
+                        print("[UWB SKIPPED] Speed Outliers Triggers")
                         return None
 
         # ── 2. Boundary Clamping ──

@@ -243,6 +243,8 @@ class ESKF:
             return self._on_imu(ev, ts)
         if sensor == 'POSITION':
             return self._on_uwb(ev, ts)
+        if sensor == 'CAMERA':
+            return self._on_camera(ev, ts)
         return None
 
     def reset(self):
@@ -689,8 +691,68 @@ class ESKF:
             source   = 'POSITION',
             state    = 'UWB_CORRECTION',
             sid      = 0,
-            active   = False,
+            active   = self._prev_stroke_active,
         )
+
+    def _on_camera(self, ev: dict, ts: int) -> "dict | None":
+        """
+        Ingest a camera-derived tip position measurement.
+
+        ev must contain:
+            'tip_board': (x, y) in metres — tip position on board
+            'confidence': float 0–1 — detection quality
+            'ts_hw': int — timestamp in microseconds
+
+        Camera is treated as a high-precision absolute position measurement
+        with sigma_camera = 0.005m (~5mm), much tighter than UWB's 0.040m.
+        When confidence is low, sigma is inflated to degrade gracefully.
+        """
+        tip = ev.get('tip_board')
+        if tip is None:
+            return None
+
+        z = np.array([float(tip[0]), float(tip[1])], dtype=float)
+        if not np.all(np.isfinite(z)):
+            return None
+
+        # Clamp to board bounds
+        z[0] = float(np.clip(z[0], 0.0, self._board_w))
+        z[1] = float(np.clip(z[1], 0.0, self._board_h))
+
+        confidence = float(ev.get('confidence', 1.0))
+        sigma = cfg.fusion_eskf.sigma_camera / max(confidence, 0.1)
+        R = np.eye(2) * sigma ** 2
+
+        # Standard Kalman position update (same structure as _uwb_update)
+        H   = np.zeros((2, 6)); H[0, 0] = 1.0; H[1, 1] = 1.0
+        y   = z - self.p
+        S   = H @ self.P @ H.T + R
+        K   = self.P @ H.T @ np.linalg.inv(S)
+
+        # Hard reject if innovation is unreasonably large
+        innov_norm = float(np.linalg.norm(y))
+        if innov_norm > 0.15:   # 15cm — camera should be within 15cm of IMU
+            return self._emit(ts, 'CAMERA', self._last_stroke_state, 0,
+                              self._prev_stroke_active)
+
+        dx = K @ y
+        dx[0:2] = np.clip(dx[0:2], -0.05, 0.05)   # max 5cm correction per fix
+        dx[2:4] = np.clip(dx[2:4], -0.20, 0.20)
+        dx[4:6] = np.clip(dx[4:6], -0.01, 0.01)
+
+        self.p   += dx[0:2]
+        self.v   += dx[2:4]
+        self.b_a += dx[4:6]
+
+        I   = np.eye(6)
+        IKH = I - K @ H
+        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        self._sanitize_covariance()
+        self._apply_covariance_floor()
+        self._clamp_to_board()
+
+        return self._emit(ts, 'CAMERA', self._last_stroke_state, 0,
+                          self._prev_stroke_active)
 
     def _uwb_update(self,
                     z:           np.ndarray,

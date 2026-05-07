@@ -135,7 +135,7 @@
                 color: var(--color-foreground);
                 border: none;
 
-                font-family: 'Poppins';
+                font-family: 'Poppins', sans-serif;
                 font-size: 0.8rem;
                 font-weight: 500;
                 cursor: pointer;
@@ -551,7 +551,7 @@
                         border-radius: 0.5rem;
                         background: var(--color-muted);
                         color: var(--color-foreground);
-                        font-family: 'Poppins';
+                        font-family: 'Poppins', sans-serif;
                         font-size: 0.80rem;
                         outline: none;
                         transition: border-color 0.18s ease;

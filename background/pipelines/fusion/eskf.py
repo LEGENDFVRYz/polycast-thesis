@@ -880,6 +880,74 @@ class ESKF:
 
         return True
 
+    def on_odometry(
+        self,
+        delta_xy:        np.ndarray,
+        window_start_ts: int | None = None,
+    ) -> bool:
+        """Kalman update from a learned-odometry displacement prediction.
+
+        Treats the model output as a position measurement with H = [I 0 0]:
+          z         = p_anchor + delta_xy   (predicted current position)
+          innovation = z − self.p
+          R         = sigma_odom² · I₂     (from cfg.odometry.sigma_odom)
+
+        p_anchor is retrieved from the ESKF state ring-buffer at window_start_ts
+        (the hw-ts of the oldest frame in the emitted IMU window, exposed by
+        IMUOdometryBuffer.window_start_ts).  Falls back to self.p when the
+        timestamp is unavailable, which makes the innovation equal to delta_xy —
+        still a valid soft correction via the Kalman gain.
+
+        Called at ~5 Hz (every stride frames) during active drawing only.
+        Returns True if the update was applied.
+        """
+        ocfg = cfg.odometry
+        if not np.all(np.isfinite(delta_xy)):
+            return False
+
+        # Resolve anchor position at window-start time.
+        p_anchor = self.p.copy()
+        if window_start_ts is not None:
+            result = self._interpolate_at(window_start_ts)
+            if result is not None:
+                p_anchor = result[0]   # (p, v, q) — take p
+
+        # Measurement: predicted current position = p_anchor + Δxy
+        z = p_anchor + np.asarray(delta_xy, dtype=float)
+        y = z - self.p                     # innovation (2,)
+
+        H = np.zeros((2, 6))
+        H[0, 0] = 1.0
+        H[1, 1] = 1.0
+
+        R = (ocfg.sigma_odom ** 2) * np.eye(2)
+        S = H @ self.P @ H.T + R           # 2×2
+        K = self.P @ H.T @ np.linalg.inv(S)  # 6×2
+
+        dx = K @ y
+        if not np.all(np.isfinite(dx)):
+            return False
+
+        # Clip position correction — same cap as UWB in drawing mode so one
+        # odometry update cannot fold a visible stroke artifact.
+        cap = ocfg.max_pos_correction_m
+        dx[0:2] = _clip_vec_norm(dx[0:2], cap)
+        dx[2:4] = _clip_vec_norm(dx[2:4], cap * 2.0)   # velocity correction: 2× looser
+        dx[4:6] = np.clip(dx[4:6], -0.01, 0.01)        # bias nudge: tighter than UWB
+
+        self.p   += dx[0:2]
+        self.v   += dx[2:4]
+        self.b_a += dx[4:6]
+
+        # Joseph-form covariance update — numerically stable, matches _uwb_update.
+        I   = np.eye(6)
+        IKH = I - K @ H
+        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
+        self._sanitize_covariance()
+        self._apply_covariance_floor()
+        self._sanitize_state()
+        return True
+
     def _interpolate_at(self, ts_uwb: int):
         """Bracket-and-lerp lookup in the IMU ring buffer.
 

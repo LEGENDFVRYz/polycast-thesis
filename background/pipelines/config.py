@@ -625,6 +625,35 @@ class PostprocessConfig:
 # ------------------------------------------------------------------------
 # ROOT CONFIG (wrapper)
 # ------------------------------------------------------------------------
+# ------------------------------------------------------------------------
+# LEARNED ODOMETRY (CNN + Bi-LSTM displacement predictor)
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class OdometryConfig:
+    # Set to True only after model assets exist in assets/.
+    enabled: bool = False
+
+    model_path:     str = "background/pipelines/fusion/learned_odometry/assets/odometry_net.pt"
+    norm_mean_path: str = "background/pipelines/fusion/learned_odometry/assets/imu_mean.npy"
+    norm_std_path:  str = "background/pipelines/fusion/learned_odometry/assets/imu_std.npy"
+
+    # Buffer parameters — must match values used during training.
+    # Board: 1.25 m (x) × 1.20 m (y).  Anchors occupy all four corners,
+    # so calibration points are inset 10 cm → max grid stroke ≈ 1.45 m.
+    # 512 frames / 170 Hz ≈ 3.0 s — covers 1.45 m at ≥ 0.48 m/s (natural pace).
+    # WARNING: changing this after data collection requires a full re-collect + retrain.
+    window_size: int = 512   # frames (~3.0 s at the observed 170 Hz effective rate)
+    stride:      int = 40    # new frames between inferences (~4.25 Hz inference cadence)
+
+    # ESKF measurement noise for the odometry update.
+    # Set from validation RMSE: if val_rmse ≈ 4 cm, use sigma_odom = 0.04.
+    sigma_odom: float = 0.05          # metres (1-sigma per axis)
+
+    # Per-update position-correction clip — matches UWB drawing-mode cap so the
+    # odometry nudge cannot fold a visible stroke artifact in a single update.
+    max_pos_correction_m: float = 0.015
+
+
 @dataclass(frozen=True)
 class Config:
     serial: SerialConfig = field(default_factory=SerialConfig)
@@ -637,6 +666,7 @@ class Config:
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    odometry: OdometryConfig = field(default_factory=OdometryConfig)
 
 
 # declare the config file

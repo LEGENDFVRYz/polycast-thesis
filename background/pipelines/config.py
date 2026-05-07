@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM20"
+    port: str = "COM3"
     baud: int = 921600
 
 
@@ -33,7 +33,7 @@ class SerialConfig:
 class IMUConfig:
     # Actual observed effective rate is closer to 170–180 Hz than ideal 250 Hz.
     # ESKF dt clamp depends on this value, so keep it near measured reality.
-    sample_rate_hz: float = 175.0
+    sample_rate_hz: float = 165.0
 
     # ZUPT / stillness detector.
     # These values are intentionally permissive enough to catch real pauses,
@@ -268,7 +268,7 @@ class FusionModeTable:
         jump_speed_max = 1.8,
         pos_floor      = 0.012,
         acc_scale      = 0.50,   # reduce IMU double-integration growth
-        pos_gain_cap   = 0.095
+        pos_gain_cap   = 0.13    # raised from 0.095: allows UWB to correct loop scale during fast strokes
     ))
 
     # Short high-speed burst mode.
@@ -315,7 +315,8 @@ class FusionModeTable:
 class StrokeDeadReckonerConfig:
     # Blend weight for HPF component inside CONTACT_DRAWING.
     # acc_for_pred = (acc_raw - b_a)*(1-detail_weight) + acc_hpf*detail_weight
-    detail_weight: float = 0.35
+    # Raised from 0.35 → 0.55: more HPF reduces slow-bias accumulation during fast strokes.
+    detail_weight: float = 0.55
 
     # IMU scale during AIR_MOVE — limits air drift without blackout.
     air_scale: float = 0.10
@@ -339,7 +340,7 @@ class FusionESKFConfig:
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
     acc_spike_clamp_enabled: bool = True
-    acc_spike_clamp_ms2:     float = 2.5   # tethered tune: softens FSR/tilt impulses during active ink
+    acc_spike_clamp_ms2:     float = 1.8   # tightened from 2.5: limits centripetal overbloom during fast circular strokes
 
     # Acceleration-bias random walk.
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
@@ -445,7 +446,7 @@ class FusionESKFConfig:
     # while still allowing IMU shape within the UWB neighbourhood.
     active_vel_cap_ms: float = 0.36
     active_uwb_guard_enabled: bool = True
-    active_uwb_guard_radius_m: float = 0.030
+    active_uwb_guard_radius_m: float = 0.022   # tightened from 0.030: triggers pullback sooner for fast circles
     active_uwb_guard_alpha: float = 0.78
     active_uwb_guard_max_age_s: float = 0.85
 
@@ -526,7 +527,7 @@ class FusionESKFConfig:
 class StrokeCleanerConfig:
     # Batch/offline cleanup applied only after pen-up. Live ESKF output is still
     # emitted immediately, then the finished stroke is corrected before delivery.
-    enabled: bool = True
+    enabled: bool = False
 
     # Minimum useful stroke size. Shorter strokes are left untouched because
     # double-integrating a tiny segment is usually less reliable than the fused path.

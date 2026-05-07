@@ -261,6 +261,9 @@ if __name__ == "__main__":
                     print(f"\n[IMU #{imu['packet_id']}]")
                     print(f"  Force: {imu['force']:.2f}")
                     print(f"  Accel: {imu['acc'][0]:.2f}, {imu['acc'][1]:.2f}, {imu['acc'][2]:.2f}")
+                    if imu.get('gyro'):
+                        g = imu['gyro']
+                        print(f"  Gyro:  {g[0]:.4f}, {g[1]:.4f}, {g[2]:.4f}")
                     print(f"  Quat:  {q[0]:.2f}, {q[1]:.2f}, {q[2]:.2f}, {q[3]:.2f}")
 
                 if FILTER_MODE in ['BOTH', 'UWB'] and latest['UWB']:

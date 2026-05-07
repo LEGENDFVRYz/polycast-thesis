@@ -39,7 +39,7 @@
         margin-top: 1rem;
 
         .header-title {
-            font-family: 'Poppins';
+            font-family: 'Poppins', sans-serif;
             font-weight: 600;
             font-size: 1.25rem;
             color: var(--slate-800);

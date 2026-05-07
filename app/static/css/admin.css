@@ -1,7 +1,7 @@
 
 /* === ADMIN CONTROL PANEL STYLES === */
 .admin-ctn {
-    font-family: 'Poppins';
+    font-family: 'Poppins', sans-serif;
     font-weight: 600;
     color: #102E4A;
     display: flex;

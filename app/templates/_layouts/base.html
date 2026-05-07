@@ -141,6 +141,12 @@
             </button>
         </form>
     </div>
+    {% else %}
+    <div class="modal-actions">
+        <a href="{{ url_for('admin.login_page') }}" class="btn btn-primary modal-btn" style="width: 100%;">
+            Sign In to Admin Dashboard
+        </a>
+    </div>
     {% endif %}
     {% endcall %}
 

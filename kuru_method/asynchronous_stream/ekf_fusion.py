@@ -66,6 +66,16 @@ _IMU_DT_WARN_EVERY = 25
 # still computed and shown in the debug panel as a diagnostic trace.
 USE_RANGE_KF_FOR_EKF = False
 
+# Runaway re-init guard for handwriting sessions. A mid-stroke soft re-init
+# is visually worse than a short degraded segment because it teleports the
+# coordinate frame and poisons the note smoother / recognizer. The policy is:
+# detect the runaway while writing, defer the snap, then re-anchor only after
+# pen lift plus several stable UWB cycles.
+RUNAWAY_DEFER_WHILE_WRITING = True
+RUNAWAY_DEFER_STABLE_UWB_FIXES = 4
+RUNAWAY_DEFER_CLEAR_DIST_M = 0.25
+RUNAWAY_DEFER_MAX_AGE_S = 6.0
+
 
 # -------------------------------------------------------------------------
 #  TIGHTLY COUPLED EKF
@@ -98,6 +108,15 @@ class TightlyCoupledEKF:
     # Measurement noise
     SIGMA_UWB      = 0.08   # m — Kalman-update R (quality-weighted, was 0.15)
     GATE_SIGMA_UWB = 0.12   # m — gate-only R (tight, fixed, not quality-weighted)
+
+    # Writing-mode trust balance experiment:
+    # During pen-down, UWB is useful as a slow global drift correction but is
+    # too coarse to define fine handwriting shape. Inflate R while writing so
+    # the IMU prediction/velocity continuity carries the stroke shape, then let
+    # normal/touchdown/hover logic re-anchor outside the high-detail stroke.
+    # This is runtime-togglable from main_ekf.py with the W key.
+    PEN_DOWN_UWB_R_SCALE = 9.0     # R multiplier; std multiplier = 3x
+    PEN_DOWN_GATE_SCALE  = 1.0     # keep gate unchanged by default
 
     # Chi-squared gate threshold (1 degree of freedom, scalar range measurement)
     GATE_CHI2  = 3.841   # 95% CL  (was 6.635 / 99% — tighter outlier rejection)
@@ -215,6 +234,14 @@ class TightlyCoupledEKF:
         # global SIGMA_UWB until the underlying bias is fixed.
         # See verification/out/report_baseline.md for the comparison data.
         self._R_per_anchor = np.full(len(anchors), self.SIGMA_UWB ** 2)
+
+        # Runtime diagnostics / controls for writing-mode UWB weighting.
+        self.writing_uwb_drift_mode = True
+        self.pen_down_uwb_r_scale   = float(self.PEN_DOWN_UWB_R_SCALE)
+        self._last_uwb_policy       = 'COLD_START'
+        self._last_uwb_mode         = 'COLD_START'
+        self._last_uwb_r_scale      = 1.0
+        self._last_gate_chi2        = self.GATE_CHI2
 
         # Per-anchor NLOS muting state
         self._consec_reject = np.zeros(len(anchors), dtype=int)
@@ -500,16 +527,39 @@ class TightlyCoupledEKF:
         # has already advanced state and inflated covariance; that is the
         # intended behaviour for sustained hover.
         if mode == PenMode.HOVER_LONG:
+            self._last_uwb_policy  = 'HOVER_LONG_SKIP'
+            self._last_uwb_mode    = getattr(mode, 'name', str(mode))
+            self._last_uwb_r_scale = float('inf')
+            self._last_gate_chi2   = float(self.GATE_CHI2)
             return [], []
 
         # Per-mode R / gate scales — combined later with adaptive R.
         r_mode_scale = 1.0
         gate_chi2    = self.GATE_CHI2
-        if mode == PenMode.HOVER_SHORT or mode == PenMode.HOVER_H:
+        policy       = 'NORMAL_UWB_ANCHOR'
+
+        if mode == PenMode.PEN_DOWN and self.writing_uwb_drift_mode:
+            # Make UWB a slow drift correction during actual writing. This
+            # reduces UWB-induced jagged letter shape while preserving global
+            # anchoring over multiple accepted ranges.
+            r_mode_scale *= max(1.0, float(self.pen_down_uwb_r_scale))
+            gate_chi2    *= max(1.0, float(self.PEN_DOWN_GATE_SCALE))
+            policy        = 'WRITING_IMU_DOMINANT'
+        elif mode == PenMode.PEN_DOWN:
+            policy = 'WRITING_UWB_NORMAL'
+        elif mode == PenMode.HOVER_SHORT or mode == PenMode.HOVER_H:
             r_mode_scale = float(ALPHA_R_HOVER)
+            policy       = 'HOVER_UWB_WEAK'
+
         if touchdown_reacq:
             r_mode_scale = max(r_mode_scale, float(R_TOUCHDOWN_SCALE))
             gate_chi2    = float(GATE_CHI2_TOUCHDOWN)
+            policy      += '+TOUCHDOWN_REACQ'
+
+        self._last_uwb_policy  = policy
+        self._last_uwb_mode    = getattr(mode, 'name', str(mode))
+        self._last_uwb_r_scale = float(r_mode_scale)
+        self._last_gate_chi2   = float(gate_chi2)
 
         n_anchors = len(self.anchors)
         if quality_weights is None:
@@ -784,6 +834,12 @@ class TightlyCoupledEKF:
             'consec_outage': self._consec_outage,
             'bias'         : self.bias,
             'velocity'     : self.velocity,
+            'uwb_policy'   : self._last_uwb_policy,
+            'uwb_mode'     : self._last_uwb_mode,
+            'uwb_r_scale'  : self._last_uwb_r_scale,
+            'uwb_gate_chi2': self._last_gate_chi2,
+            'writing_uwb_drift_mode': self.writing_uwb_drift_mode,
+            'pen_down_uwb_r_scale'  : self.pen_down_uwb_r_scale,
         }
 
     # -- RTS backward smoother (offline only) --------------------------------
@@ -928,6 +984,11 @@ class AsyncEKFFusionEngine:
         # the loop in which every innovation exceeds MAX_INNOV_M, all
         # anchors get muted, and IMU dead-reckoning drifts unbounded.
         self._runaway_count = 0
+        # Runaway re-init deferral state. Only the fusion engine knows the
+        # current contact / pen-mode state, so this lives above TightlyCoupledEKF.
+        self._pending_reinit = None
+        self._deferred_reinit_stable = 0
+        self._last_runaway_event = 'none'
 
     # -- IMU predict --------------------------------------------------------
 
@@ -1168,7 +1229,7 @@ class AsyncEKFFusionEngine:
 
         # -- Fix I: EKF-vs-IRLS runaway detection --------------------------
         if pos is not None:
-            self._check_runaway(pos, filtered_dists)
+            self._check_runaway(pos, filtered_dists, ts=ts)
 
         # Warn on prolonged outage
         n_out = self._ekf.consecutive_outage
@@ -1218,13 +1279,71 @@ class AsyncEKFFusionEngine:
 
     # -- Fix I helper: EKF vs IRLS runaway escape --------------------------
 
-    def _check_runaway(self, pos_ekf: np.ndarray, dists) -> None:
+    def _is_runaway_reinit_deferred_context(self) -> bool:
+        """True when a soft re-init would split active handwriting."""
+        if not RUNAWAY_DEFER_WHILE_WRITING:
+            return False
+        try:
+            if bool(self._is_writing):
+                return True
+        except Exception:
+            pass
+        try:
+            return self._pen_mode.mode == PenMode.PEN_DOWN
+        except Exception:
+            return False
+
+    def _set_pending_reinit(self, irls_2d: np.ndarray, mismatch_m: float, ts=None) -> None:
+        """Remember a runaway target but do not snap the EKF mid-stroke."""
+        was_pending = self._pending_reinit is not None
+        self._pending_reinit = {
+            'target': np.asarray(irls_2d, dtype=float).copy(),
+            'mismatch_m': float(mismatch_m),
+            'ts': int(ts) if ts is not None else None,
+        }
+        self._deferred_reinit_stable = 0
+        self._last_runaway_event = 'deferred_while_writing'
+        if not was_pending:
+            print(f"[EKF] Runaway escape deferred while writing: EKF/IRLS "
+                  f"mismatch={mismatch_m:.2f} m — will re-anchor after pen lift "
+                  f"and {RUNAWAY_DEFER_STABLE_UWB_FIXES} stable UWB fixes")
+
+    def _clear_pending_reinit(self, reason: str) -> None:
+        if self._pending_reinit is not None:
+            print(f"[EKF] Deferred runaway re-init cleared: {reason}")
+        self._pending_reinit = None
+        self._deferred_reinit_stable = 0
+        self._last_runaway_event = f'cleared:{reason}'
+
+    def _soft_reinit_to_irls(self, irls_2d: np.ndarray, mismatch_m: float, label: str) -> None:
+        """Apply the existing soft re-init mechanics in one place."""
+        self._last_runaway_event = label
+        print(f"[EKF] Runaway escape: EKF/IRLS mismatch={mismatch_m:.2f} m — {label}")
+        self._ekf.initialize(float(irls_2d[0]), float(irls_2d[1]))
+        self._ekf._range_bank.reset()
+        self._ekf._mute_remain[:]   = 0
+        self._ekf._consec_reject[:] = 0
+        self._ekf._zupt_stall_s     = 0.0
+        self._ekf._zupt_accel_buf.clear()
+        self._ekf._vel_dir_buf.clear()
+        self._ekf._bias_freeze      = False
+        self._runaway_count         = 0
+        self._pending_reinit        = None
+        self._deferred_reinit_stable = 0
+
+    # -- Fix I helper: EKF vs IRLS runaway escape --------------------------
+
+    def _check_runaway(self, pos_ekf: np.ndarray, dists, ts=None) -> None:
         """
-        Compare the EKF position against a fresh IRLS fix.  When the two
-        disagree by more than RUNAWAY_DIST_M for RUNAWAY_HOLD consecutive
-        UWB cycles AND the IRLS fix itself is on-board (so we don't re-init
-        on an IRLS outlier), soft-reset the EKF to the IRLS fix and flush
-        the per-anchor muting / range-KF state.
+        Compare EKF position against a fresh IRLS fix.
+
+        Previous behavior snapped the EKF to IRLS immediately once the
+        mismatch exceeded RUNAWAY_DIST_M for RUNAWAY_HOLD cycles. That is
+        safe while lifted, but destructive while writing: it creates a
+        10–50 cm discontinuity inside one note and all downstream traces
+        become unreadable. This version defers the snap while the pen is
+        down, then applies it only after pen lift plus several stable UWB
+        fixes. No letter-shaping or recognition bias is introduced.
         """
         try:
             pos_irls_xyz, _ = self._irls.solve(dists)
@@ -1243,13 +1362,53 @@ class AsyncEKFFusionEngine:
         irls_sane = (-margin <= irls_2d[0] <= board_max_x and
                      -margin <= irls_2d[1] <= board_max_y)
         if not irls_sane:
-            # IRLS itself is garbage — don't use it as a reset target.
-            # Hold the runaway counter so we don't immediately fire once a
-            # sane IRLS arrives; reset it so we re-confirm from scratch.
             self._runaway_count = 0
+            # Do not keep an old pending target if the current IRLS is not sane.
+            if self._pending_reinit is not None:
+                self._deferred_reinit_stable = 0
             return
 
         dist_mismatch = float(np.linalg.norm(pos_ekf - irls_2d))
+        writing_context = self._is_runaway_reinit_deferred_context()
+        outage_clear = (self._ekf.consecutive_outage == 0)
+
+        # If a runaway target was deferred, manage it before considering a new
+        # immediate reset. Recovery can happen naturally if UWB/IRLS returns
+        # close to the EKF; otherwise re-anchor only when lifted and stable.
+        if self._pending_reinit is not None:
+            self._pending_reinit['target'] = irls_2d.copy()
+            self._pending_reinit['mismatch_m'] = dist_mismatch
+            self._pending_reinit['ts'] = int(ts) if ts is not None else self._pending_reinit.get('ts')
+
+            if dist_mismatch <= RUNAWAY_DEFER_CLEAR_DIST_M:
+                self._clear_pending_reinit(f'EKF/IRLS recovered ({dist_mismatch*100:.1f}cm)')
+                self._runaway_count = 0
+                return
+
+            # If the user keeps writing for a long time after a deferred event,
+            # keep updating the target but do not snap mid-stroke. The note is
+            # marked degraded by main_ekf's integrity guard/outage markers.
+            if writing_context:
+                self._deferred_reinit_stable = 0
+                self._last_runaway_event = 'deferred_while_writing'
+                self._runaway_count = 0
+                return
+
+            if outage_clear:
+                self._deferred_reinit_stable += 1
+            else:
+                self._deferred_reinit_stable = 0
+
+            if self._deferred_reinit_stable >= RUNAWAY_DEFER_STABLE_UWB_FIXES:
+                self._soft_reinit_to_irls(
+                    irls_2d, dist_mismatch,
+                    f'deferred soft re-init after lift/stable UWB ({self._deferred_reinit_stable} fixes)')
+                return
+
+            self._last_runaway_event = 'pending_after_lift_waiting_stable_uwb'
+            self._runaway_count = 0
+            return
+
         if dist_mismatch <= self._ekf.RUNAWAY_DIST_M:
             self._runaway_count = 0
             return
@@ -1258,18 +1417,12 @@ class AsyncEKFFusionEngine:
         if self._runaway_count < self._ekf.RUNAWAY_HOLD:
             return
 
-        print(f"[EKF] Runaway escape: EKF ({pos_ekf[0]:.2f}, {pos_ekf[1]:.2f}) "
-              f"vs IRLS ({irls_2d[0]:.2f}, {irls_2d[1]:.2f}) = "
-              f"{dist_mismatch:.2f} m — soft re-init")
-        self._ekf.initialize(irls_2d[0], irls_2d[1])
-        self._ekf._range_bank.reset()
-        self._ekf._mute_remain[:]   = 0
-        self._ekf._consec_reject[:] = 0
-        self._ekf._zupt_stall_s     = 0.0
-        self._ekf._zupt_accel_buf.clear()
-        self._ekf._vel_dir_buf.clear()
-        self._ekf._bias_freeze      = False
-        self._runaway_count         = 0
+        if writing_context:
+            self._set_pending_reinit(irls_2d, dist_mismatch, ts=ts)
+            self._runaway_count = 0
+            return
+
+        self._soft_reinit_to_irls(irls_2d, dist_mismatch, 'soft re-init')
 
     # -- properties ---------------------------------------------------------
 
@@ -1321,4 +1474,12 @@ class AsyncEKFFusionEngine:
         d = self._ekf.diagnostics
         d['heading_locked'] = self._imu.heading_locked
         d['heading_vec']    = self._imu.heading_vec
+        pending = self._pending_reinit or {}
+        d['runaway_reinit_policy'] = 'DEFER_WHILE_WRITING' if RUNAWAY_DEFER_WHILE_WRITING else 'IMMEDIATE'
+        d['runaway_deferred'] = self._pending_reinit is not None
+        d['runaway_deferred_stable'] = int(self._deferred_reinit_stable)
+        d['runaway_deferred_required'] = int(RUNAWAY_DEFER_STABLE_UWB_FIXES)
+        d['runaway_deferred_mismatch_m'] = float(pending.get('mismatch_m', 0.0)) if pending else 0.0
+        d['runaway_last_event'] = self._last_runaway_event
+        d['runaway_count'] = int(self._runaway_count)
         return d

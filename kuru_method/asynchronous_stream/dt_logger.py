@@ -1,117 +1,163 @@
-import argparse
-import csv
+"""
+csv_recorder.py  —  PolyCast Async Stream CSV Recorder
+======================================================
+Records the live asynchronous serial stream from the ESP32 WROOM receiver
+
+The output format matches data_parser.py expectations exactly:
+    IMU:  I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts>
+    UWB:  U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts>
+
+Usage
+-----
+    python csv_recorder.py                     # defaults: COM5, output to timestamped file
+    python csv_recorder.py --port COM3         # specify port
+    python csv_recorder.py --output data.csv   # specify output file
+
+Press Ctrl+C to stop recording. Statistics are printed at the end.
+"""
+
 import os
-from typing import List, Tuple
-import numpy as np
+import sys
+import time
+import argparse
+import serial
 
-# ===============================================================
-# CONFIGURATION (Set your defaults here)
-# ===============================================================
-# This line finds the folder where dt_logger.py actually lives
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# Now we use ./ relative to the script's own folder
-DEFAULT_CSV_PATH = os.path.join(BASE_DIR, "datasets_str_50hz", "middle-.csv")
+class AsyncCSVRecorder:
+    """Records validated async stream lines from serial to a CSV file."""
 
-USE_PLOT = True                                   
-MAX_PACKETS = None                           
-# ===============================================================
+    def __init__(self, port='COM5', baud=115200, output_path=None):
+        self.port        = port
+        self.baud        = baud
+        self.output_path = output_path or self._default_filename()
+        self.ser         = None
 
-def compute_deltas(csv_path: str, max_packets: int | None = None) -> Tuple[List[float], List[float]]:
-    """Parse the CSV and return lists of IMU and UWB Δt values in seconds."""
-    imu_dts: List[float] = []
-    uwb_dts: List[float] = []
-    last_imu_ts: int | None = None
-    last_uwb_ts: int | None = None
-    count = 0
+        # Statistics
+        self.imu_count   = 0
+        self.uwb_count   = 0
+        self.skipped     = 0
+        self.start_time  = None
 
-    if not os.path.exists(csv_path):
-        print(f"ERROR: File not found at {os.path.abspath(csv_path)}")
-        return [], []
+    @staticmethod
+    def _default_filename():
+        """Generate a timestamped filename in the script's directory."""
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        datasets_dir = os.path.join(script_dir, 'datasets')
+        os.makedirs(datasets_dir, exist_ok=True)
+        ts = time.strftime('%Y%m%d_%H%M%S')
+        return os.path.join(datasets_dir, f'async_{ts}.csv')
 
-    with open(csv_path, 'r', newline='') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if not row:
-                continue
-            if row[0] == 'I' and len(row) >= 11:
-                try:
-                    ts = int(row[10])
-                except ValueError:
-                    continue
-                if last_imu_ts is not None:
-                    dt = (ts - last_imu_ts) / 1_000_000.0
-                    imu_dts.append(dt)
-                last_imu_ts = ts
-                count += 1
-            elif row[0] == 'U' and len(row) >= 7:
-                try:
-                    ts = int(row[6])
-                except ValueError:
-                    continue
-                if last_uwb_ts is not None:
-                    dt = (ts - last_uwb_ts) / 1_000_000.0
-                    uwb_dts.append(dt)
-                last_uwb_ts = ts
-                count += 1
-            
-            if max_packets is not None and count >= max_packets:
-                break
-    return imu_dts, uwb_dts
+    def connect(self) -> bool:
+        try:
+            self.ser = serial.Serial(self.port, self.baud, timeout=1)
+            time.sleep(2)   # wait for Arduino reset
+            print(f"Connected to {self.port} at {self.baud} baud")
+            return True
+        except Exception as e:
+            print(f"Connection failed: {e}")
+            return False
 
-def print_stats(name: str, dts: List[float]) -> None:
-    if not dts:
-        print(f"{name}: no data")
-        return
-    arr = np.array(dts, dtype=float)
-    print(f"\n{name} Δt (s) Statistics:")
-    print(f"  count: {len(arr)}")
-    print(f"  mean:  {arr.mean():.6f}")
-    print(f"  std:   {arr.std(ddof=1):.6f}")
-    print(f"  min:   {arr.min():.6f}")
-    print(f"  max:   {arr.max():.6f}")
-    print(f"  median:{np.median(arr):.6f}")
+    def record(self):
+        """
+        Read lines from serial, validate format, write to CSV.
+        Runs until Ctrl+C.
+        """
+        self.start_time = time.time()
+        print(f"Recording to: {self.output_path}")
+        print("Press Ctrl+C to stop.\n")
 
-def maybe_plot(imu_dts: List[float], uwb_dts: List[float], csv_path: str) -> None:
+        with open(self.output_path, 'w') as f:
+            try:
+                while True:
+                    if not self.ser or self.ser.in_waiting == 0:
+                        time.sleep(0.001)
+                        continue
+
+                    line = self.ser.readline().decode('utf-8', errors='replace').strip()
+                    if not line:
+                        continue
+
+                    parts = line.split(',')
+
+                    # Validate IMU line (legacy 11-field or extended 14-field with gyro)
+                    if parts[0] == 'I' and len(parts) in (11, 14):
+                        f.write(line + '\n')
+                        self.imu_count += 1
+
+                    # Validate UWB line: U,seq,d0,d1,d2,d3,ts
+                    elif parts[0] == 'U' and len(parts) == 7:
+                        f.write(line + '\n')
+                        self.uwb_count += 1
+
+                    else:
+                        self.skipped += 1
+                        continue
+
+                    # Periodic flush and status
+                    total = self.imu_count + self.uwb_count
+                    if total % 500 == 0:
+                        f.flush()
+                        elapsed = time.time() - self.start_time
+                        imu_hz = self.imu_count / elapsed if elapsed > 0 else 0
+                        uwb_hz = self.uwb_count / elapsed if elapsed > 0 else 0
+                        print(f"  [{elapsed:.0f}s] IMU: {self.imu_count} "
+                              f"({imu_hz:.0f} Hz)  |  UWB: {self.uwb_count} "
+                              f"({uwb_hz:.0f} Hz)  |  Skipped: {self.skipped}")
+
+            except KeyboardInterrupt:
+                f.flush()
+                print("\nRecording stopped.")
+
+    def close(self):
+        if self.ser:
+            self.ser.close()
+            self.ser = None
+
+    def print_summary(self):
+        elapsed = time.time() - self.start_time if self.start_time else 0
+        print(f"\n{'='*55}")
+        print(f"  ASYNC CSV RECORDER — SESSION SUMMARY")
+        print(f"{'='*55}")
+        print(f"  Output file    : {self.output_path}")
+        print(f"  Duration       : {elapsed:.1f} s")
+        print(f"  IMU packets    : {self.imu_count}")
+        print(f"  UWB packets    : {self.uwb_count}")
+        print(f"  Skipped lines  : {self.skipped}")
+        if elapsed > 0:
+            print(f"  Avg IMU rate   : {self.imu_count / elapsed:.1f} Hz")
+            print(f"  Avg UWB rate   : {self.uwb_count / elapsed:.1f} Hz")
+        print(f"{'='*55}\n")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='PolyCast Async Stream CSV Recorder')
+    parser.add_argument('--port', default='COM5',
+                        help='Serial port (default: COM5)')
+    parser.add_argument('--baud', type=int, default=115200,
+                        help='Baud rate (default: 115200)')
+    parser.add_argument('--output', default=None,
+                        help='Output CSV path (default: auto-timestamped)')
+    args = parser.parse_args()
+
+    MODE        = "boardcorner"
+    TESTNAME    = "1"
+    
+    recorder = AsyncCSVRecorder(
+        port="COM5", 
+        baud=921600,
+        output_path=f"{MODE}_{TESTNAME}.csv"
+    )
+    
+    if not recorder.connect():
+        sys.exit(1)
+
     try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("matplotlib is not installed; skipping plots.")
-        return
-    
-    plt.figure(figsize=(10, 4))
-    bins = 50
-    if imu_dts:
-        plt.subplot(1, 2, 1)
-        plt.hist(imu_dts, bins=bins, color='blue', alpha=0.7)
-        plt.title('IMU Δt distribution')
-        plt.xlabel('Δt (s)')
-        plt.ylabel('Count')
-    if uwb_dts:
-        plt.subplot(1, 2, 2)
-        plt.hist(uwb_dts, bins=bins, color='green', alpha=0.7)
-        plt.title('UWB Δt distribution')
-        plt.xlabel('Δt (s)')
-        plt.ylabel('Count')
-    plt.suptitle(f"Dataset: {os.path.basename(csv_path)}")
-    plt.tight_layout()
-    plt.show()
+        recorder.record()
+    finally:
+        recorder.close()
+        recorder.print_summary()
 
-def main() -> None:
-    # Use the hardcoded variables instead of argparse
-    print(f"Analyzing: {DEFAULT_CSV_PATH}")
-    
-    imu_dts, uwb_dts = compute_deltas(DEFAULT_CSV_PATH, MAX_PACKETS)
-    
-    if not imu_dts and not uwb_dts:
-        print("No data processed. Please check your file path or CSV format.")
-        return
-
-    print_stats('IMU', imu_dts)
-    print_stats('UWB', uwb_dts)
-    
-    if USE_PLOT:
-        maybe_plot(imu_dts, uwb_dts, DEFAULT_CSV_PATH)
 
 if __name__ == '__main__':
     main()

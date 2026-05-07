@@ -38,8 +38,8 @@ TIP_OFFSET_FROM_TAG_M = MARKER_LENGTH   # m -- tag to tip along the marker axis
 # Z = mount height above whiteboard surface.
 ANCHORS = np.array([
     [0.00, 0.00, 0.01],   # A0 -- bottom-left (origin)
-    [1.25, 0.00, 0.01],   # A1 -- bottom-right
-    [1.25, 1.20, 0.01],   # A2 -- top-right
+    [1.90, 0.00, 0.01],   # A1 -- bottom-right
+    [1.90, 1.20, 0.01],   # A2 -- top-right
     [0.00, 1.20, 0.01],   # A3 -- top-left
 ], dtype=float)
 
@@ -47,7 +47,7 @@ ANCHORS = np.array([
 # Per-anchor distance correction applied to raw UWB measurements.
 # Re-run calibrate.py and paste the new tuple here after each recalibration.
 # UWB_OFFSETS = (-0.1024, -0.0080, -0.1415, -0.0756)
-UWB_OFFSETS = (-0.1585, -0.0339, -0.1984, -0.1201)
+UWB_OFFSETS = (-0.1411, 0.0062, -0.1652, -0.1305)
 
 # -- EKF feature flags ------------------------------------------------------
 # Item C (Zou 2023, §3.3): feed the EKF posterior range back into each

@@ -309,6 +309,25 @@ class FusionModeTable:
 
 
 # ------------------------------------------------------------------------
+# STROKE DEAD RECKONER
+# ------------------------------------------------------------------------
+@dataclass(frozen=True)
+class StrokeDeadReckonerConfig:
+    # Blend weight for HPF component inside CONTACT_DRAWING.
+    # acc_for_pred = (acc_raw - b_a)*(1-detail_weight) + acc_hpf*detail_weight
+    detail_weight: float = 0.35
+
+    # IMU scale during AIR_MOVE — limits air drift without blackout.
+    air_scale: float = 0.10
+
+    # Snap dead-reckoner origin toward latest UWB tip on pen-down.
+    pen_down_snap_to_uwb: bool = True
+
+    # Max distance (m) for snap. Beyond this, origin stays at current p.
+    pen_down_snap_max_dist_m: float = 0.08
+
+
+# ------------------------------------------------------------------------
 # FUSION (ESKF)
 # ------------------------------------------------------------------------
 @dataclass(frozen=True)
@@ -490,6 +509,9 @@ class FusionESKFConfig:
     # Per-mode parameter table.
     modes: FusionModeTable = field(default_factory=FusionModeTable)
 
+    # Stroke-local dead reckoner config.
+    dead_reckoner: StrokeDeadReckonerConfig = field(default_factory=StrokeDeadReckonerConfig)
+
     # Initial covariance.
     p0_pos: float = 0.35
     p0_vel: float = 0.25
@@ -530,7 +552,7 @@ class StrokeCleanerConfig:
 
     # Conservative blend between current fused ink and cleaned IMU-relative shape.
     # 0.0 = keep current pipeline output, 1.0 = full reference-style IMU cleanup.
-    shape_blend: float = 0.0
+    shape_blend: float = 0.25
 
     # Guard against a bad re-integration exploding a stroke. If the cleaned bbox is
     # outside this ratio versus the raw fused bbox, keep the raw fused stroke.

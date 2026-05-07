@@ -95,7 +95,13 @@ _MODE_STRIP_LEN = 2000   # rolling samples shown in the strip
 
 # ── IMU dead-reckoning integrator (blue layer) ────────────────────────────────
 class _IMUTrack:
-    """Forward Euler integrator — no UWB correction, shows raw drift."""
+    """Forward Euler integrator — no UWB correction, shows raw drift.
+
+    On IMU preprocessor reset (process_one returns None due to a large dt gap),
+    the track snaps back to board center so successive strokes start from a
+    known reference and drift is visible relative to center rather than
+    accumulating from an arbitrary off-screen position.
+    """
 
     __slots__ = ('p', 'v', '_ts')
 
@@ -103,6 +109,15 @@ class _IMUTrack:
         self.p  = [BW / 2.0, BH / 2.0]
         self.v  = [0.0, 0.0]
         self._ts = None
+
+    def reset(self) -> tuple:
+        """Snap to board center — called when IMUPreprocessor.reset() fires."""
+        self.p[0] = BW / 2.0
+        self.p[1] = BH / 2.0
+        self.v[0] = 0.0
+        self.v[1] = 0.0
+        self._ts  = None
+        return (self.p[0], self.p[1])
 
     def update(self, ev: dict) -> tuple:
         ts = ev['ts_hw']
@@ -118,7 +133,8 @@ class _IMUTrack:
         if ev.get('is_static', False):
             self.v[0] = self.v[1] = 0.0
         else:
-            ax, ay = ev.get('acc_board', (0.0, 0.0))
+            # acc_board_tip: rigid-body corrected to pen nib, not sensor-end.
+            ax, ay = ev.get('acc_board_tip', ev.get('acc_board', (0.0, 0.0)))
             self.v[0] += ax * dt
             self.v[1] += ay * dt
 
@@ -404,9 +420,10 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.latest_uwb_ev = None
         self.last_uwb_p    = (BW / 2.0, BH / 2.0)
         self.last_imu_p    = (BW / 2.0, BH / 2.0)
-        self.imu_count     = 0
-        self.uwb_count     = 0
-        self.closed_count  = 0
+        self.imu_count          = 0
+        self.uwb_count          = 0
+        self.closed_count       = 0
+        self._prev_stroke_active = False
         self._stopping     = False
         self._last_pp_meta: dict = {}
 
@@ -584,9 +601,6 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 if not p:
                     continue
 
-                self.last_imu_p = self.imu_trk.update(p)
-                self.imu_x.append(self.last_imu_p[0])
-                self.imu_y.append(self.last_imu_p[1])
                 self.latest_imu_ev = p
 
                 s     = self.contact.process_one(p)
@@ -597,6 +611,26 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 self.imu_count   += 1
                 self.latest_fused = fused
                 self._dirty       = True
+
+                stroke_active_now = bool(fused.get('stroke_active', False))
+
+                # Reset blue IMU track to board center on each new stroke start.
+                # This makes each stroke's raw dead-reckoned shape start from the
+                # same reference so drift is visible per-stroke, not accumulated.
+                if stroke_active_now and not self._prev_stroke_active:
+                    snap = self.imu_trk.reset()
+                    self.imu_x.append(snap[0])
+                    self.imu_y.append(snap[1])
+
+                # Only integrate while the pen is confirmed writing —
+                # idle and air-move frames are excluded so between-stroke
+                # drift does not contaminate the blue layer.
+                if stroke_active_now:
+                    self.last_imu_p = self.imu_trk.update(p)
+                    self.imu_x.append(self.last_imu_p[0])
+                    self.imu_y.append(self.last_imu_p[1])
+
+                self._prev_stroke_active = stroke_active_now
 
                 # Mode strip — one entry per IMU sample (store mode name string)
                 self._strip_colors.append(fused.get('fusion_mode', 'AIR_MOVE'))

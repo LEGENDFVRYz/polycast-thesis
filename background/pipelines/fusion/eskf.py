@@ -40,6 +40,7 @@ from collections import deque
 import numpy as np
 
 from background.pipelines.config import cfg
+from background.pipelines.fusion.stroke_dead_reckoner import StrokeIMUDeadReckoner
 
 
 def _q_to_rotation(q: np.ndarray) -> np.ndarray:
@@ -168,6 +169,7 @@ class ESKF:
         self.last_uwb_ts: int | None = None    # UWB arrival timestamp (diagnostics only)
         self.last_uwb = self.p.copy()
         self.last_uwb_tip = self.p.copy()  # last accepted lever-arm-corrected UWB tip position
+        self._dead_reckoner = StrokeIMUDeadReckoner()
         self._last_uwb_fix_ts: int | None = None   # hw ts of the last stored last_uwb
         self._last_innovation_norm = 0.0
         self._last_r_scale = 1.0
@@ -358,14 +360,16 @@ class ESKF:
         self._last_stale_factor = stale_factor
 
         # 1. Nominal state propagation (mid-point integration).
-        # Prefer tip-corrected acc (lever-arm kinematics applied in imu.py);
-        # fall back to raw sensor-point acc for compatibility with older recorded events.
-        acc_src = (
-            ev.get('acc_board_hp_tip')
-            or ev.get('acc_board_tip')
-            or ev.get('acc_board', (0.0, 0.0))
-        )
-        acc = np.asarray(acc_src, dtype=float)
+        # Separate the two tip-corrected sources produced by imu.py:
+        #   acc_hpf — Path C (HPF): bias stripped, fast-motion detail preserved.
+        #   acc_raw — Path A (EMA): bias still present, slow motion preserved.
+        # Both already have rigid-body lever-arm correction applied.
+        acc_hpf = np.asarray(
+            ev.get('acc_board_hp_tip') or ev.get('acc_board', (0.0, 0.0)),
+            dtype=float)
+        acc_raw = np.asarray(
+            ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0)),
+            dtype=float)
 
         # Read contact state before propagation.  contact.py already separates
         # CONTACT_STATIC from CONTACT_DRAWING; the clamp uses that mode to avoid
@@ -374,25 +378,51 @@ class ESKF:
         stroke_active_now = bool(ev.get('stroke_active', False))
         stroke_active_prev = self._prev_stroke_active
         self._last_stroke_state = stroke_state   # used by _mode_params / _mode_name
-        contact_static_candidate = self._contact_static_candidate(ev, acc, stroke_state)
+        contact_static_candidate = self._contact_static_candidate(ev, acc_hpf, stroke_state)
 
         mode_p = self._update_and_resolve_mode()
         ecfg = cfg.fusion_eskf
+        dr_cfg = ecfg.dead_reckoner
 
-        # When the tip is physically down and stationary, use the static-mode
-        # process model and suppress acceleration before it can create a start/end
-        # hook.  The actual visible freeze happens later in _apply_contact_static_lock.
+        # Contact-state-aware blended acceleration.
+        # CONTACT_DRAWING: blend raw-minus-bias (physical slow motion) with HPF
+        #   (bias-free fast detail) — preserves both slow strokes and fast curvature.
+        # AIR_MOVE: minimal HPF only — limits air drift without blackout.
+        # CONTACT_STATIC / IDLE / UNKNOWN: zero — no integration while planted.
+        detail_w = 0.0
         if contact_static_candidate:
             mode_p = ecfg.modes.static
             a = np.zeros(2, dtype=float)
             self._in_fast_mode = False
             self._fast_arm_count = 0
             self._fast_burst_count = 0
-        else:
-            a = (acc - self.b_a) * mode_p.acc_scale
+        elif stroke_state == 'CONTACT_DRAWING':
+            detail_w = float(dr_cfg.detail_weight)
+            a = (acc_raw - self.b_a) * (1.0 - detail_w) + acc_hpf * detail_w
             if ecfg.acc_spike_clamp_enabled and self._prev_stroke_active:
-                # Clamp by vector norm so diagonal impulses are limited correctly.
                 a = _clip_vec_norm(a, ecfg.acc_spike_clamp_ms2)
+        elif stroke_state == 'AIR_MOVE':
+            detail_w = float(dr_cfg.air_scale)
+            a = acc_hpf * detail_w
+            if ecfg.acc_spike_clamp_enabled:
+                a = _clip_vec_norm(a, ecfg.acc_spike_clamp_ms2)
+        else:
+            # CONTACT_STATIC / IDLE / UNKNOWN
+            a = np.zeros(2, dtype=float)
+
+        # Keep acc pointing at the HPF source so downstream consumers
+        # (imu_cleaner payload, spike-clamp paths that reference acc) are unaffected.
+        acc = acc_hpf
+
+        # Dead reckoner: accumulate stroke-local relative displacement alongside
+        # the global ESKF state. Only active during confirmed ink frames.
+        self._dead_reckoner.set_blend_weight(detail_w)
+        if stroke_state == 'CONTACT_DRAWING' and not contact_static_candidate:
+            self._dead_reckoner.update(
+                acc_blend=a,
+                dt_s=dt_s,
+                drag_inv_s=mode_p.drag_inv_s,
+            )
 
         self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
         self.v += a * dt_s
@@ -432,8 +462,14 @@ class ESKF:
         #    doesn't leak into the next stroke.
         if stroke_active_now and not self._prev_stroke_active:
             self._stroke_start_ts = ts
+            # Hard velocity zero: prevents air-move momentum from hooking stroke start.
+            self.v[:] = 0.0
             self._zupt_soft_update(sigma=0.05)
             self._stroke_start_uwb_snap(ts)
+            self._dead_reckoner.reset(
+                uwb_tip=self.last_uwb_tip,
+                current_p=self.p,
+            )
         elif (not stroke_active_now) and self._prev_stroke_active:
             self._stroke_start_ts = None
             ecfg_se = cfg.fusion_eskf
@@ -444,7 +480,10 @@ class ESKF:
                 if self._tip_lock_active and self._tip_lock_anchor_visible is not None
                 else None
             )
-            self.v *= ecfg_se.stroke_end_v_decay
+            # Explicit hard zero: stroke_end_v_decay=0.0 achieves this, but stated
+            # explicitly so a future config change cannot leak momentum across strokes.
+            self.v[:] = 0.0
+            self._dead_reckoner.close_stroke()
             self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
             self.P[3, 3] *= ecfg_se.stroke_end_p_vel_scale
             self._apply_covariance_floor()
@@ -1497,6 +1536,7 @@ class ESKF:
                     self._k_air_sum / self._k_air_uwb
                     if self._k_air_uwb > 0 else 0.0, 5),
             },
+            'dead_reckoning': self._dead_reckoner.diagnostics(),
         }
 
 

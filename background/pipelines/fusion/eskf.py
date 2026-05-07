@@ -199,8 +199,9 @@ class ESKF:
         self._zupt_fires = 0                           # cumulative _zupt_update invocations
 
         # ── dt jitter tracking ──────────────────────────────────────────────
-        self._dt_clamps = 0          # cumulative count of dt-jitter clamps
-        self._cov_resets = 0         # cumulative covariance reset events (NaN recovery)
+        self._dt_clamps = 0                 # cumulative count of dt-jitter clamps
+        self._cov_resets = 0                # cumulative covariance reset events (NaN recovery)
+        self._cov_reset_suppress = False    # True for one emit cycle after a covariance reset
 
         # ── Innovation-deadlock recovery ─────────────────────────────────────
         # Counts consecutive UWB updates rejected by the innovation hard-gate.
@@ -938,6 +939,12 @@ class ESKF:
         for i in [2, 3]:
             self.P[i, i] = max(self.P[i, i], vel_floor)
 
+        # Hard numerical cap on the entire covariance matrix to prevent the
+        # off-diagonal cross-terms (position-velocity coupling from F·P·Fᵀ)
+        # from growing large enough to overflow the Joseph-form matmul.
+        # 1e6 is far above any physically meaningful covariance for a 1.25×1.20 m board.
+        np.clip(self.P, -1e6, 1e6, out=self.P)
+
     def _reset_covariance(self):
         ecfg = cfg.fusion_eskf
         diag = np.array([
@@ -946,6 +953,16 @@ class ESKF:
             ecfg.p0_bias, ecfg.p0_bias,
         ]) ** 2
         self.P = np.diag(diag)
+        # Snap position to last known UWB tip to prevent a finite-but-wrong p
+        # from being emitted as a teleport line on the next frame.
+        if self.last_uwb_tip is not None and np.all(np.isfinite(self.last_uwb_tip)):
+            self.p[:] = self.last_uwb_tip
+        else:
+            self.p[:] = np.array([self._board_w * 0.5, self._board_h * 0.5])
+        self.v[:] = 0.0
+        self.b_a[:] = 0.0
+        self.b_p[:] = 0.0
+        self._cov_reset_suppress = True  # suppress the very next emit to avoid a teleport segment
         self._cov_resets += 1
         print(f"[ESKF] P became non-finite — covariance reset (total: {self._cov_resets})")
 
@@ -1445,6 +1462,12 @@ class ESKF:
 
     def _emit(self, ts: int, source: str, state: str, sid: int, active: bool) -> dict:
         self._apply_active_uwb_boundary_guard(ts, active)
+        # After a covariance reset the position was just re-anchored to UWB; suppress
+        # stroke_active for this one frame so the visualizer breaks the polyline rather
+        # than connecting the last good ink point to the snapped reset position.
+        if self._cov_reset_suppress:
+            self._cov_reset_suppress = False
+            active = False
         # Visible output = p + b_p.  During drawing b_p provides a slow global
         # offset correction; during air b_p is frozen near zero (decayed on pen-up).
         p_out_x = float(np.clip(self.p[0] + self.b_p[0], 0.0, self._board_w))

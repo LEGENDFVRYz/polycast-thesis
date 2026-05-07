@@ -33,7 +33,7 @@ class SerialConfig:
 class IMUConfig:
     # Actual observed effective rate is closer to 170–180 Hz than ideal 250 Hz.
     # ESKF dt clamp depends on this value, so keep it near measured reality.
-    sample_rate_hz: float = 165.0
+    sample_rate_hz: float = 170.0
 
     # ZUPT / stillness detector.
     # These values are intentionally permissive enough to catch real pauses,
@@ -128,7 +128,7 @@ class UWBConfig:
     range_offsets_m: tuple = (-0.1585, -0.0339, -0.1984, -0.1201)
 
     # Nominal UWB rate.
-    rate_hz: float = 45.0
+    rate_hz: float = 50.0
 
     # Legacy range EMA alpha, kept for old modules.
     ema_alpha: float = 0.25

@@ -72,6 +72,11 @@ AIR_TRAIL = 3000
 IMU_TRAIL = 3000
 UWB_TRAIL = 800
 
+# Maximum allowed displacement between consecutive ink points (metres).
+# Jumps larger than this indicate a covariance reset or NLOS spike; the
+# current polyline is broken and a fresh segment begins at the new point.
+_MAX_INK_JUMP_M = 0.15
+
 _ANCHOR_XS = [p[0] for p in cfg.anchors.positions]
 _ANCHOR_YS = [p[1] for p in cfg.anchors.positions]
 
@@ -638,9 +643,22 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 fx, fy = fused['fused_x'], fused['fused_y']
                 if math.isfinite(fx) and math.isfinite(fy):
                     if fused.get('stroke_active', False):
+                        if self.cur_ink_x:
+                            jump = math.hypot(fx - self.cur_ink_x[-1], fy - self.cur_ink_y[-1])
+                            if jump > _MAX_INK_JUMP_M:
+                                # Teleport guard: break the polyline here.
+                                # Accumulated points are preserved; next point starts fresh.
+                                self.cur_ink_x.clear()
+                                self.cur_ink_y.clear()
                         self.cur_ink_x.append(fx)
                         self.cur_ink_y.append(fy)
                     else:
+                        if self.air_x:
+                            air_jump = math.hypot(fx - self.air_x[-1], fy - self.air_y[-1])
+                            if air_jump > _MAX_INK_JUMP_M:
+                                # Same teleport guard for the gray air trail.
+                                self.air_x.clear()
+                                self.air_y.clear()
                         self.air_x.append(fx)
                         self.air_y.append(fy)
 

@@ -10,9 +10,9 @@ import re
 # ==============================================================================
 VIRTUAL_COM_PORT    = 'COM19'
 BAUD_RATE           = 921600
-MODE                = "ct"
-TESTNAME            = "w"
-LOG_FILE            = f'test/raw/{TESTNAME}.csv'
+MODE                = "circle"
+TESTNAME            = "2"
+LOG_FILE            = f'test/raw/{MODE}_{TESTNAME}.csv'
 
 # ==============================================================================
 # MAIN REPLAY LOOP
@@ -55,8 +55,8 @@ if __name__ == "__main__":
                 type_char = parts[0]
                 
                 # 3. Strict Pre-Flight Check (Mimic the unpacker's requirements)
-                if type_char == 'I' and len(parts) == 11:
-                    pass # Valid IMU
+                if type_char == 'I' and len(parts) in (11, 14):
+                    pass # Valid IMU (11-field legacy or 14-field with gyro)
                 elif type_char == 'U' and len(parts) == 7:
                     pass # Valid UWB
                 else:

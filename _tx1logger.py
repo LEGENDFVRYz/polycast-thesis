@@ -79,8 +79,8 @@ class AsyncCSVRecorder:
 
                     parts = line.split(',')
 
-                    # Validate IMU line: I,seq,qx,qy,qz,qw,ax,ay,az,force,ts
-                    if parts[0] == 'I' and len(parts) == 11:
+                    # Validate IMU line (legacy 11-field or extended 14-field with gyro)
+                    if parts[0] == 'I' and len(parts) in (11, 14):
                         f.write(line + '\n')
                         self.imu_count += 1
 
@@ -140,13 +140,13 @@ def main():
                         help='Output CSV path (default: auto-timestamped)')
     args = parser.parse_args()
 
-    MODE        = "square"
-    TESTNAME    = "c7"
+    MODE        = "triangle"
+    TESTNAME    = "1"
     
     recorder = AsyncCSVRecorder(
         port="COM3", 
         baud=921600,
-        output_path=f"logs/datasets/{MODE}.csv"
+        output_path=f"test/raw/{MODE}_{TESTNAME}.csv"
     )
     
     if not recorder.connect():

@@ -624,6 +624,10 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                 # same reference so drift is visible per-stroke, not accumulated.
                 if stroke_active_now and not self._prev_stroke_active:
                     snap = self.imu_trk.reset()
+                    # Insert NaN break so PyQtGraph does not draw a line from the
+                    # last stroke's endpoint to the new origin on reset.
+                    self.imu_x.append(float('nan'))
+                    self.imu_y.append(float('nan'))
                     self.imu_x.append(snap[0])
                     self.imu_y.append(snap[1])
 

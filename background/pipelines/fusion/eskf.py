@@ -411,6 +411,10 @@ class ESKF:
             # CONTACT_STATIC / IDLE / UNKNOWN
             a = np.zeros(2, dtype=float)
 
+        # Apply per-mode acceleration scale — defined in config but was never applied.
+        # drawing=0.50 halves IMU integration growth; static/zero paths are unaffected.
+        a *= mode_p.acc_scale
+
         # Keep acc pointing at the HPF source so downstream consumers
         # (imu_cleaner payload, spike-clamp paths that reference acc) are unaffected.
         acc = acc_hpf

@@ -46,12 +46,20 @@ from imu_calibrate  import trigger_dcd_save
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
-DATASET_FILENAME = 'datasets_str_50hz/live_20260507_024059.csv'   # '' = live; 'path/to/data.csv' = playback
+DATASET_FILENAME = 'datasets_str_50hz/ABC_b2.csv'   # '' = live; 'path/to/data.csv' = playback
 MAX_TRAIL        = 1000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier
 DIAG_INTERVAL_S  = 1.0   # console diagnostic print interval
 DEBUG_ASSISTANT  = True  # show rule-based live debugging panel
+SHOW_RTS         = False # start hidden; toggle with T. RTS is diagnostic/experimental.
+# Visual-only relocation break guard. This does not change the EKF state; it only
+# inserts NaN separators in the drawn/saved trail when FSR appears to stay
+# pressed during a reposition. Toggle at runtime with the B key.
+AUTO_BREAK_RELOCATION = True
+RELOC_SEGMENT_M       = 0.045  # one display-sample jump > 4.5 cm -> break
+RELOC_SPEED_MPS       = 0.80   # fast move while contact is still true
+RELOC_SPEED_SEG_M     = 0.025  # and at least 2.5 cm since last drawn point
 USE_ONLINE_TRAIL_SMOOTHER = False  # False = draw raw causal EKF tip, True = 5-point causal display smoother
 
 # Nominal IMU rate — used for display-rate reporting only; dt in the EKF
@@ -126,8 +134,17 @@ def _live_recorder_write(pkt: dict) -> None:
     if pkt['type'] == 'imu':
         qx, qy, qz, qw = pkt['quat']
         ax, ay, az     = pkt['acc']
-        line = (f"I,{pkt['seq']},{qx},{qy},{qz},{qw},"
-                f"{ax},{ay},{az},{pkt['force']},{pkt['ts']}\n")
+        gyro = pkt.get('gyro')
+        gyro_valid = bool(pkt.get('gyro_valid', gyro is not None))
+        if gyro_valid and gyro is not None:
+            gx, gy, gz = gyro
+            # New receiver format: preserve calibrated gyroscope data.
+            line = (f"I,{pkt['seq']},{qx},{qy},{qz},{qw},"
+                    f"{ax},{ay},{az},{gx},{gy},{gz},{pkt['force']},{pkt['ts']}\n")
+        else:
+            # Backward-compatible legacy write for old datasets without gyro.
+            line = (f"I,{pkt['seq']},{qx},{qy},{qz},{qw},"
+                    f"{ax},{ay},{az},{pkt['force']},{pkt['ts']}\n")
     elif pkt['type'] == 'uwb':
         d0, d1, d2, d3 = pkt['dists']
         line = f"U,{pkt['seq']},{d0},{d1},{d2},{d3},{pkt['ts']}\n"
@@ -155,6 +172,8 @@ rej_x, rej_y         = [], []
 rts_x, rts_y         = [], []
 
 _show_vel        = SHOW_VELOCITY
+_show_rts        = SHOW_RTS
+_auto_break_relocation = AUTO_BREAK_RELOCATION
 _last_diag_time  = 0.0
 _prev_writing    = False
 _eof_handled     = False
@@ -165,6 +184,8 @@ _last_pos = None          # pen-tip position kept for compatibility
 _last_tip_pos = None
 _last_tag_pos = None
 _last_vel = None
+_last_draw_tip = None
+_last_draw_tag = None
 
 # Phase 8 Step 4b Pattern A — "snap-to-RTS on stroke completion".
 # When the FSR contact edge falls (stroke ends) we re-render the just-
@@ -225,13 +246,79 @@ class DebugAssistant:
         self.pen_down_anchor_rows: list[str] = []
         self.pen_down_summary = 'No pen-down UWB update captured yet.'
         self.last_pen_down_range_kf_lag_m = 0.0
+        # Contact/FSR diagnostics: this is now the main suspect when UWB is healthy.
+        self.imu_samples = 0
+        self.contact_samples = 0
+        self.stroke_count = 0
+        self._prev_contact_dbg = False
+        self._stroke_start_ts = None
+        self._stroke_pts = []
+        self.last_stroke_summary = 'No completed stroke yet.'
+        self.last_force_raw = float('nan')
+        self.last_force_smooth = float('nan')
+        self.last_force_pre = 0
+        self.motion_breaks = 0
+        self.last_motion_break = 'none'
+        self.completed_strokes = deque(maxlen=12)
 
-    def ingest_imu(self, is_writing: bool) -> None:
-        self.last_contact = bool(is_writing)
+    def ingest_imu(self, is_writing: bool, raw_force=None, ts=None, tip_pos=None) -> None:
+        contact = bool(is_writing)
+        self.imu_samples += 1
+        if contact:
+            self.contact_samples += 1
+        self.last_contact = contact
         try:
             self.last_mode = engine._pen_mode.mode.value
         except Exception:
             self.last_mode = 'unknown'
+        try:
+            self.last_force_raw = float(raw_force) if raw_force is not None else float('nan')
+            self.last_force_smooth = float(engine._contact._ema) if engine._contact._ema is not None else float('nan')
+            self.last_force_pre = int(engine._contact._raw_classify)
+        except Exception:
+            pass
+
+        # Track stroke boundaries and stroke size. Large continuous strokes are
+        # strong evidence that FSR/contact stayed down during a lift/reposition.
+        if contact and not self._prev_contact_dbg:
+            self.stroke_count += 1
+            self._stroke_start_ts = ts
+            self._stroke_pts = []
+        if contact and tip_pos is not None:
+            try:
+                self._stroke_pts.append(np.asarray(tip_pos, dtype=float).copy())
+            except Exception:
+                pass
+        if (not contact) and self._prev_contact_dbg:
+            if self._stroke_pts:
+                pts = np.asarray(self._stroke_pts, dtype=float)
+                mn = np.nanmin(pts, axis=0); mx = np.nanmax(pts, axis=0)
+                w = float(mx[0] - mn[0]); h = float(mx[1] - mn[1])
+                dur = 0.0
+                if ts is not None and self._stroke_start_ts is not None:
+                    dur = max(0.0, (int(ts) - int(self._stroke_start_ts)) / 1_000_000.0)
+                diffs = np.diff(pts[:, :2], axis=0) if len(pts) > 1 else np.empty((0, 2))
+                segs = np.linalg.norm(diffs, axis=1) if len(diffs) else np.array([], dtype=float)
+                path_m = float(np.nansum(segs)) if len(segs) else 0.0
+                max_jump_m = float(np.nanmax(segs)) if len(segs) else 0.0
+                straight_m = float(np.linalg.norm(pts[-1, :2] - pts[0, :2])) if len(pts) > 1 else 0.0
+                straightness = straight_m / max(path_m, 1e-9)
+                self.last_stroke_summary = (f'last stroke: n={len(pts)} dur={dur:.2f}s '
+                                            f'box={w*100:.1f}x{h*100:.1f}cm '
+                                            f'path={path_m*100:.1f}cm jump={max_jump_m*100:.1f}cm')
+                self.completed_strokes.append({
+                    'id': self.stroke_count,
+                    'n': len(pts),
+                    'dur': dur,
+                    'w': w,
+                    'h': h,
+                    'path': path_m,
+                    'max_jump': max_jump_m,
+                    'straightness': straightness,
+                })
+            self._stroke_pts = []
+            self._stroke_start_ts = None
+        self._prev_contact_dbg = contact
 
     @staticmethod
     def _fmt(v, width=5, prec=2):
@@ -293,13 +380,9 @@ class DebugAssistant:
 
             q_i = qs[i] if i < len(qs) else np.nan
             row = (
-                f'A{i} {status} q={self._fmt(q_i,4,2)} '
-                f'in={self._fmt(z_in[i] if i < len(z_in) else np.nan,5,2)} '
-                f'use={self._fmt(z_used,5,2)} '
-                f'kf={self._fmt(z_kf,5,2)} '
-                f'pr={self._fmt(pred,5,2)} '
-                f'ν={self._fmt(innov,6,3)} '
-                f'NISg={self._fmt(nis_g,5,2)}'
+                f'A{i} {status} q={self._fmt(q_i,4,2)}  in={self._fmt(z_in[i] if i < len(z_in) else np.nan,5,2)} '
+                f'use={self._fmt(z_used,5,2)} kf={self._fmt(z_kf,5,2)}\n'
+                f'   pr={self._fmt(pred,5,2)}  ν={self._fmt(innov,6,3)}  NIS={self._fmt(nis_g,5,2)}'
             )
             if mute_rem > 0:
                 row += f' mute={mute_rem:02d}'
@@ -336,6 +419,10 @@ class DebugAssistant:
                 self.last_pen_down_range_kf_lag_m = 0.0
             self.pen_down_summary = (f'Last pen-down UWB: acc={acc}, rej={rej}, q_mean={qmean:.2f}, '
                                      f'max|kf-in|={self.last_pen_down_range_kf_lag_m*100:.1f}cm')
+
+    def ingest_motion_break(self, seg_m: float, speed_mps: float, reason: str) -> None:
+        self.motion_breaks += 1
+        self.last_motion_break = f'#{self.motion_breaks}: {reason}, seg={seg_m*100:.1f}cm, speed={speed_mps:.2f}m/s'
 
     def ingest_rts(self, stats: dict) -> None:
         self.last_rts = dict(stats)
@@ -381,6 +468,21 @@ class DebugAssistant:
             w.append(f'RTS SUSPECT: moved last stroke by {self.last_rts["max_delta_m"]*100:.1f} cm max.')
         if self.last_pen_down_range_kf_lag_m > 0.04:
             w.append(f'Range-KF lag suspect: max |kf-in| during pen-down was {self.last_pen_down_range_kf_lag_m*100:.1f} cm.')
+        if self.motion_breaks > 0:
+            w.append(f'Display motion-breaks inserted: {self.motion_breaks}; last {self.last_motion_break}.')
+        if self.completed_strokes:
+            worst = max(self.completed_strokes, key=lambda s: max(s['w'], s['h']))
+            if max(worst['w'], worst['h']) > 0.18 or worst['max_jump'] > 0.05:
+                w.append(f'Stroke #{worst["id"]} suspect: box={worst["w"]*100:.1f}x{worst["h"]*100:.1f}cm, jump={worst["max_jump"]*100:.1f}cm.')
+        # Warn when one contact segment is big enough to look like multiple letters/lines.
+        try:
+            if 'box=' in self.last_stroke_summary:
+                import re as _re
+                m = _re.search(r'box=([0-9.]+)x([0-9.]+)cm', self.last_stroke_summary)
+                if m and (float(m.group(1)) > 30.0 or float(m.group(2)) > 22.0):
+                    w.append('Contact segmentation suspect: one pen-down stroke spans a large area; inspect FSR thresholds/debounce.')
+        except Exception:
+            pass
         self.last_warnings = w[:7]
         return self.last_warnings
 
@@ -397,38 +499,44 @@ class DebugAssistant:
         if _last_tip_pos is not None and _last_tag_pos is not None:
             tip_tag_delta = _last_tip_pos - _last_tag_pos
 
+        contact_duty = (self.contact_samples / self.imu_samples * 100.0) if self.imu_samples else 0.0
         lines = [
             'POLYCAST DEBUG ASSISTANT',
-            'FILTER SUMMARY',
-            f'mode={self.last_mode}  contact={int(self.last_contact)}  heading={"LOCKED" if diag.get("heading_locked") else "UNLOCKED"}',
-            f'tip=({_last_tip_pos[0]:+.3f},{_last_tip_pos[1]:+.3f}) m' if _last_tip_pos is not None else 'tip=--',
-            f'tag=({_last_tag_pos[0]:+.3f},{_last_tag_pos[1]:+.3f}) m' if _last_tag_pos is not None else 'tag=--',
-            (f'tip-tag Δ=({tip_tag_delta[0]:+.3f},{tip_tag_delta[1]:+.3f}) |Δ|={np.linalg.norm(tip_tag_delta):.3f} m'
-             if tip_tag_delta is not None else 'tip-tag Δ=--'),
-            f'speed={speed:.2f} m/s  bias={bstr}',
-            f'uwb acc/rej(win)={acc_win:.1f}/{rej_win:.1f}  outage={diag.get("consec_outage", 0)}  q_mean={q_mean:.2f}',
+            'FILTER',
+            f'mode={self.last_mode} contact={int(self.last_contact)} heading={"LOCK" if diag.get("heading_locked") else "NO"}',
+            f'tip=({_last_tip_pos[0]:+.3f},{_last_tip_pos[1]:+.3f})  tag=({_last_tag_pos[0]:+.3f},{_last_tag_pos[1]:+.3f})' if (_last_tip_pos is not None and _last_tag_pos is not None) else 'tip/tag=--',
+            (f'tip-tag=({tip_tag_delta[0]:+.3f},{tip_tag_delta[1]:+.3f}) |d|={np.linalg.norm(tip_tag_delta):.3f}m'
+             if tip_tag_delta is not None else 'tip-tag=--'),
+            f'speed={speed:.2f}m/s bias={bstr}',
+            f'uwb win acc/rej={acc_win:.1f}/{rej_win:.1f} outage={diag.get("consec_outage", 0)} q={q_mean:.2f}',
+            '',
+            'CONTACT / FSR',
+            f'force raw={self._fmt(self.last_force_raw,5,0)} ema={self._fmt(self.last_force_smooth,5,0)} pre={self.last_force_pre} deb={int(self.last_contact)}',
+            f'strokes={self.stroke_count} duty={contact_duty:.1f}%  {self.last_stroke_summary}',
+            f'motion-breaks={self.motion_breaks} auto={"ON" if _auto_break_relocation else "OFF"} last={self.last_motion_break}',
         ]
+        if self.completed_strokes:
+            recent = list(self.completed_strokes)[-4:]
+            lines.append('recent strokes: ' + ' | '.join([
+                f'#{s["id"]} {s["dur"]:.1f}s {s["w"]*100:.0f}x{s["h"]*100:.0f}cm j{s["max_jump"]*100:.1f}'
+                for s in recent
+            ]))
         if self.last_rts:
             label = 'RTS SUSPECT' if self.last_rts.get('max_delta_m', 0.0) > self.RTS_SUSPECT_DELTA_M else 'RTS'
-            lines.append(f'{label}: meanΔ={self.last_rts.get("mean_delta_m", 0)*100:.1f}cm maxΔ={self.last_rts.get("max_delta_m", 0)*100:.1f}cm')
-        lines.append('')
-        lines.append('CURRENT UWB ANCHORS')
-        lines.append('A STAT q     in   use    kf    pr      ν     NISg')
-        lines.extend(self.current_anchor_rows or ['-- no current UWB update yet --'])
-        lines.append('')
-        lines.append('LAST PEN-DOWN UWB ANCHORS')
-        lines.append(self.pen_down_summary)
-        lines.append('A STAT q     in   use    kf    pr      ν     NISg')
+            lines.append(f'{label}: mean={self.last_rts.get("mean_delta_m", 0)*100:.1f}cm max={self.last_rts.get("max_delta_m", 0)*100:.1f}cm')
+        lines.extend(['', 'CURRENT UWB', 'A STAT q     in   use    kf / pred, innov, NIS'])
+        lines.extend(self.current_anchor_rows or ['-- no current UWB update --'])
+        lines.extend(['', 'LAST PEN-DOWN UWB', self.pen_down_summary, 'A STAT q     in   use    kf / pred, innov, NIS'])
         lines.extend(self.pen_down_anchor_rows or ['-- waiting for pen-down UWB --'])
-        lines.append('')
         warns = self.warnings()
+        lines.append('')
         if warns:
-            lines.append('WARNINGS / HINTS')
+            lines.append('WARNINGS')
             lines.extend([f'• {x}' for x in warns])
         else:
-            lines.append('WARNINGS / HINTS: none')
+            lines.append('WARNINGS: none')
         lines.append('')
-        lines.append('Legend: in=offset/gated input, use=range used by EKF, kf=range-KF diagnostic, pr=predicted, ν=use-pr, NISg=gate score.')
+        lines.append('Legend: in=input, use=EKF range, kf=range-KF, pr=pred, ν=use-pr')
         return '\n'.join(lines)
 
 
@@ -549,14 +657,35 @@ def _run_rts_smoother():
             rts_x.append(float(x)); rts_y.append(float(y))
         rts_x.append(float('nan')); rts_y.append(float('nan'))
     line_rts.set_data(rts_x, rts_y)
+    line_rts.set_visible(_show_rts)
     line_draw.axes.figure.canvas.draw_idle()
     print(f"[RTS] Per-stroke trajectories overlaid.")
 
+
+def _should_break_relocation(draw_pt, tag_pt, vel, rising: bool) -> tuple[bool, str, float, float]:
+    """Visual-only guard against false connectors when FSR contact sticks
+    through a reposition. Returns (break?, reason, segment_m, speed_mps)."""
+    global _last_draw_tip
+    if (not _auto_break_relocation) or rising or _last_draw_tip is None:
+        return False, '', 0.0, float(np.linalg.norm(vel)) if vel is not None else 0.0
+    try:
+        pt = np.asarray(draw_pt, dtype=float)[:2]
+        prev = np.asarray(_last_draw_tip, dtype=float)[:2]
+        seg = float(np.linalg.norm(pt - prev))
+        spd = float(np.linalg.norm(vel)) if vel is not None else 0.0
+    except Exception:
+        return False, '', 0.0, 0.0
+    if seg > RELOC_SEGMENT_M:
+        return True, 'large display jump', seg, spd
+    if spd > RELOC_SPEED_MPS and seg > RELOC_SPEED_SEG_M:
+        return True, 'fast pen-down move', seg, spd
+    return False, '', seg, spd
 
 # -- Animation callback -----------------------------------------------------
 def update(frame):
     global _last_diag_time, _prev_writing, _eof_handled
     global _imu_subsample, _last_pos, _last_tip_pos, _last_tag_pos, _last_vel
+    global _last_draw_tip, _last_draw_tag
     global _stroke_history_start, _stroke_draw_start
 
     # Drain available packets
@@ -614,7 +743,7 @@ def update(frame):
             _last_tip_pos = np.asarray(draw_pt, dtype=float).copy()
             _last_pos = _last_tip_pos
             _last_vel = vel
-            debugger.ingest_imu(is_writing)
+            debugger.ingest_imu(is_writing, raw_force=pkt.get('force'), ts=pkt.get('ts'), tip_pos=_last_tip_pos)
 
             # Per-IMU-step streams for the per-stroke RTS overlay (edit 1).
             if engine.ekf.initialized and len(engine.ekf._history) > 0:
@@ -638,6 +767,8 @@ def update(frame):
                 if rising:
                     _stroke_history_start = len(engine.ekf._history)
                     _stroke_draw_start    = len(draw_x)
+                    _last_draw_tip = None
+                    _last_draw_tag = None
 
                 if is_writing:
                     if USE_ONLINE_TRAIL_SMOOTHER:
@@ -645,10 +776,23 @@ def update(frame):
                         sx, sy = smoother.get()
                     else:
                         sx, sy = float(draw_pt[0]), float(draw_pt[1])
+                    break_now, reason, seg_m, spd_mps = _should_break_relocation(
+                        np.array([sx, sy], dtype=float), pos, vel, rising)
+                    if break_now:
+                        draw_x.append(float('nan'))
+                        draw_y.append(float('nan'))
+                        tag_draw_x.append(float('nan'))
+                        tag_draw_y.append(float('nan'))
+                        _last_draw_tip = None
+                        _last_draw_tag = None
+                        smoother.reset()
+                        debugger.ingest_motion_break(seg_m, spd_mps, reason)
                     draw_x.append(sx)
                     draw_y.append(sy)
                     tag_draw_x.append(float(pos[0]))
                     tag_draw_y.append(float(pos[1]))
+                    _last_draw_tip = np.array([sx, sy], dtype=float)
+                    _last_draw_tag = np.asarray(pos[:2], dtype=float).copy()
                     # In CSV-playback mode keep every stroke visible.
                     # Live mode still trims to bound memory.
                     if parser.mode != 'csv':
@@ -714,6 +858,7 @@ def update(frame):
         line_draw.set_data(draw_x, draw_y)
         line_tag.set_data(tag_draw_x, tag_draw_y)
         line_rts.set_data(rts_x, rts_y)
+        line_rts.set_visible(_show_rts)
         scat_lift.set_data(lift_x, lift_y)
         scat_rej.set_data(rej_x, rej_y)
         if _last_tip_pos is not None:
@@ -759,10 +904,17 @@ def update(frame):
 
 # -- Keyboard handler -------------------------------------------------------
 def on_key(event):
-    global _show_vel, _prev_writing, DEBUG_ASSISTANT
+    global _show_vel, _show_rts, _auto_break_relocation, _prev_writing, DEBUG_ASSISTANT, _last_draw_tip, _last_draw_tag
     if event.key == 'v':
         _show_vel = not _show_vel
         print(f"[UI] Velocity arrow: {'ON' if _show_vel else 'OFF'}")
+    elif event.key == 't':
+        _show_rts = not _show_rts
+        try:
+            line_rts.set_visible(_show_rts)
+        except NameError:
+            pass
+        print(f"[UI] RTS overlay: {'ON' if _show_rts else 'OFF'}")
     elif event.key == 'd':
         DEBUG_ASSISTANT = not DEBUG_ASSISTANT
         try:
@@ -777,6 +929,8 @@ def on_key(event):
         lift_x.clear(); lift_y.clear()
         rej_x.clear();  rej_y.clear()
         smoother.reset()
+        _last_draw_tip = None
+        _last_draw_tag = None
         _prev_writing = False
         print("[UI] Trail cleared.")
     elif event.key == 'r':
@@ -811,9 +965,18 @@ def main():
     if not parser.connect():
         sys.exit(1)
 
-    fig, ax = plt.subplots(figsize=(11, 9))
+    fig = plt.figure(figsize=(18, 9.5), facecolor='#F8FAFC')
+    gs = fig.add_gridspec(1, 2, width_ratios=[3.0, 2.1], wspace=0.05)
+    ax = fig.add_subplot(gs[0, 0])
+    ax_dbg = fig.add_subplot(gs[0, 1])
     fig.canvas.manager.set_window_title('PolyCast — EKF Live Position (Async)')
     fig.canvas.mpl_connect('key_press_event', on_key)
+    ax.set_facecolor('white')
+    ax_dbg.set_facecolor('#F8FAFC')
+    ax_dbg.set_xticks([]); ax_dbg.set_yticks([])
+    for spine in ax_dbg.spines.values():
+        spine.set_visible(False)
+    ax_dbg.set_xlim(0, 1); ax_dbg.set_ylim(0, 1)
 
     # Anchors (static)
     ax.scatter(engine.anchors[:, 0], engine.anchors[:, 1],
@@ -851,14 +1014,16 @@ def main():
 
     # Info text (bottom)
     ax.text(0.01, 0.01,
-            'Blue = pen tip XY   Purple = tag XY   Green = RTS experimental   V = velocity   C = clear   R = reset   D = debug',
+            'Blue=tip  Purple=tag  Green=RTS experimental  T=RTS  B=break-guard  V=velocity  C=clear  R=reset  D=debug',
             transform=ax.transAxes, fontsize=8, color='gray', va='bottom')
 
-    debug_text = ax.text(1.02, 0.98, 'DEBUG ASSISTANT\nwaiting for data...',
-                         transform=ax.transAxes, fontsize=7.6, color='black', va='top', ha='left',
-                         family='monospace', clip_on=False,
-                         bbox=dict(facecolor='white', alpha=0.88, edgecolor='gray', boxstyle='round,pad=0.4'))
+    debug_text = ax_dbg.text(0.02, 0.98, 'DEBUG ASSISTANT\nwaiting for data...',
+                             transform=ax_dbg.transAxes, fontsize=6.8, color='#111827',
+                             va='top', ha='left', family='monospace', clip_on=True,
+                             bbox=dict(facecolor='white', alpha=0.96, edgecolor='#CBD5E1',
+                                       boxstyle='round,pad=0.5'))
     debug_text.set_visible(DEBUG_ASSISTANT)
+    line_rts.set_visible(_show_rts)
 
     artists = (line_draw, line_tag, line_rts, scat_lift, scat_rej, dot_tip, dot_tag, debug_text)
 
@@ -869,7 +1034,7 @@ def main():
     print(f'[EKF] Running in {mode} mode — Async Stream')
     print(f'[EKF] Trail subsample: every {TRAIL_SUBSAMPLE} IMU predicts '
           f'(~{IMU_RATE_HZ/TRAIL_SUBSAMPLE:.0f} Hz display)')
-    print(f'[EKF] Keys: V/C/R, Q to quit')
+    print(f'[EKF] Keys: T/B/V/C/R/D, Q to quit')
 
     plt.show()
     parser.close()

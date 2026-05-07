@@ -30,6 +30,7 @@ struct __attribute__((packed)) ImuPacket {
     uint32_t seq;
     float    qx, qy, qz, qw;
     float    ax, ay, az;
+    float    gx, gy, gz;         // <-- NEW
     float    force;
     uint32_t ts;
 };
@@ -186,6 +187,9 @@ void loop() {
             Serial.print(pkt.ax, 4);     Serial.print(',');
             Serial.print(pkt.ay, 4);     Serial.print(',');
             Serial.print(pkt.az, 4);     Serial.print(',');
+            Serial.print(pkt.gx, 4);     Serial.print(','); // <-- NEW
+            Serial.print(pkt.gy, 4);     Serial.print(','); // <-- NEW
+            Serial.print(pkt.gz, 4);     Serial.print(','); // <-- NEW
             Serial.print(pkt.force, 2);  Serial.print(',');
             Serial.println(pkt.ts);
         }

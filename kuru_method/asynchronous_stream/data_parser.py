@@ -6,8 +6,13 @@ a live serial port or a saved CSV file.
 
 CSV format (from receiver.ino)
 ------------------------------
-    IMU:  I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts>
-    UWB:  U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts>
+    IMU v2: I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>,<force>,<ts>
+    IMU v1: I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts>  (legacy)
+    UWB:    U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts>
+
+The v2 IMU packet adds calibrated gyroscope data.  Parsed packets always
+include a `gyro` key and a `gyro_valid` flag so older consumers keep working
+while newer code can opt into gyro use.
 
 Usage
 -----
@@ -33,7 +38,10 @@ Usage
 
 import os
 import sys
-import serial
+try:
+    import serial
+except ImportError:   # Allows CSV playback/tests on machines without pyserial.
+    serial = None
 import time
 from datetime import datetime
 import config
@@ -71,6 +79,9 @@ class AsyncDataParser:
 
     def connect(self) -> bool:
         if self.mode == 'live':
+            if serial is None:
+                print("Connection failed: pyserial is not installed; CSV mode still works.")
+                return False
             try:
                 self.ser = serial.Serial(self.port, self.baud, timeout=1)
                 time.sleep(2)   # wait for Arduino reset
@@ -125,19 +136,46 @@ class AsyncDataParser:
             return None
 
         try:
-            # ── IMU line: I,seq,qx,qy,qz,qw,ax,ay,az,force,ts ──────
-            if parts[0] == 'I' and len(parts) == 11:
+            # ── IMU line, v2 current receiver format ──────────────────
+            # I,seq,qx,qy,qz,qw,ax,ay,az,gx,gy,gz,force,ts
+            if parts[0] == 'I' and len(parts) == 14:
                 seq = int(parts[1])
                 self._track_loss('imu', seq)
                 return {
-                    'type' : 'imu',
-                    'seq'  : seq,
-                    'quat' : (float(parts[2]), float(parts[3]),
-                              float(parts[4]), float(parts[5])),
-                    'acc'  : (float(parts[6]), float(parts[7]),
-                              float(parts[8])),
-                    'force': float(parts[9]),
-                    'ts'   : int(parts[10]),
+                    'type'      : 'imu',
+                    'seq'       : seq,
+                    'quat'      : (float(parts[2]), float(parts[3]),
+                                   float(parts[4]), float(parts[5])),
+                    'acc'       : (float(parts[6]), float(parts[7]),
+                                   float(parts[8])),
+                    'gyro'      : (float(parts[9]), float(parts[10]),
+                                   float(parts[11])),
+                    'gyro_valid': True,
+                    'force'     : float(parts[12]),
+                    'ts'        : int(parts[13]),
+                    'format'    : 'imu_v2_gyro',
+                }
+
+            # ── IMU line, v1 legacy format ────────────────────────────
+            # I,seq,qx,qy,qz,qw,ax,ay,az,force,ts
+            elif parts[0] == 'I' and len(parts) == 11:
+                seq = int(parts[1])
+                self._track_loss('imu', seq)
+                return {
+                    'type'      : 'imu',
+                    'seq'       : seq,
+                    'quat'      : (float(parts[2]), float(parts[3]),
+                                   float(parts[4]), float(parts[5])),
+                    'acc'       : (float(parts[6]), float(parts[7]),
+                                   float(parts[8])),
+                    # Legacy files have no gyro channel.  Keep the key present
+                    # so downstream code can safely do pkt.get('gyro') or
+                    # pkt['gyro'] while checking gyro_valid.
+                    'gyro'      : (float('nan'), float('nan'), float('nan')),
+                    'gyro_valid': False,
+                    'force'     : float(parts[9]),
+                    'ts'        : int(parts[10]),
+                    'format'    : 'imu_v1_legacy',
                 }
 
             # ── UWB line: U,seq,d0,d1,d2,d3,ts ──────────────────────
@@ -150,6 +188,7 @@ class AsyncDataParser:
                     'dists': (float(parts[2]), float(parts[3]),
                               float(parts[4]), float(parts[5])),
                     'ts'   : int(parts[6]),
+                    'format': 'uwb_v1',
                 }
 
             else:
@@ -241,12 +280,16 @@ if __name__ == '__main__':
         if pkt['type'] == 'imu':
             qx, qy, qz, qw = pkt['quat']
             ax, ay, az = pkt['acc']
+            gx, gy, gz = pkt['gyro']
             state = f"FSR: {pkt['force']:.0f}"
+            gyro_state = (f"| 🧭 G({gx:>7.4f}, {gy:>7.4f}, {gz:>7.4f}) "
+                          if pkt.get('gyro_valid') else "| 🧭 G(legacy: n/a) ")
             
             # Prepend [sys_time] to the output
             print(f"[{sys_time}] 🔵 IMU | Seq: {pkt['seq']:<6} | TS: {pkt['ts']:<10} "
                 f"| 🔄 Q({qx:>7.4f}, {qy:>7.4f}, {qz:>7.4f}, {qw:>7.4f}) "
                 f"| 🚀 A({ax:>7.4f}, {ay:>7.4f}, {az:>7.4f}) "
+                f"{gyro_state}"
                 f"| {state}")
 
         elif pkt['type'] == 'uwb':

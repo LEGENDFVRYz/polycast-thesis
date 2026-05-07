@@ -52,6 +52,7 @@ void initIMU() {
         // reports at 200 Hz = 400/sec, comfortably under the limit.
         bno08x.enableReport(SH2_ROTATION_VECTOR,     5000);
         bno08x.enableReport(SH2_LINEAR_ACCELERATION,  5000);
+        bno08x.enableReport(SH2_GYROSCOPE_CALIBRATED, 5000);
         Serial.println("[IMU] BNO085 initialised at 200 Hz paired. Raw FSR enabled.");
     } else {
         Serial.println("[IMU] BNO085 init failed — check I2C wiring and RST pin.");
@@ -79,6 +80,7 @@ bool processIMU(ImuPacket* out) {
     // Cached quaternion — updated on every rotation vector report
     static float cache_qx = 0.0f, cache_qy = 0.0f,
                  cache_qz = 0.0f, cache_qw = 1.0f;
+    static float cache_gx = 0.0f, cache_gy = 0.0f, cache_gz = 0.0f;
 
     // ── Rotation vector report → cache and wait for accel ────────────
     if (sensorValue.sensorId == SH2_ROTATION_VECTOR) {
@@ -86,6 +88,13 @@ bool processIMU(ImuPacket* out) {
         cache_qy = sensorValue.un.rotationVector.j;
         cache_qz = sensorValue.un.rotationVector.k;
         cache_qw = sensorValue.un.rotationVector.real;
+        return false;   // not ready — wait for acceleration
+    }
+
+    if (sensorValue.sensorId == SH2_GYROSCOPE_CALIBRATED) {
+        cache_gx = sensorValue.un.gyroscope.x;
+        cache_gy = sensorValue.un.gyroscope.y;
+        cache_gz = sensorValue.un.gyroscope.z;
         return false;   // not ready — wait for acceleration
     }
 
@@ -98,6 +107,10 @@ bool processIMU(ImuPacket* out) {
         out->qy = cache_qy;
         out->qz = cache_qz;
         out->qw = cache_qw;
+
+        out->gx = cache_gx;
+        out->gy = cache_gy;
+        out->gz = cache_gz;
 
         out->ax = sensorValue.un.linearAcceleration.x;
         out->ay = sensorValue.un.linearAcceleration.y;

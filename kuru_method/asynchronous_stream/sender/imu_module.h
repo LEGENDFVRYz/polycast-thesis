@@ -4,13 +4,15 @@
 #include <Arduino.h>
 
 // ── Async IMU Packet — sent individually at 100 Hz ───────────────────
+// ── Async IMU Packet — sent individually at 100 Hz ───────────────────
 struct __attribute__((packed)) ImuPacket {
     uint8_t  type;               // 0x01
     uint32_t seq;                // per-stream sequence counter (caller sets)
-    float    qx, qy, qz, qw;   // rotation vector quaternion
-    float    ax, ay, az;        // linear acceleration (m/s²)
-    float    force;             // Raw FSR ADC value (0-4095)
-    uint32_t ts;                // micros() timestamp
+    float    qx, qy, qz, qw;     // rotation vector quaternion
+    float    ax, ay, az;         // linear acceleration (m/s²)
+    float    gx, gy, gz;         // gyroscope (rad/s)  <-- NEW
+    float    force;              // Raw FSR ADC value (0-4095)
+    uint32_t ts;                 // micros() timestamp
 };
 
 /**

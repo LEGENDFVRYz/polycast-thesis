@@ -84,7 +84,10 @@
         </div>
         <div class="about-technology">
            <div class="tech-image">
-                <img src="/static/images/index-bg.jpg" alt="Technology Image">
+                <img
+                    src="{{ url_for('static', filename='images/index-bg.jpg') }}"
+                    alt="Technology Image"
+                >
            </div>
            <div class="tech-details">
                 <div>
@@ -131,14 +134,22 @@
             <div class="team-members">
                 <div class="two-members">
                     <div class="member">
-                        <img src="/static/images/index-bg.jpg" alt="Member 1">
+                        <img
+                            src="{{ url_for('static', filename='images/about/Timothy Castillo.png') }}"
+                            alt="Timothy Castillo"
+                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
+                        >
                         <div class="member-info">
                             <h3>Castillo</h3>
                             <p>Timothy H.</p>
                         </div>
                     </div>
                     <div class="member">
-                        <img src="/static/images/index-bg.jpg" alt="Member 2">
+                        <img
+                            src="{{ url_for('static', filename='images/about/Sebastien Louis Cruz.png') }}"
+                            alt="Sebastien Louis Cruz"
+                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
+                        >
                         <div class="member-info">
                             <h3>Cruz</h3>
                             <p>Sebastien Louis J.</p>
@@ -147,14 +158,22 @@
                 </div>
                 <div class="two-members"> 
                     <div class="member">
-                        <img src="/static/images/index-bg.jpg" alt="Member 3">
+                        <img
+                            src="{{ url_for('static', filename='images/about/Christian Español.jpg') }}"
+                            alt="Christian Español"
+                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
+                        >
                         <div class="member-info">
                             <h3>Español</h3>
                             <p>Christian P.</p>
                         </div>
                     </div>
                     <div class="member">
-                        <img src="/static/images/index-bg.jpg" alt="Member 4">
+                        <img
+                            src="{{ url_for('static', filename='images/about/Christian Villanueva.png') }}"
+                            alt="Christian Villanueva"
+                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
+                        >
                         <div class="member-info">
                             <h3>Villanueva</h3>
                             <p>Christian April Kim R.</p>

@@ -140,13 +140,13 @@ def main():
                         help='Output CSV path (default: auto-timestamped)')
     args = parser.parse_args()
 
-    MODE        = "boardcorner"
+    MODE        = "quick_brown_fox"
     TESTNAME    = "1"
     
     recorder = AsyncCSVRecorder(
         port="COM5", 
         baud=921600,
-        output_path=f"{MODE}_{TESTNAME}.csv"
+        output_path=f"test/raw2/{MODE}_{TESTNAME}.csv"
     )
     
     if not recorder.connect():

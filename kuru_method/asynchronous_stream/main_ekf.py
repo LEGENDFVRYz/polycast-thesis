@@ -50,7 +50,7 @@ from trace_quality_diagnostics import TraceQualityDiagnostics
 
 # -- Configuration ----------------------------------------------------------
 from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
-DATASET_FILENAME = 'datasets_whiteboard/abcde1_1.csv'   # '' = live; 'path/to/data.csv' = playback
+DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
 MAX_TRAIL        = 2000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier

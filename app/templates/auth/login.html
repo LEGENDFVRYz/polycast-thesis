@@ -17,13 +17,14 @@
     <!-- Sign In Form -->
     <form method="POST" id="signInForm">
         <div class="form-group">
-            <input type="text" name="username" placeholder="Email/Phone Number" required>
+            <input type="text" name="username" placeholder="Email/Phone Number" required data-max-length="80" title="Maximum 80 characters">
             <!-- This error message matches your image -->
-            <p class="error-message" id="emailError">Incorrect email</p>
+            <p class="error-message" id="emailError" data-default-message="Incorrect email">Incorrect email</p>
         </div>
 
         <div class="form-group">
-            <input type="password" name="password" placeholder="Password" required>
+            <input type="password" name="password" placeholder="Password" required data-max-length="80" title="Maximum 80 characters">
+            <p class="error-message" data-default-message="">Maximum 80 characters.</p>
         </div>
 
         <button type="submit" class="signin-button">Sign In</button>

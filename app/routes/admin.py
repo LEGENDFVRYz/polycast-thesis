@@ -15,6 +15,12 @@ import app.globals as g
 
 admin_bp = Blueprint('admin', __name__)
 
+MAX_AUTH_FIELD_LENGTH = 80
+
+
+def _auth_field_too_long(*values: str | None) -> bool:
+    return any(value is not None and len(value) > MAX_AUTH_FIELD_LENGTH for value in values)
+
 
 
 # ---------------------------------------------------------------------
@@ -29,10 +35,13 @@ def register_page():
         username = request.form["username"]
         password = request.form["password"]
         confirm_password = request.form["confirm_password"]
+        section = request.form.get("section")
 
         # Validation: Checking if it user inputs are valid
         if not username or not password or not confirm_password:
             error = "All fields are required."
+        elif _auth_field_too_long(username, password, confirm_password, section):
+            error = f"Each sign-up field must be {MAX_AUTH_FIELD_LENGTH} characters or fewer."
         elif password != confirm_password:
             error = "Passwords do not match!"
         else:
@@ -63,6 +72,8 @@ def login_page():
         # Validation: Checking if it matches the record
         if not username or not password:
             error = "Both username and password are required."
+        elif _auth_field_too_long(username, password):
+            error = f"Username and password must be {MAX_AUTH_FIELD_LENGTH} characters or fewer."
             
         else:
             try:

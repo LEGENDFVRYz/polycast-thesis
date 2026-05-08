@@ -9,33 +9,55 @@
             flex-direction: column;
             align-items: center;
             justify-content: flex-start;
-            gap: clamp(0.9rem, 2.2vw, 1.8rem);
-            padding-top: 0;
-            padding-bottom: clamp(10rem, 30vh, 20rem);
+            gap: clamp(0.5rem, 1.5vw, 1rem);
+            padding-top: 60px;
+            padding-bottom: clamp(10rem, 25vh, 18rem);
             padding-inline: clamp(0.5rem, 2vw, 1.5rem);
+            position: relative;
+            z-index: 10;
         }
 
         .landing-banner .landing-banner-content .about-hero-copy h1 {
             margin: 0;
-            font-family: "Archivo", "Poppins", sans-serif;
-            font-size: clamp(2.7rem, 8.4vw, 5rem);
-            line-height: 1.06;
+            font-family: "Poppins", sans-serif;
+            font-size: clamp(2.2rem, 6.5vw, 4.5rem);
+            line-height: 1.15;
             letter-spacing: 0.02em;
             text-align: center;
             text-wrap: balance;
+            position: relative;
+            z-index: 10;
         }
 
         .landing-banner .landing-banner-content .about-hero-copy h2 {
             margin: 0;
-            padding-top: 0;
+            padding-top: 0.5rem;
             width: min(44ch, 100%);
-            font-family: "Archivo", "Poppins", sans-serif;
-            font-size: clamp(1.05rem, 2.9vw, 1.5rem);
+            font-family: "Poppins", sans-serif;
+            font-size: clamp(0.95rem, 2.5vw, 1.25rem);
             font-weight: 600;
             letter-spacing: 0.03em;
-            line-height: 1.25;
+            line-height: 1.3;
             text-align: center;
             text-wrap: pretty;
+            position: relative;
+            z-index: 10;
+        }
+
+        /* Desktop adjustment - push text higher to stay above image */
+        @media (min-width: 1024px) {
+            .landing-banner .landing-banner-content .about-hero-copy {
+                padding-top: 40px;
+                padding-bottom: clamp(12rem, 20vh, 16rem);
+            }
+
+            .landing-banner .landing-banner-content .about-hero-copy h1 {
+                font-size: 3.8rem;
+            }
+
+            .landing-banner .landing-banner-content .about-hero-copy h2 {
+                font-size: 1.15rem;
+            }
         }
     </style>
 {% endblock %}
@@ -84,10 +106,7 @@
         </div>
         <div class="about-technology">
            <div class="tech-image">
-                <img
-                    src="{{ url_for('static', filename='images/index-bg.jpg') }}"
-                    alt="Technology Image"
-                >
+                <img src="/static/images/index-bg.jpg" alt="Technology Image">
            </div>
            <div class="tech-details">
                 <div>
@@ -113,7 +132,7 @@
                     <span class="obj-title">OBJECTIVE</span>
                 </div>
                 <div class="sub-info">
-                    Traditional face-to-face classes often requires students to divide their attention between understanding complex 
+                    Traditional face-to-face instruction often requires students to divide their attention between understanding complex 
                     concepts and hastily copying notes from the whiteboard.
                 </div>
             </div>
@@ -134,22 +153,14 @@
             <div class="team-members">
                 <div class="two-members">
                     <div class="member">
-                        <img
-                            src="{{ url_for('static', filename='images/about/Timothy Castillo.png') }}"
-                            alt="Timothy Castillo"
-                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
-                        >
+                        <img src="/static/images/index-bg.jpg" alt="Member 1">
                         <div class="member-info">
                             <h3>Castillo</h3>
                             <p>Timothy H.</p>
                         </div>
                     </div>
                     <div class="member">
-                        <img
-                            src="{{ url_for('static', filename='images/about/Sebastien Louis Cruz.png') }}"
-                            alt="Sebastien Louis Cruz"
-                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
-                        >
+                        <img src="/static/images/index-bg.jpg" alt="Member 2">
                         <div class="member-info">
                             <h3>Cruz</h3>
                             <p>Sebastien Louis J.</p>
@@ -158,22 +169,14 @@
                 </div>
                 <div class="two-members"> 
                     <div class="member">
-                        <img
-                            src="{{ url_for('static', filename='images/about/Christian Español.jpg') }}"
-                            alt="Christian Español"
-                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
-                        >
+                        <img src="/static/images/index-bg.jpg" alt="Member 3">
                         <div class="member-info">
                             <h3>Español</h3>
                             <p>Christian P.</p>
                         </div>
                     </div>
                     <div class="member">
-                        <img
-                            src="{{ url_for('static', filename='images/about/Christian Villanueva.png') }}"
-                            alt="Christian Villanueva"
-                            onerror="this.onerror=null;this.src='{{ url_for('static', filename='images/6.jpe') }}';"
-                        >
+                        <img src="/static/images/index-bg.jpg" alt="Member 4">
                         <div class="member-info">
                             <h3>Villanueva</h3>
                             <p>Christian April Kim R.</p>

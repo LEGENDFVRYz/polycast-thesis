@@ -17,21 +17,24 @@
     <!-- Sign In Form -->
     <form method="POST" id="signInForm">
         <div class="form-group">
-            <input type="text" name="username" placeholder="Username" required>
+            <input type="text" name="username" placeholder="Username" required data-max-length="80" title="Maximum 80 characters">
             <!-- This error message matches your image -->
-            <p class="error-message" id="emailError">Admin account doesn't exist</p>
+            <p class="error-message" id="emailError" data-default-message="Admin account doesn't exist">Admin account doesn't exist</p>
         </div>
 
         <div class="form-group">
-            <input type="text" name="section" placeholder="Section" required>
+            <input type="text" name="section" placeholder="Section" required data-max-length="80" title="Maximum 80 characters">
+            <p class="error-message" data-default-message="">Maximum 80 characters.</p>
         </div>
 
         <div class="form-group">
-            <input type="password" name="password" placeholder="Password" required>
+            <input type="password" name="password" placeholder="Password" required data-max-length="80" title="Maximum 80 characters">
+            <p class="error-message" data-default-message="">Maximum 80 characters.</p>
         </div>
 
         <div class="form-group">
-            <input type="password" name="confirm_password" placeholder="Confirm Password" required>
+            <input type="password" name="confirm_password" placeholder="Confirm Password" required data-max-length="80" title="Maximum 80 characters">
+            <p class="error-message" data-default-message="">Maximum 80 characters.</p>
         </div>
 
         <button type="submit" class="signin-button">Register</button>

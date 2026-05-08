@@ -37,6 +37,91 @@
                 <h1 class="brand-title">POLYCAST</h1>
             </div>
         </div>
+
+        <script>
+            document.addEventListener('DOMContentLoaded', () => {
+                const defaultLimit = 80;
+
+                document.querySelectorAll('#signInForm').forEach((form) => {
+                    const submitButton = form.querySelector('.signin-button');
+                    const inputs = Array.from(form.querySelectorAll('input[data-max-length]'));
+
+                    const setFieldError = (input, message) => {
+                        const fieldGroup = input.closest('.form-group');
+                        const errorElement = fieldGroup ? fieldGroup.querySelector('.error-message') : null;
+
+                        input.classList.toggle('input-error', Boolean(message));
+                        input.setCustomValidity(message || '');
+
+                        if (errorElement) {
+                            errorElement.textContent = message || errorElement.dataset.defaultMessage || '';
+                            errorElement.classList.toggle('visible', Boolean(message));
+                        }
+                    };
+
+                    const validateInput = (input) => {
+                        const limit = Number(input.dataset.maxLength || defaultLimit);
+                        const valueLength = input.value.length;
+
+                        if (valueLength > limit) {
+                            setFieldError(input, `Maximum ${limit} characters.`);
+                            return false;
+                        }
+
+                        setFieldError(input, '');
+                        return true;
+                    };
+
+                    const syncSubmitState = () => {
+                        const isValid = inputs.every((input) => input.value.length <= Number(input.dataset.maxLength || defaultLimit));
+
+                        if (submitButton) {
+                            submitButton.disabled = !isValid;
+                        }
+
+                        return isValid;
+                    };
+
+                    inputs.forEach((input) => {
+                        input.addEventListener('input', () => {
+                            validateInput(input);
+                            syncSubmitState();
+                        });
+
+                        input.addEventListener('blur', () => {
+                            validateInput(input);
+                            syncSubmitState();
+                        });
+
+                        input.addEventListener('paste', (event) => {
+                            const pastedText = event.clipboardData?.getData('text') || '';
+                            const limit = Number(input.dataset.maxLength || defaultLimit);
+                            const selectionStart = input.selectionStart ?? input.value.length;
+                            const selectionEnd = input.selectionEnd ?? input.value.length;
+                            const nextLength = input.value.length - (selectionEnd - selectionStart) + pastedText.length;
+
+                            if (nextLength > limit) {
+                                event.preventDefault();
+                                setFieldError(input, `Maximum ${limit} characters.`);
+                                syncSubmitState();
+                            }
+                        });
+                    });
+
+                    form.addEventListener('submit', (event) => {
+                        const invalidInput = inputs.find((input) => !validateInput(input));
+
+                        if (invalidInput) {
+                            event.preventDefault();
+                            invalidInput.focus();
+                            syncSubmitState();
+                        }
+                    });
+
+                    syncSubmitState();
+                });
+            });
+        </script>
     </body>
     
 </html>

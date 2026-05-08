@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer11_latency.py -- end-to-end latency proxy (Tier C).
 
 Without a real-time player we cannot measure render_ts − sender_ts
@@ -23,9 +23,9 @@ import matplotlib.pyplot as plt
 
 from _common import (ensure_out, replay, LayerResult, list_datasets,
                      DATASET_DIR)
-from preprocessor  import UWBPreprocessor
-from ekf_fusion    import AsyncEKFFusionEngine
-from config        import UWB_OFFSETS
+from kuru_method.asynchronous_stream.preprocessor  import UWBPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion    import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.config        import UWB_OFFSETS
 
 
 LAYER = 'layer11_latency'

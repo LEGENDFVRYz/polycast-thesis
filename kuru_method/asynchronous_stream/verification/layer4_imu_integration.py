@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer4_imu_integration.py -- body->whiteboard transform, heading lock, tag_z.
 
 Uses the production IMUIntegrator and UWBPreprocessor + IRLSTrilateration so
@@ -47,10 +47,10 @@ import matplotlib.pyplot as plt
 
 from _common        import (ensure_out, replay, LayerResult, DATASET_DIR,
                             draw_board, stems_matching)
-from config         import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
-from imu_integrator import IMUIntegrator, quat_to_rotmat
-from preprocessor   import UWBPreprocessor
-from fusion_engine  import IRLSTrilateration
+from kuru_method.asynchronous_stream.config         import ANCHORS, UWB_OFFSETS, MARKER_LENGTH
+from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator, quat_to_rotmat
+from kuru_method.asynchronous_stream.preprocessor   import UWBPreprocessor
+from kuru_method.asynchronous_stream.fusion_engine  import IRLSTrilateration
 
 
 LAYER = 'layer4_imu_integration'

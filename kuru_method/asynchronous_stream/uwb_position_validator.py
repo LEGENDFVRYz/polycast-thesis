@@ -1,4 +1,4 @@
-"""
+﻿"""
 uwb_position_validator.py  --  PolyCast UWB-Only Position Validator
 ===================================================================
 Shows IRLS trilateration scatter on a 2D whiteboard view WITHOUT any
@@ -24,10 +24,10 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from config          import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
-from data_parser     import AsyncDataParser
-from preprocessor    import UWBPreprocessor
-from fusion_engine   import IRLSTrilateration
+from kuru_method.asynchronous_stream.config          import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
+from kuru_method.asynchronous_stream.data_parser     import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor    import UWBPreprocessor
+from kuru_method.asynchronous_stream.fusion_engine   import IRLSTrilateration
 
 # -- Configuration ----------------------------------------------------------
 DATASET_FILENAME = ''   # '' = live serial;  'datasets/data.csv' = playback

@@ -1,4 +1,4 @@
-"""
+﻿"""
 main_ekf.py  —  PolyCast EKF Live Visualiser (Async Stream)
 ============================================================
 Event-driven sensor fusion visualiser for the decoupled async stream.
@@ -38,19 +38,19 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
-from data_parser    import AsyncDataParser
-from preprocessor   import UWBPreprocessor, IMUPreprocessor
-from ekf_fusion     import AsyncEKFFusionEngine
-from trail_smoother import TrailSmoother
-from note_smoother  import NoteSmoother
-from imu_calibrate  import trigger_dcd_save
-from recognition_preprocessor import NormalizedStrokeExtractor
-from trace_quality_diagnostics import TraceQualityDiagnostics
+from kuru_method.asynchronous_stream.data_parser    import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor   import UWBPreprocessor, IMUPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion     import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.trail_smoother import TrailSmoother
+from kuru_method.asynchronous_stream.note_smoother  import NoteSmoother
+from kuru_method.asynchronous_stream.imu_calibrate  import trigger_dcd_save
+from kuru_method.asynchronous_stream.recognition_preprocessor import NormalizedStrokeExtractor
+from kuru_method.asynchronous_stream.trace_quality_diagnostics import TraceQualityDiagnostics
 
 
 # -- Configuration ----------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
-DATASET_FILENAME = ''   # '' = live; 'path/to/data.csv' = playback
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
+DATASET_FILENAME = 'logs/datasets/v4/abcde1_1.csv'   # '' = live; 'path/to/data.csv' = playback
 MAX_TRAIL        = 2000  # maximum position samples in the drawing trail
 SHOW_VELOCITY    = True  # initial state; toggle with V key
 VEL_SCALE        = 0.3   # arrow length multiplier

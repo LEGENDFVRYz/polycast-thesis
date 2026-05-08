@@ -1,4 +1,4 @@
-"""
+﻿"""
 check_hz.py — PolyCast Stream Frequency Monitor
 ===============================================
 A simple diagnostic tool to calculate the real-time Hz
@@ -7,8 +7,8 @@ of the IMU and UWB streams, and display their ratio.
 
 import time
 import sys
-import config
-from data_parser import AsyncDataParser
+import kuru_method.asynchronous_stream.config as config
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
 
 def main():
     # Initialize your existing async parser

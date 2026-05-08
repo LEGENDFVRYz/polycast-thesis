@@ -1,4 +1,4 @@
-"""
+﻿"""
 uwb_validator.py  —  PolyCast UWB Filter Performance Dashboard (Async Stream)
 ==============================================================================
 4-panel dashboard (one per anchor) showing raw vs. filtered distances.
@@ -12,11 +12,11 @@ import sys
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
-from data_parser import AsyncDataParser
-from preprocessor import UWBPreprocessor
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor import UWBPreprocessor
 
 # --- CONFIGURATION ---
-from config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE, UWB_OFFSETS
 DATASET_FILENAME = ''   # '' = live mode, or path to async CSV dataset
 
 MAX_SAMPLES = 200  # Number of points visible on the scrolling live graph

@@ -1,4 +1,4 @@
-"""
+﻿"""
 imu_validator.py  —  PolyCast IMU Integration Validator (Async Stream)
 ======================================================================
 """
@@ -17,14 +17,14 @@ import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from collections import deque
 
-from data_parser     import AsyncDataParser
-from preprocessor    import UWBPreprocessor, IMUPreprocessor
-from imu_integrator  import IMUIntegrator, quat_to_rotmat
-from force_detector import ForceContactDetector
-from fusion_engine   import IRLSTrilateration
+from kuru_method.asynchronous_stream.data_parser     import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor    import UWBPreprocessor, IMUPreprocessor
+from kuru_method.asynchronous_stream.imu_integrator  import IMUIntegrator, quat_to_rotmat
+from kuru_method.asynchronous_stream.force_detector import ForceContactDetector
+from kuru_method.asynchronous_stream.fusion_engine   import IRLSTrilateration
 
 # ── Configuration ──────────────────────────────────────────────────────
-from config import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE, ANCHORS, MARKER_LENGTH, UWB_OFFSETS
 DATASET_FILENAME = 'datasets_str_50hz/abc_s1.csv'   # '' = live; 'path/to/data.csv' = playback
 
 MAX_SAMPLES      = 500  # rolling window width for time-series plots

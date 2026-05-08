@@ -1,4 +1,4 @@
-"""
+﻿"""
 derive_calibration.py — Phase 8 Step 2 calibration profile generator.
 
 Consumes stationary-hold + slow-stroke datasets and writes
@@ -43,10 +43,10 @@ _ASYNC = Path(__file__).resolve().parent.parent
 if str(_ASYNC) not in sys.path:
     sys.path.insert(0, str(_ASYNC))
 
-from data_parser    import AsyncDataParser     # noqa: E402
-from imu_integrator import IMUIntegrator        # noqa: E402
-from force_detector import ForceContactDetector # noqa: E402
-from config         import ANCHORS, UWB_OFFSETS, IMU_HZ  # noqa: E402
+from kuru_method.asynchronous_stream.data_parser    import AsyncDataParser     # noqa: E402
+from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator        # noqa: E402
+from kuru_method.asynchronous_stream.force_detector import ForceContactDetector # noqa: E402
+from kuru_method.asynchronous_stream.config         import ANCHORS, UWB_OFFSETS, IMU_HZ  # noqa: E402
 from verification.ground_truth import get_truth as _gt   # noqa: E402
 
 DATASET_DIR    = _ASYNC / 'datasets_str_50hz'

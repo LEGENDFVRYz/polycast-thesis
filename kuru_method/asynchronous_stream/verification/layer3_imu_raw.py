@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer3_imu_raw.py -- raw IMU sanity: quaternion stability + linear-accel noise floor.
 
 Metrics
@@ -29,7 +29,7 @@ from _common    import (ensure_out, collect, LayerResult, DATASET_DIR,
                         stems_matching, list_datasets)
 
 STATIONARY_STEMS = {'pt_middle', 'pt_middle-', 'middle-'}
-from imu_integrator import IMUIntegrator
+from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator
 
 
 LAYER = 'layer3_imu_raw'

@@ -1,4 +1,4 @@
-"""
+﻿"""
 imu_native_viz.py  —  PolyCast Native Window 3D IMU Visualizer
 ==============================================================
 True 3D visualization inside a native OS window (no browser).
@@ -10,9 +10,9 @@ import time
 import numpy as np
 import pyvista as pv
 
-from data_parser import AsyncDataParser
-from imu_integrator import quat_to_rotmat
-from config import SERIAL_PORT, BAUD_RATE
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
+from kuru_method.asynchronous_stream.imu_integrator import quat_to_rotmat
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE
 
 # Set this to a path or leave blank for live stream
 DATASET_FILENAME = ''

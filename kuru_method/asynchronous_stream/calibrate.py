@@ -1,4 +1,4 @@
-"""
+﻿"""
 calibrate.py  —  PolyCast Anchor Bias Calibrator (Async Stream)
 ===============================================================
 Measures the UWB tag at several KNOWN positions on the whiteboard and
@@ -82,7 +82,7 @@ import serial
 # -------------------------------------------------------------------------
 #  CONFIG — shared constants from config.py
 # -------------------------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE, MARKER_LENGTH, ANCHORS
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE, MARKER_LENGTH, ANCHORS
 
 # Number of UWB packets to average at each calibration position
 # ~3 seconds at 50 Hz UWB rate = ~150 packets

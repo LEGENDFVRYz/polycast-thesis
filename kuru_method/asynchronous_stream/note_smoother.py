@@ -1,4 +1,4 @@
-"""
+﻿"""
 note_smoother.py -- Priority 6 OFFLINE per-stroke smoother for saved notes.
 
 Online and offline smoothing have different objectives:
@@ -30,7 +30,7 @@ from typing import Iterable, List
 
 import numpy as np
 
-from ekf_fusion import rts_smooth_history
+from kuru_method.asynchronous_stream.ekf_fusion import rts_smooth_history
 
 
 class NoteSmoother:

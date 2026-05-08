@@ -1,4 +1,4 @@
-"""
+﻿"""
 anchor_orientation_validator.py  —  PolyCast Anchor Orientation Optimizer
 ==========================================================================
 Find the best physical orientation of the UWB anchors by running labeled
@@ -42,11 +42,11 @@ import threading
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config import (
+from kuru_method.asynchronous_stream.config import (
     SERIAL_PORT, BAUD_RATE,
     ANCHORS, MARKER_LENGTH, UWB_OFFSETS,
 )
-from data_parser import AsyncDataParser
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
 
 
 # -------------------------------------------------------------------------

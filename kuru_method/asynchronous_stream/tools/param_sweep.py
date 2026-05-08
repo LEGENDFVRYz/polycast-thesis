@@ -1,4 +1,4 @@
-"""
+﻿"""
 param_sweep.py — Phase 8 Step 4 pen-up parameter sweep.
 
 Sweeps four high-leverage knobs from `config.py` over a representative
@@ -41,7 +41,7 @@ _ASYNC = Path(__file__).resolve().parent.parent
 if str(_ASYNC) not in sys.path:
     sys.path.insert(0, str(_ASYNC))
 
-import config as _config_mod   # noqa: E402
+import kuru_method.asynchronous_stream.config as _config_mod   # noqa: E402
 
 DATASET_DIR = _ASYNC / 'datasets_str_50hz'
 OUT_DIR     = _ASYNC / 'verification' / 'out' / 'param_sweep'

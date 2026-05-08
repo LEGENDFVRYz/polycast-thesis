@@ -1,4 +1,4 @@
-"""
+﻿"""
 batch_main_ekf_plot.py -- headless batch generator of main_ekf-style trail PNGs.
 
 Runs the same engine pipeline as main_ekf.py on every CSV in the dataset
@@ -25,12 +25,12 @@ matplotlib.use('Agg')
 import numpy as np
 import matplotlib.pyplot as plt
 
-from config         import ANCHORS, MARKER_LENGTH, UWB_OFFSETS
-from data_parser    import AsyncDataParser
-from preprocessor   import UWBPreprocessor, IMUPreprocessor
-from ekf_fusion     import AsyncEKFFusionEngine
-from trail_smoother import TrailSmoother
-from fusion_engine  import IRLSTrilateration
+from kuru_method.asynchronous_stream.config         import ANCHORS, MARKER_LENGTH, UWB_OFFSETS
+from kuru_method.asynchronous_stream.data_parser    import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor   import UWBPreprocessor, IMUPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion     import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.trail_smoother import TrailSmoother
+from kuru_method.asynchronous_stream.fusion_engine  import IRLSTrilateration
 
 
 _TRAIL_SUBSAMPLE = 3

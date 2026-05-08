@@ -1,4 +1,4 @@
-"""
+﻿"""
 button_detector.py  —  PolyCast Tactile Switch Contact Detector (Async Stream)
 ===============================================================================
 Hardware design:
@@ -27,10 +27,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from collections import deque
-from data_parser import AsyncDataParser
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
 
 # -- Configuration ---------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE
 DATASET_FILENAME = ''           # '' = live;  'data.csv' = playback
 
 MAX_DISPLAY = 300               # rolling window width (samples)

@@ -1,4 +1,4 @@
-"""
+﻿"""
 imu_calibrate.py  —  Trigger BNO085 DCD save on the marker (Item D)
 ====================================================================
 Sends `CAL\\n` to the receiver over USB serial.  The receiver forwards
@@ -22,7 +22,7 @@ import sys
 import time
 import serial
 
-from config import SERIAL_PORT, BAUD_RATE
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE
 
 
 CAL_REPLY_TIMEOUT_S = 3.0   # wall-clock budget for the round-trip

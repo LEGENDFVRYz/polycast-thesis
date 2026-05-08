@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer5_force_contact.py -- FSR contact detection health.
 
 Uses the production ForceContactDetector.  Reports raw-force histogram,
@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 
 from _common        import (ensure_out, collect, LayerResult, DATASET_DIR,
                              list_datasets)
-from force_detector import ForceContactDetector
+from kuru_method.asynchronous_stream.force_detector import ForceContactDetector
 
 
 LAYER = 'layer5_force_contact'

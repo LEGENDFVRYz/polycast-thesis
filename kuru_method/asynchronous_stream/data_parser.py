@@ -93,9 +93,6 @@ class AsyncDataParser:
         else:
             try:
                 path = self.csv_path
-                if not os.path.isabs(path):
-                    script_dir = os.path.dirname(os.path.abspath(__file__))
-                    path = os.path.join(script_dir, path)
                 self.csv_file = open(path, 'r')
 
                 # Skip optional header line (non-data lines starting with #)

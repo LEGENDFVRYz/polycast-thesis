@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer9_strokes.py -- stroke continuity audit (Tier C).
 
 Counts how many strokes the FSR contact state generated, plus duration
@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 
 from _common import (ensure_out, collect, LayerResult, list_datasets,
                      DATASET_DIR)
-from force_detector import ForceContactDetector
+from kuru_method.asynchronous_stream.force_detector import ForceContactDetector
 
 
 LAYER = 'layer9_strokes'

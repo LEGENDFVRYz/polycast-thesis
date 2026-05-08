@@ -1,4 +1,4 @@
-"""
+﻿"""
 _common.py -- shared replay, plotting, and result helpers for the verification layer.
 """
 
@@ -18,8 +18,8 @@ _PARENT = Path(__file__).resolve().parent.parent
 if str(_PARENT) not in sys.path:
     sys.path.insert(0, str(_PARENT))
 
-from data_parser import AsyncDataParser   # noqa: E402
-from config      import ANCHORS            # noqa: E402
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser   # noqa: E402
+from kuru_method.asynchronous_stream.config      import ANCHORS            # noqa: E402
 
 
 # -- Paths ----------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""
+﻿"""
 compare_renders.py — three-panel diagnostic for the live-vs-Layer-10 gap.
 
 Replays one CSV through AsyncEKFFusionEngine and produces a single PNG with:
@@ -37,12 +37,12 @@ _ASYNC = Path(__file__).resolve().parent.parent
 if str(_ASYNC) not in sys.path:
     sys.path.insert(0, str(_ASYNC))
 
-from data_parser   import AsyncDataParser
-from preprocessor  import UWBPreprocessor
-from ekf_fusion    import AsyncEKFFusionEngine
-from note_smoother import NoteSmoother
-from trail_smoother import OnlineTrailSmoother
-from config        import ANCHORS, UWB_OFFSETS
+from kuru_method.asynchronous_stream.data_parser   import AsyncDataParser
+from kuru_method.asynchronous_stream.preprocessor  import UWBPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion    import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.note_smoother import NoteSmoother
+from kuru_method.asynchronous_stream.trail_smoother import OnlineTrailSmoother
+from kuru_method.asynchronous_stream.config        import ANCHORS, UWB_OFFSETS
 
 TRAIL_SUBSAMPLE = 3
 MAX_TRAIL       = 1000

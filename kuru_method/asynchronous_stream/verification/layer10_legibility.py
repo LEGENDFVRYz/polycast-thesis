@@ -1,4 +1,4 @@
-"""
+﻿"""
 layer10_legibility.py -- offline-rendered note legibility (Tier C).
 
 Renders each dataset's offline-smoothed (NoteSmoother) per-stroke output
@@ -17,10 +17,10 @@ import matplotlib.pyplot as plt
 
 from _common import (ensure_out, replay, LayerResult, list_datasets,
                      DATASET_DIR)
-from preprocessor  import UWBPreprocessor
-from ekf_fusion    import AsyncEKFFusionEngine
-from note_smoother import NoteSmoother
-from config        import ANCHORS, UWB_OFFSETS
+from kuru_method.asynchronous_stream.preprocessor  import UWBPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion    import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.note_smoother import NoteSmoother
+from kuru_method.asynchronous_stream.config        import ANCHORS, UWB_OFFSETS
 
 
 LAYER = 'layer10_legibility'

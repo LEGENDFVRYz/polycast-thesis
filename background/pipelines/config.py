@@ -640,14 +640,18 @@ class OdometryConfig:
     # Buffer parameters — must match values used during training.
     # Board: 1.25 m (x) × 1.20 m (y).  Anchors occupy all four corners,
     # so calibration points are inset 10 cm → max grid stroke ≈ 1.45 m.
-    # 512 frames / 170 Hz ≈ 3.0 s — covers 1.45 m at ≥ 0.48 m/s (natural pace).
+    # 512 frames / 180 Hz ≈ 2.84 s — covers 1.45 m at ≥ 0.51 m/s (natural pace).
+    # window_size does NOT affect IMU (180 Hz) or UWB (50 Hz) hardware rates.
     # WARNING: changing this after data collection requires a full re-collect + retrain.
-    window_size: int = 512   # frames (~3.0 s at the observed 170 Hz effective rate)
-    stride:      int = 40    # new frames between inferences (~4.25 Hz inference cadence)
+    window_size: int = 512   # frames (~2.84 s at 180 Hz IMU rate)
+    stride:      int = 40    # frames between inferences (40/180 ≈ 0.22 s, ~4.4 Hz)
 
     # ESKF measurement noise for the odometry update.
-    # Set from validation RMSE: if val_rmse ≈ 4 cm, use sigma_odom = 0.04.
-    sigma_odom: float = 0.05          # metres (1-sigma per axis)
+    # Must match current model val RMSE — the ESKF weights the correction
+    # inversely proportional to sigma_odom².  An overconfident (too small)
+    # value will let a bad model corrupt the position estimate.
+    # Update this every time you retrain: sigma_odom = val_rmse_metres.
+    sigma_odom: float = 0.147         # metres — matches 14.7 cm val RMSE (1000 samples, TCN ch=64)
 
     # Per-update position-correction clip — matches UWB drawing-mode cap so the
     # odometry nudge cannot fold a visible stroke artifact in a single update.

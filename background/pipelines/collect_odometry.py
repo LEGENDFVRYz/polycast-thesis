@@ -28,8 +28,10 @@ HOW TO RECORD ONE REPETITION:
 """
 
 from __future__ import annotations
-import argparse
 import os
+os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")  # prevent libiomp5md.dll double-load on Windows
+
+import argparse
 import time
 import sys
 
@@ -153,7 +155,8 @@ def collect(
 
     # ── State tracking ───────────────────────────────────────────────────────
     prev_stroke_active = False
-    completed_strokes  = 0
+    completed_strokes  = 0   # saved samples (gates the exit condition)
+    attempt_count      = 0   # total pen-up events (includes too-short strokes)
 
     # ── Header ───────────────────────────────────────────────────────────────
     print("=" * 62)
@@ -164,7 +167,7 @@ def collect(
     print(f"  Fusion : {fusion_mode}")
     print()
     stroke_dist = (delta_m[0]**2 + delta_m[1]**2) ** 0.5
-    window_s    = cfg.odometry.window_size / 170.0   # ~170 Hz effective rate
+    window_s    = cfg.odometry.window_size / 180.0   # 180 Hz IMU rate
     min_speed   = stroke_dist / window_s
     print("  HOW TO RECORD:")
     print(f"    1. Touch pen to [{from_name}] tape marker.")
@@ -204,24 +207,50 @@ def collect(
                     if not fused:
                         continue
 
-                    # Assemble (7,) frame and push to collector buffer.
-                    frame = _assemble_frame(s)
-                    if frame is not None:
-                        collector.on_imu_packet(
-                            imu_frames=[frame],
-                            timestamps=[s.get('ts_hw', 0)],
-                        )
-
-                    # Detect pen-up edge → reset collector buffer + count stroke.
+                    # Detect stroke state first so the gate below is correct.
                     stroke_active_now = bool(fused.get('stroke_active', False))
-                    if prev_stroke_active and not stroke_active_now:
+
+                    # Only accumulate frames while the pen is actively drawing.
+                    # Air frames between strokes are intentionally excluded —
+                    # pushing them would make the next stroke appear to start
+                    # mid-way through the window.
+                    if stroke_active_now:
+                        frame = _assemble_frame(s)
+                        if frame is not None:
+                            collector.on_imu_packet(
+                                imu_frames=[frame],
+                                timestamps=[s.get('ts_hw', 0)],
+                            )
+                    if not prev_stroke_active and stroke_active_now:
+                        # Pen-down edge: guarantee the buffer is clean before
+                        # the new stroke begins accumulating.
                         collector.reset_stroke()
-                        completed_strokes += 1
-                        samples_so_far = len(collector)
-                        print(
-                            f"  [stroke {completed_strokes:>3}/{n_reps}]"
-                            f"  dataset samples so far: {samples_so_far}"
-                        )
+
+                    if prev_stroke_active and not stroke_active_now:
+                        saved, n_frames, status = collector.reset_stroke()
+                        attempt_count += 1
+                        need     = cfg.odometry.window_size
+                        max_ok   = int(need * collector.OVERSHOOT_LIMIT)
+                        duration = n_frames / 180.0
+                        if saved:
+                            completed_strokes += 1
+                            print(
+                                f"  [stroke {completed_strokes:>3}/{n_reps}]"
+                                f"  frames={n_frames:>4} ({duration:.1f}s)  SAVED"
+                                f"  (attempt {attempt_count})"
+                            )
+                        elif status == 'TOO_SHORT':
+                            print(
+                                f"  [attempt {attempt_count:>3}]"
+                                f"  frames={n_frames:>4} ({duration:.1f}s)  TOO SHORT"
+                                f"  — draw for at least {need/180:.1f}s  (need {need} frames)"
+                            )
+                        else:  # TOO_LONG
+                            print(
+                                f"  [attempt {attempt_count:>3}]"
+                                f"  frames={n_frames:>4} ({duration:.1f}s)  TOO LONG"
+                                f"  — lift pen before {max_ok/180:.1f}s  (max {max_ok} frames)"
+                            )
                     prev_stroke_active = stroke_active_now
 
                 # ── UWB branch ──────────────────────────────────────────────

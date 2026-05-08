@@ -1,37 +1,39 @@
 from __future__ import annotations
 import numpy as np
-from scipy.signal import savgol_filter
-from .buffer import IMUOdometryBuffer
+
+FRAME_DIM = 7
 
 
 class OdometryDataCollector:
-    """Pairs IMU windows with UWB displacement labels for offline training.
+    """Per-stroke data collector for known-point odometry training data.
 
-    Attach to the pipeline during recording sessions.  Feed every IMU packet
-    and every accepted UWB fix; the collector gates samples on is_drawing and
-    aligns windows with UWB deltas automatically.
+    Design rationale
+    ----------------
+    The sliding IMUOdometryBuffer is designed for continuous inference — it
+    emits windows every stride frames regardless of stroke boundaries.  For
+    data collection with known start/end points (Option 2), that model fails:
+    strokes typically end before the buffer fills, so reset_stroke() clears
+    it before any window is emitted.
 
-    Label strategies (call one before save()):
-      - smooth_uwb_labels()  — Savitzky-Golay smoothed UWB trajectory (recommended
-                               for freehand stroke data; low effort, good quality).
-      - use_known_points()   — ruler-measured start/end pairs (cleanest labels;
-                               use for a calibration dataset).
+    This collector instead accumulates all frames for the current stroke in a
+    plain list.  On reset_stroke() (pen-up) it takes the first window_size
+    frames and saves them with a placeholder label of zeros.  After all
+    recording sessions, call use_known_points() to replace every label with
+    the ruler-measured displacement.
 
-    After recording, call save() to write a .npz file for train.py.
+    If a stroke is shorter than window_size frames (pen lifted too early or
+    drawn too slowly), it is skipped and the caller is notified via the
+    return value of reset_stroke().
     """
 
-    def __init__(self, window_size: int = 200):
-        # stride == window_size so every window is non-overlapping — each sample
-        # covers exactly one UWB-delta interval with no repeated frames.
-        self.buf = IMUOdometryBuffer(window_size=window_size, stride=window_size)
-        self._last_uwb_pos: np.ndarray | None = None
-        self._pending_window: np.ndarray | None = None   # last emitted but un-paired window
+    def __init__(self, window_size: int = 512):
+        self.window_size = window_size
+        self._stroke_buf: list[np.ndarray] = []   # frames for the active stroke
         self._dataset: list[tuple[np.ndarray, np.ndarray]] = []
-        # Raw UWB trajectory for post-hoc smoothing (position per fix).
-        self._uwb_trajectory: list[np.ndarray] = []
+        self._uwb_trajectory: list[np.ndarray] = []  # kept for diagnostics / Option 1
 
     # ------------------------------------------------------------------
-    # Real-time feed methods
+    # Real-time feed
     # ------------------------------------------------------------------
 
     def on_imu_packet(
@@ -39,79 +41,63 @@ class OdometryDataCollector:
         imu_frames: list[np.ndarray],
         timestamps: list[int] | None = None,
     ) -> None:
-        """Call with each batch of 3 pre-processed IMU frames from imu.py."""
-        window = self.buf.push_packet(imu_frames, timestamps)
-        if window is not None:
-            self._pending_window = window
+        """Accumulate frames from the active stroke.  Call on every IMU packet."""
+        for frame in imu_frames:
+            f = np.asarray(frame, dtype=np.float32)
+            if f.shape == (FRAME_DIM,):
+                self._stroke_buf.append(f)
 
     def on_uwb_fix(self, uwb_pos: np.ndarray, is_drawing: bool) -> None:
-        """Call with each accepted UWB position fix (world-frame metres).
+        """Track UWB trajectory (used by smooth_uwb_labels; not needed for Option 2)."""
+        self._uwb_trajectory.append(
+            np.asarray(uwb_pos, dtype=np.float32).copy()
+        )
 
-        Pairs the most recently completed IMU window with the UWB delta
-        if the pen is drawing.  Accumulates the raw UWB trajectory for
-        post-hoc smoothing via smooth_uwb_labels().
+    # Strokes longer than window_size * OVERSHOOT_LIMIT are discarded.
+    # Beyond this ratio the first-window label mismatch is too large to trust:
+    # the window only sees a fraction of the journey but the label claims the
+    # full displacement.  1.5× = stroke up to ~4.3 s at 180 Hz is acceptable.
+    OVERSHOOT_LIMIT: float = 1.5
+
+    def reset_stroke(self) -> tuple[bool, int, str]:
+        """Call on pen-up.
+
+        Takes the first window_size frames from the stroke buffer and saves
+        them as a training sample with a zero placeholder label.
+
+        Returns (saved: bool, frame_count: int, status: str) where status is
+        one of 'SAVED', 'TOO_SHORT', or 'TOO_LONG'.
         """
-        uwb_pos = np.asarray(uwb_pos, dtype=np.float32)
-        self._uwb_trajectory.append(uwb_pos.copy())
+        n = len(self._stroke_buf)
 
-        if self._last_uwb_pos is None:
-            self._last_uwb_pos = uwb_pos
-            return
+        if n < self.window_size:
+            self._stroke_buf.clear()
+            return False, n, 'TOO_SHORT'
 
-        delta = uwb_pos - self._last_uwb_pos
-        self._last_uwb_pos = uwb_pos
+        if n > self.window_size * self.OVERSHOOT_LIMIT:
+            self._stroke_buf.clear()
+            return False, n, 'TOO_LONG'
 
-        if self._pending_window is not None and is_drawing:
-            self._dataset.append((self._pending_window.copy(), delta.copy()))
-            self._pending_window = None
+        window = np.stack(self._stroke_buf[:self.window_size], axis=0)  # (W, 7)
+        self._dataset.append((window, np.zeros(2, dtype=np.float32)))
+        self._stroke_buf.clear()
+        return True, n, 'SAVED'
 
-    def reset_stroke(self) -> None:
-        """Call on pen-up to clear the IMU buffer and pending state."""
-        self.buf.reset()
-        self._pending_window = None
-        self._last_uwb_pos   = None
+    @property
+    def active_frame_count(self) -> int:
+        """Number of frames accumulated in the current (not yet closed) stroke."""
+        return len(self._stroke_buf)
 
     # ------------------------------------------------------------------
-    # Post-hoc label improvement
+    # Label assignment (call after all recording sessions)
     # ------------------------------------------------------------------
-
-    def smooth_uwb_labels(
-        self,
-        window_length: int = 21,
-        polyorder: int = 3,
-    ) -> None:
-        """Replace raw UWB delta labels with Savitzky-Golay smoothed deltas.
-
-        Preserves stroke shape (low-frequency) while removing UWB jitter
-        (high-frequency).  Requires at least window_length UWB fixes.
-        Call before save().
-        """
-        if len(self._uwb_trajectory) < window_length:
-            return
-        traj = np.stack(self._uwb_trajectory, axis=0)   # (T, 2)
-        smooth_x = savgol_filter(traj[:, 0], window_length, polyorder)
-        smooth_y = savgol_filter(traj[:, 1], window_length, polyorder)
-        smooth   = np.stack([smooth_x, smooth_y], axis=1).astype(np.float32)
-        # Recompute deltas from the smoothed trajectory and re-pair with windows.
-        # This is a best-effort re-pairing by index; for calibration data prefer
-        # use_known_points() which gives exact labels.
-        smooth_deltas = np.diff(smooth, axis=0)
-        n = min(len(self._dataset), len(smooth_deltas))
-        for i in range(n):
-            win, _ = self._dataset[i]
-            self._dataset[i] = (win, smooth_deltas[i].copy())
 
     def use_known_points(
         self,
         start: tuple[float, float],
         end:   tuple[float, float],
     ) -> None:
-        """Override all labels with a single ruler-measured displacement.
-
-        Use when the entire recording session is one stroke from a fixed
-        start to a fixed end (tape-marker calibration).  The same (Δx,Δy)
-        is assigned to every sample in the dataset.
-        """
+        """Replace all placeholder labels with the ruler-measured displacement."""
         delta = np.array(
             [end[0] - start[0], end[1] - start[1]], dtype=np.float32
         )

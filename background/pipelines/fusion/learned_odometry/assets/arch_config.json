@@ -1,0 +1,6 @@
+{
+  "arch": "tcn",
+  "hidden": 128,
+  "channels": 32,
+  "dropout": 0.4
+}

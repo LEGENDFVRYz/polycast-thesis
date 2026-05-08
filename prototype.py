@@ -1,5 +1,5 @@
 import time, json, struct, websocket
-from config import prototype_config, CONN_LOG, ERROR_LOG
+from config import prototype_config, CONN_LOG, ERROR_LOG, CANVAS_WIDTH, CANVAS_HEIGHT
 from app.utils.utils import log_message
 from background.image_generator import draw_segment, image_lock
 from websocket_server import WebsocketServer
@@ -42,7 +42,10 @@ def on_esp_message(wsapp, message):
                         draw_segment(last_point[0], last_point[1], x, y, p)
                     last_point = (x, y)
         if ws_server:
-            ws_server.send_message_to_all(json.dumps(points[-1]))
+            last = points[-1]
+            bx = max(0, min(CANVAS_WIDTH - 1, last[0]))
+            by = max(0, min(CANVAS_HEIGHT - 1, last[1]))
+            ws_server.send_message_to_all(json.dumps({"x": bx, "y": by, "p": last[2]}))
     except Exception as e:
         print("[ESP WS] parse/draw error:", e)
 

@@ -5,7 +5,7 @@ from config import prototype_config, CONN_LOG, ERROR_LOG, CANVAS_WIDTH, CANVAS_H
 from app.utils.utils import log_message
 
 # --- GRAPHICS ENGINE ---
-from background.image_generator import draw_segment, image_lock
+from background.image_generator import draw_segment, image_lock, logical_to_pixel
 
 # --- LOGIC ENGINE: EKF blue-trace stroke-coordinate provider ---
 # Drop tracker.py into background/pipelines/tracker.py.
@@ -124,7 +124,8 @@ class PrototypeSerialThread(threading.Thread):
 
                             # --- STEP 3: BROADCAST (Web) ---
                             if self.ws_server and in_contact:
-                                payload = {"x": px, "y": py, "p": self.xpressure, "state": stroke_state}
+                                mjpeg_x, mjpeg_y = logical_to_pixel(px, py)
+                                payload = {"x": mjpeg_x, "y": mjpeg_y, "p": self.xpressure, "state": stroke_state}
                                 self.ws_server.send_message_to_all(json.dumps(payload))
 
                         except Exception as e:

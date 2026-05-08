@@ -1,7 +1,7 @@
 import json
 import os
 from flask import Blueprint, render_template, redirect, url_for, session, Response
-from config import BROWSER_WS_PORT
+from config import BROWSER_WS_PORT, MJPEG_WIDTH, MJPEG_HEIGHT
 from background.image_generator import (
     generate_frames,
     try_register_stream_client,
@@ -135,7 +135,8 @@ def index():
             return redirect(url_for("stream.client_page"))
         
     print("[CLIENT] Accessing /stream.")
-    return render_template("stream/stream.html", ws_port=BROWSER_WS_PORT)
+    return render_template("stream/stream.html", ws_port=BROWSER_WS_PORT,
+                           mjpeg_width=MJPEG_WIDTH, mjpeg_height=MJPEG_HEIGHT)
 
 
 @stream_bp.route("/stream/playback")

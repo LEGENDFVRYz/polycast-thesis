@@ -1,0 +1,14 @@
+{
+  "imu_hz": 219.15406530791148,
+  "imu_dt_nom_s": 0.004562999999999999,
+  "imu_dt_p99_s": 0.012497599999999977,
+  "imu_n_samples": 109356,
+  "fsr_hz": 219.15406530791148,
+  "fsr_dt_nom_s": 0.004562999999999999,
+  "fsr_dt_p99_s": 0.012497599999999977,
+  "uwb_hz": 50.0,
+  "uwb_dt_nom_s": 0.02,
+  "uwb_dt_p99_s": 0.039982149999999994,
+  "uwb_n_samples": 31096,
+  "source_dir": "C:\\Users\\Christian Villanueva\\Documents\\College Files\\Thesis\\esp32_mock_webserver\\kuru_method\\asynchronous_stream\\datasets_str_50hz"
+}

@@ -29,7 +29,7 @@ from __future__ import annotations
 from enum import Enum
 from typing import Optional
 
-from config import (T_SHORT_S, T_H_S, Q_SHORT, Q_H,
+from kuru_method.asynchronous_stream.config import (T_SHORT_S, T_H_S, Q_SHORT, Q_H,
                     HOVER_MIN_VALID_ANCHORS, HOVER_H_MIN_VALID_ANCHORS,
                     TOUCHDOWN_REACQ_UPDATES, ENABLE_HOVER_H)
 

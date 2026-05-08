@@ -44,7 +44,7 @@ except ImportError:   # Allows CSV playback/tests on machines without pyserial.
     serial = None
 import time
 from datetime import datetime
-import config
+import kuru_method.asynchronous_stream.config as config
 
 
 class AsyncDataParser:

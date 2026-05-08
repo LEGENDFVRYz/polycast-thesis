@@ -26,7 +26,7 @@ IMUPreprocessor:
 import numpy as np
 from collections import deque
 
-from config import UWB_HZ
+from kuru_method.asynchronous_stream.config import UWB_HZ
 
 # Visualisation-path median window expressed in seconds and translated into
 # samples via RATE_PROFILE.UWB_HZ (Priority 1). 0.7 s @ ~50 Hz = 35 samples,

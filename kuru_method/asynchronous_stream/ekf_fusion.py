@@ -34,15 +34,15 @@ Update step  (UWB-driven, ~10 Hz, per anchor, scalar measurement)
 from collections import deque
 
 import numpy as np
-from config import (ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M,
+from kuru_method.asynchronous_stream.config import (ANCHORS, MARKER_LENGTH, TIP_OFFSET_FROM_TAG_M,
                     ENABLE_ITEM_C_FEEDBACK, IMU_HZ,
                     ALPHA_R_HOVER, R_TOUCHDOWN_SCALE, GATE_CHI2_TOUCHDOWN,
                     NU_CLIP_M, LAMBDA_R_ADAPT,
                     RATE_PROFILE, calibration_get)
-from pen_mode import PenMode
-from imu_integrator import IMUIntegrator, quat_to_rotmat
-from force_detector import ForceContactDetector
-from range_kf       import PerAnchorRangeKFBank
+from kuru_method.asynchronous_stream.pen_mode       import PenMode
+from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator, quat_to_rotmat
+from kuru_method.asynchronous_stream.force_detector import ForceContactDetector
+from kuru_method.asynchronous_stream.range_kf       import PerAnchorRangeKFBank
 
 
 # Neutral-pose marker axis in whiteboard frame: board normal (wb-Z = +1).
@@ -930,7 +930,7 @@ class AsyncEKFFusionEngine:
 
         # Priority 5: pen-up state machine (hybrid A→B). Drives R inflation,
         # update skipping, and touchdown reacquisition.
-        from pen_mode import PenModeManager
+        from kuru_method.asynchronous_stream.pen_mode import PenModeManager
         self._pen_mode = PenModeManager()
 
         self._last_imu_ts = None
@@ -959,7 +959,7 @@ class AsyncEKFFusionEngine:
         self._quat_hist = deque(maxlen=40)   # ≈200 ms @ 200 Hz
 
         # Cold-start IRLS (reuses existing solver)
-        from fusion_engine import IRLSTrilateration
+        from kuru_method.asynchronous_stream.fusion_engine import IRLSTrilateration
         _bmin = [-0.30, -0.30, -0.50]
         _bmax = [ 1.55,  1.55,  1.00]
         self._irls = IRLSTrilateration(

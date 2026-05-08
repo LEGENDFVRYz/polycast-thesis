@@ -33,10 +33,10 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.animation import FuncAnimation
 from collections import deque
-from data_parser import AsyncDataParser
+from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
 
 # -- Configuration ---------------------------------------------------------
-from config import SERIAL_PORT, BAUD_RATE, FSR_DT_NOM_S
+from kuru_method.asynchronous_stream.config import SERIAL_PORT, BAUD_RATE, FSR_DT_NOM_S
 DATASET_FILENAME = ''           # '' = live;  'datasets/data.csv' = playback
 
 MAX_DISPLAY = 300               # rolling window width (samples)

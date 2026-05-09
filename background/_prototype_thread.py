@@ -245,67 +245,75 @@ class PrototypeSerialThread(threading.Thread):
                             px = py = None
                             sx_m = sy_m = None
 
-                            # --- STEP 2: GRAPHICS (Pixels) ---
-                            with image_lock:
-                                if not in_contact:
-                                    # Pen lifted: flush smoother and break the stroke.
-                                    self._reset_stroke_state()
+                            # --- STEP 2: COMPUTE DRAW COMMAND (thread-local — no lock needed) ---
+                            # All state here (smoother, last_point, _last_draw_m, etc.) belongs
+                            # only to this thread. image_lock is not held during this block so
+                            # the encoder thread can snapshot the canvas freely without stalling
+                            # serial reads.
+                            draw_cmd = None  # (x0, y0, x1, y1, pressure, meter_seg, source, state)
+                            if not in_contact:
+                                self._reset_stroke_state()
+                            else:
+                                if self._last_coord_source is not None and self._last_coord_source != coord_source:
+                                    self.last_point = None
+                                    self._last_draw_m = None
+                                    self.smoother.reset()
+
+                                self._last_coord_source = coord_source
+
+                                if coord_source == 'pen_tip':
+                                    # Legacy fallback: use the same online trail smoother as main_ekf.py.
+                                    if self.last_point is None:
+                                        self.smoother.reset()
+                                    self.smoother.push(raw_meter_x, raw_meter_y)
+                                    sx_m, sy_m = self.smoother.get()
                                 else:
-                                    # Break rather than connect if the coordinate source changes.
-                                    if self._last_coord_source is not None and self._last_coord_source != coord_source:
+                                    # Black recognition/extraction coordinates are already output coordinates.
+                                    # Do not smooth them again or the web render will no longer match line_norm.
+                                    self.smoother.reset()
+                                    sx_m, sy_m = output_meter_x, output_meter_y
+
+                                px, py = self._map_meters_to_pixels(sx_m, sy_m)
+
+                                # Relocation break guard — mirrors AUTO_BREAK_RELOCATION.
+                                # A jump > 4.5 cm while in contact indicates FSR stuck
+                                # during a reposition; break rather than draw the arc.
+                                if self._last_draw_m is not None and is_drawing:
+                                    dx = sx_m - self._last_draw_m[0]
+                                    dy = sy_m - self._last_draw_m[1]
+                                    if math.sqrt(dx * dx + dy * dy) > _RELOC_SEGMENT_M:
                                         self.last_point = None
                                         self._last_draw_m = None
-                                        self.smoother.reset()
-
-                                    self._last_coord_source = coord_source
-
-                                    if coord_source == 'pen_tip':
-                                        # Legacy fallback: use the same online trail smoother as main_ekf.py.
-                                        if self.last_point is None:
+                                        if coord_source == 'pen_tip':
                                             self.smoother.reset()
-                                        self.smoother.push(raw_meter_x, raw_meter_y)
-                                        sx_m, sy_m = self.smoother.get()
-                                    else:
-                                        # Black recognition/extraction coordinates are already output coordinates.
-                                        # Do not smooth them again or the web render will no longer match line_norm.
-                                        self.smoother.reset()
-                                        sx_m, sy_m = output_meter_x, output_meter_y
 
-                                    px, py = self._map_meters_to_pixels(sx_m, sy_m)
+                                if self.last_point and is_drawing:
+                                    meter_segment = (self._last_draw_m, (sx_m, sy_m)) if self._last_draw_m else None
+                                    draw_cmd = (
+                                        self.last_point[0], self.last_point[1], px, py,
+                                        self.xpressure, meter_segment, coord_source, stroke_state,
+                                        self._last_draw_m, sx_m, sy_m,  # kept for the log line below
+                                    )
 
-                                    # Relocation break guard — mirrors AUTO_BREAK_RELOCATION.
-                                    # A jump > 4.5 cm while in contact indicates FSR stuck
-                                    # during a reposition; break rather than draw the arc.
-                                    if self._last_draw_m is not None and is_drawing:
-                                        dx = sx_m - self._last_draw_m[0]
-                                        dy = sy_m - self._last_draw_m[1]
-                                        if math.sqrt(dx * dx + dy * dy) > _RELOC_SEGMENT_M:
-                                            self.last_point = None
-                                            self._last_draw_m = None
-                                            if coord_source == 'pen_tip':
-                                                self.smoother.reset()
+                                self.last_point = (px, py)
+                                self._last_draw_m = (sx_m, sy_m)
 
-                                    if self.last_point and is_drawing:
-                                        meter_segment = (self._last_draw_m, (sx_m, sy_m)) if self._last_draw_m else None
-                                        draw_segment(
-                                            self.last_point[0], self.last_point[1], px, py,
-                                            self.xpressure,
-                                            meter_segment=meter_segment,
-                                            source=coord_source,
-                                            state=stroke_state,
-                                        )
-                                        print(
-                                            f"[DRAW:{coord_source}] "
-                                            f"m({self._last_draw_m[0]:.4f},{self._last_draw_m[1]:.4f}) "
-                                            f"→ m({sx_m:.4f},{sy_m:.4f}) | "
-                                            f"px({self.last_point[0]},{self.last_point[1]}) → ({px},{py}) "
-                                            f"[{stroke_state}]"
-                                        )
+                            # --- STEP 3: DRAW (image_lock held only for the canvas mutation) ---
+                            if draw_cmd is not None:
+                                x0, y0, x1, y1, pressure, meter_seg, src, state, prev_m, cx_m, cy_m = draw_cmd
+                                with image_lock:
+                                    draw_segment(x0, y0, x1, y1, pressure,
+                                                 meter_segment=meter_seg,
+                                                 source=src, state=state)
+                                print(
+                                    f"[DRAW:{src}] "
+                                    f"m({prev_m[0]:.4f},{prev_m[1]:.4f}) "
+                                    f"→ m({cx_m:.4f},{cy_m:.4f}) | "
+                                    f"px({x0},{y0}) → ({x1},{y1}) "
+                                    f"[{state}]"
+                                )
 
-                                    self.last_point = (px, py)
-                                    self._last_draw_m = (sx_m, sy_m)
-
-                            # --- STEP 3: BROADCAST (Web) ---
+                            # --- STEP 4: BROADCAST (Web) ---
                             if self.ws_server and in_contact and px is not None and py is not None:
                                 mjpeg_x, mjpeg_y = logical_to_pixel(px, py)
                                 payload = {

@@ -28,21 +28,14 @@ from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 
-# The EKF visualiser imports these as top-level modules.  In the app, this file
-# may live under background/pipelines/, so support both project-root imports and
-# package-relative imports.
-try:  # project-root layout, same as main_ekf.py
-    from preprocessor import UWBPreprocessor, IMUPreprocessor
-    from ekf_fusion import AsyncEKFFusionEngine
-except ImportError:  # package layout fallback
-    from kuru_method.asynchronous_stream.preprocessor import UWBPreprocessor, IMUPreprocessor
-    from kuru_method.asynchronous_stream.ekf_fusion import AsyncEKFFusionEngine
-
-try:
-    from config import UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
-except Exception:  # keep import-time failures from hiding unrelated tests
-    UWB_OFFSETS = [0.0, 0.0, 0.0, 0.0]
-    TIP_OFFSET_FROM_TAG_M = 0.0
+# Always import from the canonical kuru_method config — the same source as
+# main_ekf.py.  The old try/except fallback silently used zero UWB offsets
+# and zero tip-offset when the root config.py lacked these keys, which caused
+# systematic trilateration errors (up to 19 cm per anchor) and no lever-arm
+# correction on the pen tip.
+from kuru_method.asynchronous_stream.preprocessor import UWBPreprocessor, IMUPreprocessor
+from kuru_method.asynchronous_stream.ekf_fusion import AsyncEKFFusionEngine
+from kuru_method.asynchronous_stream.config import UWB_OFFSETS, TIP_OFFSET_FROM_TAG_M
 
 
 StrokeResult = Tuple[float, float, bool, str]

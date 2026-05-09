@@ -38,6 +38,11 @@ _last_encode_ts = 0.0
 _recent_encode_intervals = []
 _stats_lock = threading.Lock()
 
+# --- Rendered stroke coordinate cache ---
+# These are the output coordinates for the black rendered stroke segments.
+# The cache is protected by image_lock because it mirrors the canvas state.
+stroke_segments = []
+
 
 def _encode_canvas_jpeg(snap):
     buf = io.BytesIO()
@@ -275,7 +280,7 @@ class Archiver:
 
 # --- Drawing & Streaming Functions ---
 def logical_to_pixel(x, y):
-    """Convert logical coordinates to pixel space."""
+    """Convert master-canvas coordinates to MJPEG pixel space."""
     px = int((x / CANVAS_WIDTH) * MJPEG_WIDTH)
     py = int((y / CANVAS_HEIGHT) * MJPEG_HEIGHT)
     px = max(0, min(MJPEG_WIDTH - 1, px))
@@ -283,15 +288,116 @@ def logical_to_pixel(x, y):
     return px, py
 
 
-def draw_segment(x0, y0, x1, y1, p):
-    """Draw a line between two points and bump the dirty counter.
-    Callers MUST already hold image_lock (non-reentrant)."""
+def _coerce_meter_segment(meter_segment):
+    """Return a serializable meter-space segment or None."""
+    if meter_segment is None:
+        return None
+    try:
+        (mx0, my0), (mx1, my1) = meter_segment
+        return {
+            "x0": float(mx0), "y0": float(my0),
+            "x1": float(mx1), "y1": float(my1),
+        }
+    except Exception:
+        return None
+
+
+def _clone_segment(segment):
+    """Small deep-copy helper for public coordinate getters."""
+    return {
+        "seq": segment.get("seq"),
+        "p": segment.get("p"),
+        "source": segment.get("source"),
+        "state": segment.get("state"),
+        "canvas": dict(segment.get("canvas") or {}),
+        "mjpeg": dict(segment.get("mjpeg") or {}),
+        "meters": (dict(segment["meters"]) if segment.get("meters") is not None else None),
+    }
+
+
+def get_stroke_segments(space="canvas"):
+    """Return the black-line output stroke coordinates.
+
+    Args:
+        space: "canvas" for master canvas pixels, "mjpeg" for streamed
+            image pixels, "meters" for physical coordinates when supplied by
+            the tracker, or "all" for every coordinate space.
+
+    Each returned item is one drawn segment and includes seq, p, source, and
+    state metadata.
+    """
+    if space not in ("canvas", "mjpeg", "meters", "all"):
+        raise ValueError("space must be 'canvas', 'mjpeg', 'meters', or 'all'")
+
+    with image_lock:
+        if space == "all":
+            return [_clone_segment(segment) for segment in stroke_segments]
+
+        out = []
+        for segment in stroke_segments:
+            coords = segment.get(space)
+            if coords is None:
+                continue
+            item = dict(coords)
+            item.update({
+                "seq": segment.get("seq"),
+                "p": segment.get("p"),
+                "source": segment.get("source"),
+                "state": segment.get("state"),
+            })
+            out.append(item)
+        return out
+
+
+def clear_stroke_segments():
+    """Clear the cached black-line output coordinates.
+
+    This does not erase the image. Use this when starting a new capture if you
+    want coordinate export to match only the new drawing session.
+    """
+    with image_lock:
+        stroke_segments.clear()
+
+
+def reset_canvas(clear_coordinates=True):
+    """Erase the rendered canvas and optionally clear coordinate history."""
     global stroke_seq
+    with image_lock:
+        draw.rectangle([(0, 0), (MJPEG_WIDTH, MJPEG_HEIGHT)], fill=255)
+        if clear_coordinates:
+            stroke_segments.clear()
+        stroke_seq += 1
+
+
+def draw_segment(x0, y0, x1, y1, p, meter_segment=None, source="tracker", state=None):
+    """Draw a black line segment and record its output coordinates.
+
+    x0/y0/x1/y1 are master-canvas coordinates. They are converted to MJPEG
+    pixels for rendering and saved in both coordinate spaces. If meter_segment
+    is supplied, the physical stroke coordinates are saved too.
+
+    Callers MUST already hold image_lock (non-reentrant).
+    """
+    global stroke_seq
+
     px0, py0 = logical_to_pixel(x0, y0)
     px1, py1 = logical_to_pixel(x1, y1)
     width_px = max(1, int(p * AVG_SCALE * STROKE_FACTOR))
     draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
+
     stroke_seq += 1
+    stroke_segments.append({
+        "seq": stroke_seq,
+        "p": float(p),
+        "source": str(source) if source is not None else None,
+        "state": str(state) if state is not None else None,
+        "canvas": {
+            "x0": int(round(float(x0))), "y0": int(round(float(y0))),
+            "x1": int(round(float(x1))), "y1": int(round(float(y1))),
+        },
+        "mjpeg": {"x0": px0, "y0": py0, "x1": px1, "y1": py1},
+        "meters": _coerce_meter_segment(meter_segment),
+    })
 
 
 def generate_frames():

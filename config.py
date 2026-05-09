@@ -56,9 +56,9 @@ prototype_reader_thread = None
 
 
 # Canvas dimensions
-CANVAS_WIDTH  = _env_int("CANVAS_WIDTH",  1980)
-CANVAS_HEIGHT = _env_int("CANVAS_HEIGHT", 1980)
-MJPEG_WIDTH   = _env_int("MJPEG_WIDTH",   600)
+CANVAS_WIDTH  = _env_int("CANVAS_WIDTH",  1900)
+CANVAS_HEIGHT = _env_int("CANVAS_HEIGHT", 1200)
+MJPEG_WIDTH   = _env_int("MJPEG_WIDTH",   950)
 MJPEG_HEIGHT  = _env_int("MJPEG_HEIGHT",  600)
 MJPEG_FPS     = _env_int("MJPEG_FPS",     6 if IS_PROD else 20)
 JPEG_QUALITY  = _env_int("JPEG_QUALITY",  65 if IS_PROD else 85)

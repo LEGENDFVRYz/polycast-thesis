@@ -8,14 +8,14 @@ SERIAL_PORT = "COM5"   # Check your Device Manager
 BAUD_RATE = 115200
 
 # 1. NAME YOUR CSV FILE HERE
-FILE_NAME = "hello_word" 
+FILE_NAME = "../datasets_v2/abcde.csv" 
 
 # --- FOLDER SETUP ---
 # Get the directory where THIS script is located
 script_dir = os.path.dirname(os.path.abspath(__file__))
 
 # Define the datasets folder path relative to the script
-dataset_folder = os.path.join(script_dir, "datasets")
+dataset_folder = os.path.join(script_dir, "datasets_v2")
 
 # Create the 'datasets' folder if it doesn't exist
 if not os.path.exists(dataset_folder):
@@ -30,8 +30,8 @@ if not FILE_NAME.endswith(".csv"):
 output_path = os.path.join(dataset_folder, FILE_NAME)
 
 # --- CSV HEADER ---
-# 3 UWB Distances + 5 IMU Samples (9 values each)
-header = ["Dist0", "Dist1", "Dist2"]
+# 3 Headers + 4 UWB Distances + 5 IMU Samples (9 values each) = 52 Columns
+header = ["Seq", "BatchTS", "UwbTS", "Dist0", "Dist1", "Dist2", "Dist3"]
 for i in range(5):
     prefix = f"S{i}_"
     header.extend([
@@ -61,14 +61,18 @@ def main():
                     try:
                         line = ser.readline().decode('utf-8', errors='ignore').strip()
                         
-                        # Only save valid data lines (long lines with many commas)
-                        if line.count(',') >= 47:
+                        # Only save valid data lines. 
+                        # 52 columns means exactly 51 commas.
+                        if line.count(',') == 51:
                             data = line.split(',')
                             writer.writerow(data)
-                            print(f"\rSaved Row: {data[0]}m | {data[1]}m | {data[2]}m", end="")
+                            
+                            # data[0] = seq, data[3:7] = dist0 to dist3
+                            print(f"\rSaved Seq: {data[0]} | UWB: {data[3]}m, {data[4]}m, {data[5]}m, {data[6]}m", end="")
                         else:
                             # Print debug messages (like "Receiver Ready") without saving
-                            print(f"\nMsg: {line}")
+                            if line:
+                                print(f"\nMsg: {line}")
                             
                     except ValueError:
                         pass

@@ -417,11 +417,11 @@
                     }
                     
                     .input-with-button {
-                        flex-direction: column;
+                        /* flex-direction: column; */
                         gap: 8px;
                         
                         button {
-                            width: 100%;
+                            /* width: 100%; */
                         }
                     }
                 }

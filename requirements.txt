@@ -1,88 +1,42 @@
 # ----------------------------------------------------
-# ENVIRONEMENTS
-# - (purpose) creating compatible env for production,
-#   ensuing compatible with the Raspberry Pi 4B
-# - This version are reliant to standard python venv
+# PRODUCTION REQUIREMENTS — Raspberry Pi 4B (ARM64)
+# Python 3.11+ (system python3 or venv)
 #
-# [ Note: Reccomended to use the conda for dev pc ]
+# Usage:
+#   python3 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r prod.txt
+#
+# Intentionally minimal — only packages actually
+# imported at runtime. Dev tools (Jupyter, Spyder,
+# Streamlit, FastAPI, etc.) are excluded.
 # ----------------------------------------------------
 
-# Core Python Version
-# python==3.15.~
+# --- Web Server ---
+Flask==3.0.3
+Flask-SQLAlchemy==3.1.1
+gunicorn==22.0.0
+Werkzeug==3.0.3
 
+# --- Serial Communication ---
+pyserial==3.5
 
-# Data Science & Numerical Analysis
-numpy
-pandas
-scipy
-scikit-learn
-scikit-image
-statsmodels
-sympy
-matplotlib
-seaborn
-plotly
-bokeh
-xarray
-numba
-numexpr
-tables
-h5py
-dask
-distributed
+# --- WebSocket (ESP32 client + browser server) ---
+websocket-client==1.8.0
+websocket-server==0.6.4
 
-# Web Frameworks & APIs
-streamlit
-fastapi
-uvicorn
-Flask
-flask-socketio
-flask_sqlalchemy
-starlette
-requests
-urllib3
-aiohttp
-websockets
-websocket_client
-websocket_server
-python-socketio
-python-engineio
+# --- Image Generation (MJPEG canvas) ---
+Pillow==11.1.0
 
-# Database & Storage
-SQLAlchemy
-openpyxl
-xlwings
-s3fs
-botocore
-aiobotocore
+# --- Pipeline / Sensor Fusion Math ---
+numpy==1.26.4
+scipy==1.13.1
 
-# Hardware, Graphics & UI
-pyserial
-pyopengl
-pyqtgraph
-pyqt5
-Pillow
-imageio
-tifffile
+# --- Auth ---
+bcrypt==4.2.0
 
-# Automation & Scraping
-scrapy
-beautifulsoup4
-lxml
-pyyaml
+# --- Configuration ---
+python-dotenv==1.0.1
 
-# Utilities & Dev Tools
-pydantic
-pydantic-settings
-tqdm
-click
-typer
-rich
-python-dotenv
-cryptography
-paramiko
-bcrypt
-python_bcrypt
-psutil
-watchdog
-colorama
+# --- SQLAlchemy (pinned separately for clarity) ---
+SQLAlchemy==2.0.34

@@ -29,9 +29,14 @@ Async adaptation:
 
 import sys
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-from matplotlib.animation import FuncAnimation
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib.patches as mpatches
+    from matplotlib.animation import FuncAnimation
+except ImportError:
+    plt = None
+    mpatches = None
+    FuncAnimation = None
 from collections import deque
 from kuru_method.asynchronous_stream.data_parser import AsyncDataParser
 

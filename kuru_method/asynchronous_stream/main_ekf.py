@@ -117,14 +117,13 @@ TRAIL_SUBSAMPLE  = 3
 CSV_PACKETS_PER_FRAME = 20
 
 
-# -- Global state -----------------------------------------------------------
-parser      = AsyncDataParser(port=SERIAL_PORT, baud=BAUD_RATE,
-                              csv_path=DATASET_FILENAME)
-engine      = AsyncEKFFusionEngine()
-uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
-imu_cleaner = IMUPreprocessor()
-smoother    = TrailSmoother()
-note_smooth = NoteSmoother(spline=NOTE_SMOOTHER_SPLINE, n_resample=NOTE_SMOOTHER_RESAMPLE_POINTS)
+# -- Global state (initialised inside main) ---------------------------------
+parser      = None
+engine      = None
+uwb_cleaner = None
+imu_cleaner = None
+smoother    = None
+note_smooth = None
 
 
 class RecognitionTraceFilter:
@@ -257,10 +256,11 @@ class RecognitionTraceFilter:
         return float(out[0]), float(out[1])
 
 
-recog_filter = RecognitionTraceFilter()
-normalized_strokes = NormalizedStrokeExtractor(canvas_size=NORMALIZED_CANVAS_SIZE)
-trace_quality = TraceQualityDiagnostics()
+recog_filter       = None
+normalized_strokes = None
+trace_quality      = None
 _last_recognition_export = {}
+artists            = ()
 
 
 # -- Phase 9 Step 1: live auto-recording ------------------------------------
@@ -334,8 +334,6 @@ def _live_recorder_write(pkt: dict) -> None:
     if _live_packet_count % 500 == 0:
         _live_csv_file.flush()
 
-
-_live_recorder_open()
 
 # Writing trails
 # draw_x/draw_y = causal pen-tip trace used for comparison.
@@ -899,7 +897,7 @@ class DebugAssistant:
         return '\n'.join(lines)
 
 
-debugger = DebugAssistant()
+debugger = None
 
 
 def _trim(lst, maxlen):
@@ -907,10 +905,6 @@ def _trim(lst, maxlen):
         del lst[:len(lst) - maxlen]
 
 
-# Enable RTS history recording in BOTH modes — live mode needs it for the
-# Step 4b snap-to-RTS pass on stroke completion.
-engine.ekf.record_history = True
-# Soft cap to bound memory in long live sessions (~200 Hz × 50 B/record).
 _HISTORY_SOFT_CAP = 60_000   # ≈ 5 min @ 200 Hz before trim
 _HISTORY_KEEP     = 30_000
 
@@ -1740,12 +1734,30 @@ def _parse_cli():
 
 
 def main():
+    global parser, engine, uwb_cleaner, imu_cleaner, smoother, note_smooth
+    global recog_filter, normalized_strokes, trace_quality, debugger
     global artists, line_draw, line_tag, line_rec, line_rts, line_norm, line_gap_links, scat_gap, scat_integrity, line_tipvec, scat_lift, scat_rej, dot_tip, dot_tag, vel_arrow, debug_text
 
     args = _parse_cli()
     if args.calibrate:
         rc = trigger_dcd_save()
         sys.exit(0 if rc == 0 else 1)
+
+    # -- Initialise all runtime objects --
+    parser      = AsyncDataParser(port=SERIAL_PORT, baud=BAUD_RATE,
+                                  csv_path=DATASET_FILENAME)
+    engine      = AsyncEKFFusionEngine()
+    uwb_cleaner = UWBPreprocessor(offsets=UWB_OFFSETS)
+    imu_cleaner = IMUPreprocessor()
+    smoother    = TrailSmoother()
+    note_smooth = NoteSmoother(spline=NOTE_SMOOTHER_SPLINE,
+                               n_resample=NOTE_SMOOTHER_RESAMPLE_POINTS)
+    recog_filter       = RecognitionTraceFilter()
+    normalized_strokes = NormalizedStrokeExtractor(canvas_size=NORMALIZED_CANVAS_SIZE)
+    trace_quality      = TraceQualityDiagnostics()
+    debugger           = DebugAssistant()
+    engine.ekf.record_history = True
+    _live_recorder_open()
 
     if not parser.connect():
         sys.exit(1)
@@ -1841,4 +1853,4 @@ def main():
 
 
 if __name__ == '__main__':
-        main()
+    main()

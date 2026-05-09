@@ -1,8 +1,9 @@
 import math
 import threading, time, json, serial
+from queue import Queue, Empty, Full
 
 # --- CONFIG & LOGGING ---
-from config import prototype_config, CONN_LOG, ERROR_LOG, CANVAS_WIDTH, CANVAS_HEIGHT
+from config import prototype_config, CONN_LOG, ERROR_LOG, CANVAS_WIDTH, CANVAS_HEIGHT, IS_PROD
 from app.utils.utils import log_message
 
 # --- GRAPHICS ENGINE ---
@@ -22,6 +23,19 @@ from benchmark import get_logger as _get_bm_logger
 # Inserts a stroke break when the smoothed tip jumps > 4.5 cm in one IMU step
 # while contact is active (FSR stuck during a pen reposition).
 _RELOC_SEGMENT_M = 0.045
+
+# Bounded queue between the serial reader thread and the EKF consumer thread.
+# Sized to absorb a short EKF stall (~1 s of IMU traffic at 100 Hz) without
+# unbounded memory growth. When the consumer falls behind we drop the OLDEST
+# packet so the worker stays close to live data instead of replaying a stale
+# backlog — essential on the Raspberry Pi where the EKF can't always keep up.
+_PACKET_QUEUE_MAX = 256
+
+# Cap WebSocket broadcast frequency on the consumer hot path. The browser
+# debug overlay only needs ~60 Hz; sending one message per IMU sample wastes
+# CPU and starves the EKF on the Pi.
+_WS_BROADCAST_HZ = 60.0
+_WS_BROADCAST_INTERVAL = 1.0 / _WS_BROADCAST_HZ
 
 # Tracker result keys that should be treated as the black
 # Recognition/extraction overlay coordinates shown by main_ekf.py's line_norm.
@@ -79,6 +93,15 @@ class PrototypeSerialThread(threading.Thread):
 
         self.p_width = max(1e-9, self.p_max_x - self.p_min_x)
         self.p_height = max(1e-9, self.p_max_y - self.p_min_y)
+
+        # Reader/consumer split: the reader thread does nothing but drain the
+        # serial port into this queue; the main thread (run()) consumes it.
+        self._packet_queue: Queue = Queue(maxsize=_PACKET_QUEUE_MAX)
+        self._reader_thread = None
+        self._reader_stop = threading.Event()
+        self._reader_failed = False
+        self._dropped_packets = 0
+        self._last_ws_send_ts = 0.0
 
     def _map_meters_to_pixels(self, mx, my):
         """
@@ -212,145 +235,227 @@ class PrototypeSerialThread(threading.Thread):
                 log_message(CONN_LOG, "[SERIAL] Connected")
                 self._bm.on_connection_event("CONNECTED")
 
-                while not self.stop_event.is_set() and self.serial_conn.is_open:
-                    if self.serial_conn.in_waiting:
-                        try:
-                            line = self.serial_conn.readline()
-                            if not line:
-                                continue
+                self._drain_queue()
+                self._reader_stop.clear()
+                self._reader_failed = False
+                self._reader_thread = threading.Thread(
+                    target=self._reader_loop, daemon=True, name="serial-reader",
+                )
+                self._reader_thread.start()
 
-                            _t_recv = time.perf_counter()
-                            self._bm.on_packet_recv(line, _t_recv)
+                self._consume_loop()
 
-                            # --- STEP 1: EKF PIPELINE (Meters) ---
-                            # UWB packets update the EKF and usually return None.
-                            # IMU packets emit either the calibrated pen-tip XY or,
-                            # when available, the extraction/line_norm XY that matches
-                            # the black overlay in main_ekf.py.
-                            result = self.tracker.process_packet(line)
-                            self._bm.on_fusion_done(line, time.perf_counter(), result)
+                self._reader_stop.set()
+                if self._reader_thread is not None and self._reader_thread.is_alive():
+                    self._reader_thread.join(timeout=1.0)
+                self._reader_thread = None
 
-                            if result is None:
-                                continue
-
-                            (raw_meter_x, raw_meter_y,
-                             output_meter_x, output_meter_y,
-                             is_drawing, stroke_state,
-                             coord_source) = self._unpack_tracker_result(
-                                result, prefer_extraction=self.prefer_extraction
-                            )
-
-                            # Gate on physical contact, not a debounced stroke-active flag.
-                            in_contact = stroke_state in ('CONTACT_DRAWING', 'CONTACT_STATIC')
-                            px = py = None
-                            sx_m = sy_m = None
-
-                            # --- STEP 2: COMPUTE DRAW COMMAND (thread-local — no lock needed) ---
-                            # All state here (smoother, last_point, _last_draw_m, etc.) belongs
-                            # only to this thread. image_lock is not held during this block so
-                            # the encoder thread can snapshot the canvas freely without stalling
-                            # serial reads.
-                            draw_cmd = None  # (x0, y0, x1, y1, pressure, meter_seg, source, state)
-                            if not in_contact:
-                                self._reset_stroke_state()
-                            else:
-                                if self._last_coord_source is not None and self._last_coord_source != coord_source:
-                                    self.last_point = None
-                                    self._last_draw_m = None
-                                    self.smoother.reset()
-
-                                self._last_coord_source = coord_source
-
-                                if coord_source == 'pen_tip':
-                                    # Legacy fallback: use the same online trail smoother as main_ekf.py.
-                                    if self.last_point is None:
-                                        self.smoother.reset()
-                                    self.smoother.push(raw_meter_x, raw_meter_y)
-                                    sx_m, sy_m = self.smoother.get()
-                                else:
-                                    # Black recognition/extraction coordinates are already output coordinates.
-                                    # Do not smooth them again or the web render will no longer match line_norm.
-                                    self.smoother.reset()
-                                    sx_m, sy_m = output_meter_x, output_meter_y
-
-                                px, py = self._map_meters_to_pixels(sx_m, sy_m)
-
-                                # Relocation break guard — mirrors AUTO_BREAK_RELOCATION.
-                                # A jump > 4.5 cm while in contact indicates FSR stuck
-                                # during a reposition; break rather than draw the arc.
-                                if self._last_draw_m is not None and is_drawing:
-                                    dx = sx_m - self._last_draw_m[0]
-                                    dy = sy_m - self._last_draw_m[1]
-                                    if math.sqrt(dx * dx + dy * dy) > _RELOC_SEGMENT_M:
-                                        self.last_point = None
-                                        self._last_draw_m = None
-                                        if coord_source == 'pen_tip':
-                                            self.smoother.reset()
-
-                                if self.last_point and is_drawing:
-                                    meter_segment = (self._last_draw_m, (sx_m, sy_m)) if self._last_draw_m else None
-                                    draw_cmd = (
-                                        self.last_point[0], self.last_point[1], px, py,
-                                        self.xpressure, meter_segment, coord_source, stroke_state,
-                                        self._last_draw_m, sx_m, sy_m,  # kept for the log line below
-                                    )
-
-                                self.last_point = (px, py)
-                                self._last_draw_m = (sx_m, sy_m)
-
-                            # --- STEP 3: DRAW (image_lock held only for the canvas mutation) ---
-                            if draw_cmd is not None:
-                                x0, y0, x1, y1, pressure, meter_seg, src, state, prev_m, cx_m, cy_m = draw_cmd
-                                with image_lock:
-                                    draw_segment(x0, y0, x1, y1, pressure,
-                                                 meter_segment=meter_seg,
-                                                 source=src, state=state)
-                                print(
-                                    f"[DRAW:{src}] "
-                                    f"m({prev_m[0]:.4f},{prev_m[1]:.4f}) "
-                                    f"→ m({cx_m:.4f},{cy_m:.4f}) | "
-                                    f"px({x0},{y0}) → ({x1},{y1}) "
-                                    f"[{state}]"
-                                )
-
-                            # --- STEP 4: BROADCAST (Web) ---
-                            if self.ws_server and in_contact and px is not None and py is not None:
-                                mjpeg_x, mjpeg_y = logical_to_pixel(px, py)
-                                payload = {
-                                    "x": mjpeg_x,
-                                    "y": mjpeg_y,
-                                    "canvas_x": px,
-                                    "canvas_y": py,
-                                    "meter_x": sx_m,
-                                    "meter_y": sy_m,
-                                    "raw_meter_x": raw_meter_x,
-                                    "raw_meter_y": raw_meter_y,
-                                    "p": self.xpressure,
-                                    "state": stroke_state,
-                                    "source": coord_source,
-                                }
-                                self.ws_server.send_message_to_all(json.dumps(payload))
-
-                        except Exception as e:
-                            print(f"[SERIAL] Data processing error: {e}")
-                            self._bm.on_error(str(e))
-
-                    else:
-                        time.sleep(0.001)  # Sleep if buffer empty
+                # Reader exited because of an I/O fault — reconnect.
+                if self._reader_failed and not self.stop_event.is_set():
+                    if self.serial_conn and self.serial_conn.is_open:
+                        self.serial_conn.close()
+                    self._bm.on_connection_event("DISCONNECTED: serial read failed")
+                    time.sleep(2)
+                    continue
 
             except Exception as e:
                 print(f"[SERIAL] Connection Error: {e}")
                 log_message(ERROR_LOG, f"[SERIAL] Connection Error: {e}")
                 self._bm.on_connection_event(f"DISCONNECTED: {e}")
+                self._reader_stop.set()
+                if self._reader_thread is not None and self._reader_thread.is_alive():
+                    self._reader_thread.join(timeout=1.0)
+                self._reader_thread = None
                 if self.serial_conn and self.serial_conn.is_open:
                     self.serial_conn.close()
-                time.sleep(2)  # Reconnect delay
+                time.sleep(2)
 
         if self.serial_conn:
             self.serial_conn.close()
         print("[SERIAL] Thread exited.")
 
+    # ------------------------------------------------------------------
+    # Reader thread — keep this loop tiny so the OS serial buffer drains
+    # ------------------------------------------------------------------
+    def _reader_loop(self):
+        try:
+            while not self._reader_stop.is_set() and not self.stop_event.is_set():
+                conn = self.serial_conn
+                if conn is None or not conn.is_open:
+                    break
+                try:
+                    if conn.in_waiting:
+                        line = conn.readline()
+                        if not line:
+                            continue
+                        try:
+                            self._packet_queue.put_nowait(line)
+                        except Full:
+                            # Drop oldest, keep newest. Stale packets are worse
+                            # than missing ones for live stroke rendering.
+                            try:
+                                self._packet_queue.get_nowait()
+                                self._dropped_packets += 1
+                            except Empty:
+                                pass
+                            try:
+                                self._packet_queue.put_nowait(line)
+                            except Full:
+                                self._dropped_packets += 1
+                    else:
+                        time.sleep(0.001)
+                except (OSError, serial.SerialException) as e:
+                    print(f"[SERIAL] Reader error: {e}")
+                    self._reader_failed = True
+                    break
+        finally:
+            try:
+                self._packet_queue.put_nowait(None)
+            except Full:
+                pass
+
+    # ------------------------------------------------------------------
+    # Consumer loop — runs on the main thread, blocks on the queue
+    # ------------------------------------------------------------------
+    def _consume_loop(self):
+        while not self.stop_event.is_set():
+            conn = self.serial_conn
+            if conn is None or not conn.is_open:
+                return
+            try:
+                line = self._packet_queue.get(timeout=0.5)
+            except Empty:
+                continue
+            if line is None:
+                return
+            try:
+                self._process_packet(line)
+            except Exception as e:
+                print(f"[SERIAL] Data processing error: {e}")
+                self._bm.on_error(str(e))
+
+    def _drain_queue(self):
+        try:
+            while True:
+                self._packet_queue.get_nowait()
+        except Empty:
+            pass
+
+    # ------------------------------------------------------------------
+    # Per-packet processing (was inline in run())
+    # ------------------------------------------------------------------
+    def _process_packet(self, line):
+        _t_recv = time.perf_counter()
+        self._bm.on_packet_recv(line, _t_recv)
+
+        # --- STEP 1: EKF PIPELINE (Meters) ---
+        # UWB packets update the EKF and usually return None.
+        # IMU packets emit either the calibrated pen-tip XY or, when available,
+        # the extraction/line_norm XY that matches the black overlay in main_ekf.py.
+        result = self.tracker.process_packet(line)
+        self._bm.on_fusion_done(line, time.perf_counter(), result)
+
+        if result is None:
+            return
+
+        (raw_meter_x, raw_meter_y,
+         output_meter_x, output_meter_y,
+         is_drawing, stroke_state,
+         coord_source) = self._unpack_tracker_result(
+            result, prefer_extraction=self.prefer_extraction
+        )
+
+        # Gate on physical contact, not a debounced stroke-active flag.
+        in_contact = stroke_state in ('CONTACT_DRAWING', 'CONTACT_STATIC')
+        px = py = None
+        sx_m = sy_m = None
+
+        # --- STEP 2: COMPUTE DRAW COMMAND (thread-local — no lock needed) ---
+        draw_cmd = None
+        if not in_contact:
+            self._reset_stroke_state()
+        else:
+            if self._last_coord_source is not None and self._last_coord_source != coord_source:
+                self.last_point = None
+                self._last_draw_m = None
+                self.smoother.reset()
+
+            self._last_coord_source = coord_source
+
+            if coord_source == 'pen_tip':
+                # Legacy fallback: use the same online trail smoother as main_ekf.py.
+                if self.last_point is None:
+                    self.smoother.reset()
+                self.smoother.push(raw_meter_x, raw_meter_y)
+                sx_m, sy_m = self.smoother.get()
+            else:
+                # Black recognition/extraction coordinates are already output coordinates.
+                # Do not smooth them again or the web render will no longer match line_norm.
+                self.smoother.reset()
+                sx_m, sy_m = output_meter_x, output_meter_y
+
+            px, py = self._map_meters_to_pixels(sx_m, sy_m)
+
+            # Relocation break guard — mirrors AUTO_BREAK_RELOCATION.
+            if self._last_draw_m is not None and is_drawing:
+                dx = sx_m - self._last_draw_m[0]
+                dy = sy_m - self._last_draw_m[1]
+                if math.sqrt(dx * dx + dy * dy) > _RELOC_SEGMENT_M:
+                    self.last_point = None
+                    self._last_draw_m = None
+                    if coord_source == 'pen_tip':
+                        self.smoother.reset()
+
+            if self.last_point and is_drawing:
+                meter_segment = (self._last_draw_m, (sx_m, sy_m)) if self._last_draw_m else None
+                draw_cmd = (
+                    self.last_point[0], self.last_point[1], px, py,
+                    self.xpressure, meter_segment, coord_source, stroke_state,
+                    self._last_draw_m, sx_m, sy_m,
+                )
+
+            self.last_point = (px, py)
+            self._last_draw_m = (sx_m, sy_m)
+
+        # --- STEP 3: DRAW (image_lock held only for the canvas mutation) ---
+        if draw_cmd is not None:
+            x0, y0, x1, y1, pressure, meter_seg, src, state, prev_m, cx_m, cy_m = draw_cmd
+            with image_lock:
+                draw_segment(x0, y0, x1, y1, pressure,
+                             meter_segment=meter_seg,
+                             source=src, state=state)
+            if not IS_PROD:
+                print(
+                    f"[DRAW:{src}] "
+                    f"m({prev_m[0]:.4f},{prev_m[1]:.4f}) "
+                    f"→ m({cx_m:.4f},{cy_m:.4f}) | "
+                    f"px({x0},{y0}) → ({x1},{y1}) "
+                    f"[{state}]"
+                )
+
+        # --- STEP 4: BROADCAST (Web) — rate-limited so the EKF never starves ---
+        if self.ws_server and in_contact and px is not None and py is not None:
+            now = time.monotonic()
+            if (now - self._last_ws_send_ts) >= _WS_BROADCAST_INTERVAL:
+                self._last_ws_send_ts = now
+                mjpeg_x, mjpeg_y = logical_to_pixel(px, py)
+                payload = {
+                    "x": mjpeg_x,
+                    "y": mjpeg_y,
+                    "canvas_x": px,
+                    "canvas_y": py,
+                    "meter_x": sx_m,
+                    "meter_y": sy_m,
+                    "raw_meter_x": raw_meter_x,
+                    "raw_meter_y": raw_meter_y,
+                    "p": self.xpressure,
+                    "state": stroke_state,
+                    "source": coord_source,
+                }
+                self.ws_server.send_message_to_all(json.dumps(payload))
+
     def stop(self):
         self.stop_event.set()
+        self._reader_stop.set()
         if self.serial_conn and self.serial_conn.is_open:
             self.serial_conn.close()

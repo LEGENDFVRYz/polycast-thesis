@@ -8,7 +8,7 @@ from app.models.session import Session as DBSession
 from app.services.auth_service import register_admin, verify_admin
 from app.utils.utils import find_esp_ip, check_esp_ws_connection
 from config import BROWSER_WS_PORT, prototype_config
-from background.image_generator import Archiver
+from background.image_generator import Archiver, reset_canvas
 
 # Import globals
 import app.globals as g
@@ -123,12 +123,15 @@ def logout():
     # Halt all the operation if still running
     result = g.thread_manager.stop()
     print("[PROTO] stopped" if result else "[PROTO] not running")
-    
+
     g.admin_status.reset()
     print("[ADMIN] Admin logged out, status reset.")
-    
+
     if g.archiver_manager and g.archiver_manager.is_running():
         g.archiver_manager.stop()
+
+    # Wipe the shared canvas so the next host starts on a blank frame.
+    reset_canvas()
     
     # Pop the admin running operation name (gallery and session)
     session.pop("gname", None)
@@ -374,10 +377,13 @@ def endsession():
         
         if g.archiver_manager:
             g.archiver_manager.stop()
-        
+
+        # Wipe the shared canvas so the next host starts on a blank frame.
+        reset_canvas()
+
         session.pop("gname", None)
         session.pop("sname", None)
-        
+
         print("[ADMIN] Admin End the session, status reset.")
 
     except Exception as e:

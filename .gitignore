@@ -27,7 +27,13 @@ app/static/gallery_images/
 
 # --- sample and output data ---
 *.csv
+*.npy
+*.npz
+*.png
 
 # --- docs and claude md files (temporary, for calibrating) ---
 docs/
-claude.md
+test/
+tuning_results/
+background/pipelines/fusion/learned_odometry/
+data/odometry/

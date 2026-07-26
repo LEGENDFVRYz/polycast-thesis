@@ -28,11 +28,14 @@ class OdometryNet(nn.Module):
     """CNN feature extractor + Bi-LSTM temporal model.
 
     Input:  (batch, window, 7)   z-scored [ax, ay, az, qx, qy, qz, qw]
-    Output: (batch, 2)           predicted (Δx, Δy) in metres
+    Output: (batch, 2)           predicted (Dx, Dy) in metres
+            (batch, 4)           predicted (Dx, Dy, log_sx, log_sy) when uncertainty=True
     """
 
-    def __init__(self, input_size: int = 7, hidden: int = 128, dropout: float = 0.3):
+    def __init__(self, input_size: int = 7, hidden: int = 128,
+                 dropout: float = 0.3, uncertainty: bool = False):
         super().__init__()
+        self.uncertainty = uncertainty
         self.cnn = nn.Sequential(
             nn.Conv1d(input_size, 64,  kernel_size=11, padding=5), nn.ReLU(),
             nn.Conv1d(64,        128,  kernel_size=11, padding=5), nn.ReLU(),
@@ -43,7 +46,7 @@ class OdometryNet(nn.Module):
         self.head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(hidden * 2, 128), nn.ReLU(),
-            nn.Linear(128, 2),
+            nn.Linear(128, 4 if uncertainty else 2),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -93,8 +96,10 @@ class OdometryTCN(nn.Module):
     Output: (batch, 2)
     """
 
-    def __init__(self, input_size: int = 7, channels: int = 32, dropout: float = 0.2):
+    def __init__(self, input_size: int = 7, channels: int = 32,
+                 dropout: float = 0.2, uncertainty: bool = False):
         super().__init__()
+        self.uncertainty = uncertainty
         dilations = [1, 2, 4, 8, 16, 32, 64]
         blocks: list[nn.Module] = []
         in_ch = input_size
@@ -106,13 +111,13 @@ class OdometryTCN(nn.Module):
         self.head = nn.Sequential(
             nn.AdaptiveAvgPool1d(1),
             nn.Flatten(),
-            nn.Linear(channels, 2),
+            nn.Linear(channels, 4 if uncertainty else 2),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x.permute(0, 2, 1)   # (batch, features, time)
         x = self.net(x)           # (batch, channels, time)
-        return self.head(x)       # (batch, 2)
+        return self.head(x)       # (batch, 2) or (batch, 4)
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +138,10 @@ class OdometryCNNPool(nn.Module):
     Output: (batch, 2)
     """
 
-    def __init__(self, input_size: int = 7, channels: int = 64, dropout: float = 0.2):
+    def __init__(self, input_size: int = 7, channels: int = 64,
+                 dropout: float = 0.2, uncertainty: bool = False):
         super().__init__()
+        self.uncertainty = uncertainty
         self.cnn = nn.Sequential(
             nn.Conv1d(input_size,    channels,   kernel_size=11, padding=5),
             nn.BatchNorm1d(channels), nn.ReLU(),
@@ -148,7 +155,7 @@ class OdometryCNNPool(nn.Module):
             nn.Flatten(),
             nn.Dropout(dropout),
             nn.Linear(channels * 4, 64), nn.ReLU(),
-            nn.Linear(64, 2),
+            nn.Linear(64, 4 if uncertainty else 2),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -156,10 +163,6 @@ class OdometryCNNPool(nn.Module):
         x = self.cnn(x)
         return self.head(x)
 
-
-# ---------------------------------------------------------------------------
-# Factory
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Denoising Autoencoder  (pre-processing layer for odometry model)
@@ -196,25 +199,48 @@ class IMUDenoiser(nn.Module):
 # ---------------------------------------------------------------------------
 
 def build_model(
-    arch:       str   = 'tcn',
-    hidden:     int   = 128,
-    channels:   int   = 32,
-    dropout:    float = 0.3,
-    input_size: int   = 7,
+    arch:        str   = 'tcn',
+    hidden:      int   = 128,
+    channels:    int   = 32,
+    dropout:     float = 0.3,
+    uncertainty: bool  = False,
+    input_size:  int   = 7,
 ) -> nn.Module:
     """Instantiate a model by architecture name.
 
-    arch='lstm'     → OdometryNet(hidden=hidden, dropout=dropout)
-    arch='tcn'      → OdometryTCN(channels=channels, dropout=dropout)
-    arch='cnn_pool' → OdometryCNNPool(channels=channels, dropout=dropout)
+    arch='lstm'     → OdometryNet(hidden=hidden, dropout=dropout, uncertainty=uncertainty)
+    arch='tcn'      → OdometryTCN(channels=channels, dropout=dropout, uncertainty=uncertainty)
+    arch='cnn_pool' → OdometryCNNPool(channels=channels, dropout=dropout, uncertainty=uncertainty)
+
+    uncertainty=True  → output is (batch, 4): [Dx, Dy, log_sx, log_sy]
+                        train with nll_loss(), infer returns (delta_xy, sigma_xy)
+    uncertainty=False → output is (batch, 2): [Dx, Dy]  (default, backward-compatible)
     """
     if arch == 'lstm':
-        return OdometryNet(input_size=input_size, hidden=hidden, dropout=dropout)
+        return OdometryNet(input_size=input_size, hidden=hidden,
+                           dropout=dropout, uncertainty=uncertainty)
     if arch == 'tcn':
-        return OdometryTCN(input_size=input_size, channels=channels, dropout=dropout)
+        return OdometryTCN(input_size=input_size, channels=channels,
+                           dropout=dropout, uncertainty=uncertainty)
     if arch == 'cnn_pool':
-        return OdometryCNNPool(input_size=input_size, channels=channels, dropout=dropout)
+        return OdometryCNNPool(input_size=input_size, channels=channels,
+                               dropout=dropout, uncertainty=uncertainty)
     raise ValueError(f"Unknown arch '{arch}'. Choose: lstm | tcn | cnn_pool")
+
+
+def nll_loss(pred: 'torch.Tensor', target: 'torch.Tensor') -> 'torch.Tensor':
+    """Negative log-likelihood loss for uncertainty-aware output.
+
+    pred   — (batch, 4): [Dx, Dy, log_sx, log_sy]
+    target — (batch, 2): [Dx, Dy]
+
+    Minimising this loss trains the model to be accurate (low residual)
+    AND calibrated (low sigma when confident, high sigma when uncertain).
+    """
+    dxy       = pred[:, :2]
+    log_sigma = pred[:, 2:]
+    sigma     = torch.exp(log_sigma) + 1e-4
+    return ((dxy - target) ** 2 / (2 * sigma ** 2) + log_sigma).mean()
 
 
 def build_denoiser(input_size: int = 7, channels: int = 32) -> IMUDenoiser:

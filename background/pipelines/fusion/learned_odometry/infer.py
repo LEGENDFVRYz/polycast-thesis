@@ -40,13 +40,16 @@ class OdometryInferer:
             with open(config_path) as f:
                 cfg = json.load(f)
         else:
-            cfg = {'arch': 'lstm', 'hidden': 128, 'channels': 32, 'dropout': 0.0}
+            cfg = {'arch': 'lstm', 'hidden': 128, 'channels': 32,
+                   'dropout': 0.0, 'uncertainty': False}
 
+        self._uncertainty = bool(cfg.get('uncertainty', False))
         model = build_model(
-            arch     = cfg.get('arch',     'lstm'),
-            hidden   = cfg.get('hidden',   128),
-            channels = cfg.get('channels', 32),
-            dropout  = 0.0,   # disabled at inference time
+            arch        = cfg.get('arch',        'lstm'),
+            hidden      = cfg.get('hidden',      128),
+            channels    = cfg.get('channels',    32),
+            dropout     = 0.0,   # disabled at inference time
+            uncertainty = self._uncertainty,
         )
         model.load_state_dict(
             torch.load(model_path, map_location=self._device, weights_only=True)
@@ -85,15 +88,31 @@ class OdometryInferer:
         )
 
     @torch.no_grad()
-    def predict(self, window: np.ndarray) -> np.ndarray:
+    def predict(
+        self,
+        window: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray | None]:
         """Predict displacement for one IMU window.
 
-        window  — (window_size, 7) float32 array from IMUOdometryBuffer.
-        Returns — (2,) float32 array [Δx, Δy] in metres, world frame.
+        window — (window_size, 7) float32 from IMUOdometryBuffer.
+
+        Returns (delta_xy, sigma_xy):
+          delta_xy — (2,) float32 [Dx, Dy] in metres, world frame
+          sigma_xy — (2,) float32 [sx, sy] per-axis std in metres
+                     when uncertainty=True, otherwise None
+
+        The ESKF on_odometry() accepts both forms:
+          eskf.on_odometry(delta_xy, sigma_xy)   # adaptive R when sigma_xy provided
+          eskf.on_odometry(delta_xy)              # fixed cfg.odometry.sigma_odom
         """
         x = (window - self._mean) / (self._std + 1e-8)
-        t = torch.from_numpy(x).unsqueeze(0).to(self._device)   # (1, window_size, 7)
+        t = torch.from_numpy(x).unsqueeze(0).to(self._device)
         if self._denoiser is not None:
-            t = self._denoiser(t)                                # (1, window_size, 7)
-        out = self._model(t)                                     # (1, 2)
-        return out.squeeze(0).cpu().numpy().astype(np.float32)   # (2,)
+            t = self._denoiser(t)
+        out = self._model(t).squeeze(0).cpu().numpy().astype(np.float32)
+
+        delta_xy = out[:2]
+        if self._uncertainty:
+            sigma_xy = (np.exp(out[2:]) + 1e-4).astype(np.float32)
+            return delta_xy, sigma_xy
+        return delta_xy, None

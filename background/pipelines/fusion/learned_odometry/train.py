@@ -20,7 +20,7 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
 
 import json
-from .model import build_model, build_denoiser
+from .model import build_model, nll_loss, build_denoiser
 
 
 # ---------------------------------------------------------------------------
@@ -141,9 +141,10 @@ def train(
     aug_noise:    float = 0.02,
     patience:     int   = 25,
     device:       str   = 'auto',
+    uncertainty:  bool  = False,
     save_model:   bool  = True,
     verbose:      bool  = True,
-    trial=None,                    # optuna.Trial — enables pruning when provided
+    trial=None,
 ) -> float:
     """Train OdometryNet and return best validation RMSE (cm)."""
 
@@ -186,10 +187,12 @@ def train(
 
     # ── Model ───────────────────────────────────────────────────────────────
     model   = build_model(arch=arch, hidden=hidden, channels=channels,
-                          dropout=dropout).to(dev)
+                          dropout=dropout, uncertainty=uncertainty).to(dev)
     opt     = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
     sched   = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=epochs, eta_min=lr * 0.01)
-    loss_fn = nn.MSELoss()
+    # NLL loss when uncertainty head is enabled, MSE otherwise.
+    # NLL trains the model to also predict its own confidence per axis.
+    loss_fn = nll_loss if uncertainty else nn.MSELoss()
 
     best_val    = float('inf')
     no_improve  = 0
@@ -199,24 +202,33 @@ def train(
     for epoch in range(1, epochs + 1):
         model.train()
         train_loss = 0.0
+        train_mse  = 0.0
         for x, y in train_dl:
             x, y = x.to(dev), y.to(dev)
             opt.zero_grad()
-            loss = loss_fn(model(x), y)
+            pred = model(x)
+            loss = loss_fn(pred, y)
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
             train_loss += loss.item() * len(x)
+            # Track pure MSE for RMSE reporting regardless of loss type
+            train_mse  += nn.functional.mse_loss(pred[:, :2], y).item() * len(x)
         train_loss /= n_train
+        train_mse  /= n_train
         sched.step()
 
         model.eval()
         val_loss = 0.0
+        val_mse  = 0.0
         with torch.no_grad():
             for x, y in val_dl:
                 x, y = x.to(dev), y.to(dev)
-                val_loss += loss_fn(model(x), y).item() * len(x)
+                pred = model(x)
+                val_loss += loss_fn(pred, y).item() * len(x)
+                val_mse  += nn.functional.mse_loss(pred[:, :2], y).item() * len(x)
         val_loss /= n_val
+        val_mse  /= n_val
 
         # Optuna pruning — prune unpromising trials early
         if trial is not None:
@@ -226,16 +238,18 @@ def train(
                 raise optuna.exceptions.TrialPruned()
 
         if verbose and (epoch % 10 == 0 or epoch == 1):
+            loss_tag = f'nll={val_loss:.4f}  ' if uncertainty else ''
             print(
                 f'Epoch {epoch:4d}/{epochs}'
-                f'  train={_rmse_cm(train_loss):.1f}cm'
-                f'  val={_rmse_cm(val_loss):.1f}cm'
-                f'  lr={sched.get_last_lr()[0]:.2e}'
-                f'  {"▼" if val_loss < best_val else " "}'
+                f'  train={_rmse_cm(train_mse):.1f}cm'
+                f'  val={_rmse_cm(val_mse):.1f}cm'
+                f'  {loss_tag}'
+                f'lr={sched.get_last_lr()[0]:.2e}'
+                f'  {"v" if val_mse < best_val else " "}'
             )
 
-        if val_loss < best_val:
-            best_val   = val_loss
+        if val_mse < best_val:
+            best_val   = val_mse
             no_improve = 0
             if save_model:
                 torch.save(model.state_dict(), model_path)
@@ -247,7 +261,8 @@ def train(
                 break
 
     if save_model:
-        meta = {'arch': arch, 'hidden': hidden, 'channels': channels, 'dropout': dropout}
+        meta = {'arch': arch, 'hidden': hidden, 'channels': channels,
+                'dropout': dropout, 'uncertainty': uncertainty}
         with open(os.path.join(save_dir, 'arch_config.json'), 'w') as f:
             json.dump(meta, f, indent=2)
 
@@ -415,11 +430,13 @@ def train_denoiser(
     val_split:  float = 0.15,
     patience:   int   = 20,
     device:     str   = 'auto',
+    save_model: bool  = True,
     verbose:    bool  = True,
+    trial=None,
 ) -> float:
     """Train IMUDenoiser and save denoiser.pt + denoiser_config.json to save_dir.
 
-    Returns best validation reconstruction MSE (in normalised units²).
+    Returns best validation reconstruction MSE (normalised units²).
     """
     if device == 'auto':
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -468,6 +485,12 @@ def train_denoiser(
                 val_loss += loss_fn(model(noisy), clean).item() * len(noisy)
         val_loss /= n_val
 
+        if trial is not None:
+            trial.report(val_loss, epoch)
+            if trial.should_prune():
+                import optuna
+                raise optuna.exceptions.TrialPruned()
+
         if verbose and (epoch % 10 == 0 or epoch == 1):
             print(f'  Epoch {epoch:4d}/{epochs}  val_mse={val_loss:.5f}'
                   f'  {"▼" if val_loss < best_val else " "}')
@@ -475,7 +498,8 @@ def train_denoiser(
         if val_loss < best_val:
             best_val   = val_loss
             no_improve = 0
-            torch.save(model.state_dict(), out_path)
+            if save_model:
+                torch.save(model.state_dict(), out_path)
         else:
             no_improve += 1
             if no_improve >= patience:
@@ -483,13 +507,116 @@ def train_denoiser(
                     print(f'  Early stop at epoch {epoch}.')
                 break
 
-    with open(os.path.join(save_dir, 'denoiser_config.json'), 'w') as f:
-        json.dump({'channels': channels, 'noise_std': noise_std}, f, indent=2)
-
-    if verbose:
-        print(f'[Denoiser] Best val MSE = {best_val:.5f}  →  {out_path}')
+    if save_model:
+        with open(os.path.join(save_dir, 'denoiser_config.json'), 'w') as f:
+            json.dump({'channels': channels, 'noise_std': noise_std}, f, indent=2)
+        if verbose:
+            print(f'[Denoiser] Best val MSE = {best_val:.5f}  →  {out_path}')
 
     return best_val
+
+
+def optuna_denoiser_search(
+    npz_path:   str,
+    save_dir:   str,
+    n_trials:   int = 30,
+    device:     str = 'auto',
+    study_name: str = 'denoiser_search',
+    study_db:   str | None = None,
+) -> dict:
+    """Optuna hyperparameter search for IMUDenoiser.
+
+    Tunes: channels, noise_std, lr, batch_size.
+    Saves best denoiser.pt + denoiser_config.json after search completes.
+    Uses the same SQLite DB as the odometry search (different study name).
+    """
+    try:
+        import optuna
+    except ImportError:
+        raise SystemExit('[ERROR] Optuna not installed.  Run: pip install optuna')
+
+    if device == 'auto':
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    elif device == 'cuda' and not torch.cuda.is_available():
+        print('[WARN] --device cuda requested but CUDA unavailable — falling back to cpu.')
+        device = 'cpu'
+    tag = f'cuda ({torch.cuda.get_device_name(0)})' if device == 'cuda' else 'cpu'
+
+    if study_db is None:
+        os.makedirs(save_dir, exist_ok=True)
+        study_db = os.path.join(save_dir, 'optuna_study.db')
+    storage = f'sqlite:///{os.path.abspath(study_db)}'
+
+    print(f'Device : {tag}')
+    print(f'Optuna : {n_trials} trials  |  denoiser search')
+    print(f'Study  : {study_name}  →  {study_db}')
+
+    optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    pruner = optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=15)
+    study  = optuna.create_study(
+        study_name     = study_name,
+        direction      = 'minimize',
+        pruner         = pruner,
+        storage        = storage,
+        load_if_exists = True,
+    )
+
+    done      = [t for t in study.trials if t.state.is_finished()]
+    remaining = max(0, n_trials - len(done))
+    if done:
+        print(f'Resuming: {len(done)} trial(s) already complete, {remaining} left to run.')
+        if study.best_trial in done:
+            print(f'  Current best: trial #{study.best_trial.number}'
+                  f'  MSE={study.best_value:.5f}'
+                  f'  params={study.best_params}')
+    print()
+
+    if remaining == 0:
+        print('[INFO] All requested trials complete. Increase --trials to add more.')
+    else:
+        def objective(trial):
+            params = dict(
+                channels  = trial.suggest_categorical('channels',  [16, 32, 64]),
+                noise_std = trial.suggest_float('noise_std', 0.05, 0.30),
+                lr        = trial.suggest_float('lr',        1e-4, 1e-2, log=True),
+                batch_size= trial.suggest_categorical('batch_size', [32, 64, 128]),
+            )
+            return train_denoiser(
+                npz_path   = npz_path,
+                save_dir   = save_dir,
+                epochs     = 60,
+                val_split  = 0.20,
+                patience   = 12,
+                device     = device,
+                save_model = False,
+                verbose    = False,
+                trial      = trial,
+                **params,
+            )
+
+        study.optimize(objective, n_trials=remaining, show_progress_bar=True)
+
+    print('\n' + '=' * 62)
+    print(f'  Optuna complete — best val MSE: {study.best_value:.5f}')
+    print(f'  Best hyperparameters:')
+    for k, v in study.best_params.items():
+        print(f'    {k:<15} = {v}')
+    print('=' * 62)
+
+    print('\nRetraining with best params...')
+    train_denoiser(
+        npz_path   = npz_path,
+        save_dir   = save_dir,
+        epochs     = 100,
+        val_split  = 0.15,
+        patience   = 20,
+        device     = device,
+        save_model = True,
+        verbose    = True,
+        **study.best_params,
+    )
+    return study.best_params
 
 
 # ---------------------------------------------------------------------------
@@ -524,8 +651,10 @@ if __name__ == '__main__':
     p.add_argument('--aug-deg',    type=float, default=30.0, help='Rotation aug range ±deg (default 30)')
     p.add_argument('--aug-noise',  type=float, default=0.02, help='Accel noise std in norm space (default 0.02)')
     p.add_argument('--patience',   type=int,   default=25,   help='Early stopping patience (default 25)')
-    p.add_argument('--device',     default='auto', choices=['auto', 'cuda', 'cpu'])
-    p.add_argument('--optuna',        action='store_true', help='Run Optuna hyperparameter search')
+    p.add_argument('--device',      default='auto', choices=['auto', 'cuda', 'cpu'])
+    p.add_argument('--uncertainty', action='store_true',
+                                    help='Enable uncertainty head — model predicts (Dx,Dy,sx,sy), uses NLL loss')
+    p.add_argument('--optuna',      action='store_true', help='Run Optuna hyperparameter search')
     p.add_argument('--trials',        type=int,   default=50,   help='Optuna trial count (default 50)')
     p.add_argument('--study-name',    default='odometry_search', help='Optuna study name (default: odometry_search)')
     p.add_argument('--study-db',      default=None, help='SQLite path for Optuna storage (default: <save-dir>/optuna_study.db)')
@@ -560,7 +689,16 @@ if __name__ == '__main__':
             print(f'\nBest: trial #{study.best_trial.number}  RMSE={study.best_value:.1f} cm')
         raise SystemExit(0)
 
-    if args.denoiser:
+    if args.denoiser and args.optuna:
+        optuna_denoiser_search(
+            npz_path   = args.npz,
+            save_dir   = args.save_dir,
+            n_trials   = args.trials,
+            device     = args.device,
+            study_name = args.study_name if args.study_name != 'odometry_search' else 'denoiser_search',
+            study_db   = args.study_db,
+        )
+    elif args.denoiser:
         train_denoiser(
             npz_path  = args.npz,
             save_dir  = args.save_dir,

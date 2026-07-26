@@ -651,7 +651,7 @@ class OdometryConfig:
     # inversely proportional to sigma_odom².  An overconfident (too small)
     # value will let a bad model corrupt the position estimate.
     # Update this every time you retrain: sigma_odom = val_rmse_metres.
-    sigma_odom: float = 0.147         # metres — matches 14.7 cm val RMSE (1000 samples, TCN ch=64)
+    sigma_odom: float = 0.060         # metres — matches 6.0 cm val RMSE (4704 samples, TCN ch=64)
 
     # Per-update position-correction clip — matches UWB drawing-mode cap so the
     # odometry nudge cannot fold a visible stroke artifact in a single update.

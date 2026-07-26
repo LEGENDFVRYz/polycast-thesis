@@ -883,6 +883,7 @@ class ESKF:
     def on_odometry(
         self,
         delta_xy:        np.ndarray,
+        sigma_xy:        np.ndarray | None = None,
         window_start_ts: int | None = None,
     ) -> bool:
         """Kalman update from a learned-odometry displacement prediction.
@@ -920,7 +921,12 @@ class ESKF:
         H[0, 0] = 1.0
         H[1, 1] = 1.0
 
-        R = (ocfg.sigma_odom ** 2) * np.eye(2)
+        # Use model's predicted uncertainty if available (uncertainty head enabled),
+        # otherwise fall back to fixed sigma_odom from config.
+        if sigma_xy is not None and len(sigma_xy) == 2:
+            R = np.diag(sigma_xy.astype(float) ** 2)
+        else:
+            R = (ocfg.sigma_odom ** 2) * np.eye(2)
         S = H @ self.P @ H.T + R           # 2×2
         K = self.P @ H.T @ np.linalg.inv(S)  # 6×2
 

@@ -233,8 +233,8 @@ def score_datasets(dataset_paths: list[str], overrides: dict | None = None) -> d
     Run multiple datasets with the same config overrides and return averaged scores.
     Patches cfg before running, resets cfg in a finally block.
     """
-    from tuning.config_patcher import patch_cfg, reset_cfg
-    from tuning.headless_runner import run_dataset
+    from test.tuning.config_patcher import patch_cfg, reset_cfg
+    from test.tuning.headless_runner import run_dataset
 
     if overrides:
         patch_cfg(overrides)

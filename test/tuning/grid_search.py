@@ -118,7 +118,7 @@ def sensitivity_scan(stage: int, dataset_paths: list[str]) -> list[dict]:
 
     Returns list of {'param', 'value', 'score', 'delta'} dicts.
     """
-    from tuning.scorer import score_datasets
+    from test.tuning.scorer import score_datasets
 
     params = STAGE_PARAMS[stage]
     baseline = score_datasets(dataset_paths, overrides=None)
@@ -175,7 +175,7 @@ def grid_search(
     Each dict has 'overrides', 'total', 'filter_health', 'smoothness',
     'stability', 'n_frames', 'uwb_accepted', 'uwb_rejected'.
     """
-    from tuning.scorer import score_datasets
+    from test.tuning.scorer import score_datasets
 
     params = STAGE_PARAMS[stage]
     grids = []

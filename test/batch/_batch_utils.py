@@ -26,8 +26,8 @@ _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
-from tuning.headless_runner import run_dataset, parse_dataset
-from tuning.config_patcher   import patch_cfg, reset_cfg
+from test.tuning.headless_runner import run_dataset, parse_dataset
+from test.tuning.config_patcher   import patch_cfg, reset_cfg
 from background.pipelines.preprocess.imu     import IMUPreprocessor
 from background.pipelines.preprocess.contact import ContactStateDetector
 from background.pipelines.reconstruct        import StrokeReconstructor

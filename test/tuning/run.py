@@ -1,14 +1,14 @@
 """
-tuner.py — Systematic ESKF pipeline tuner
+test/tuning/run.py — Systematic ESKF pipeline tuner
 
 Replaces manual config → replay → inspect cycles with an automated
 Measure → Score → Search → Compare → Keep Best workflow.
 
 Usage:
-  python tuner.py --stage 1 --datasets v2/abc_s1.csv v2/ct_square1.csv
-  python tuner.py --stage 1 --datasets v2/abc_s1.csv --trials 81 --top-params 4
-  python tuner.py --stage 2 --datasets v3/abc_c4.csv v3/abc_c5.csv --trials 27
-  python tuner.py --stage 4 --datasets v2/abc_s1.csv v3/abc_c4.csv --top-n 5
+  python test/tuning/run.py --stage 1 --datasets v2/abc_s1.csv v2/ct_square1.csv
+  python test/tuning/run.py --stage 1 --datasets v2/abc_s1.csv --trials 81 --top-params 4
+  python test/tuning/run.py --stage 2 --datasets v3/abc_c4.csv v3/abc_c5.csv --trials 27
+  python test/tuning/run.py --stage 4 --datasets v2/abc_s1.csv v3/abc_c4.csv --top-n 5
 
 Stage order (sequential — tune earlier stages before later ones):
   1  drawing mode      (sigma, drag, pos_floor, acc_scale)
@@ -28,9 +28,14 @@ import math
 import os
 import sys
 
+# ── Project import path ──────────────────────────────────────────────────────
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
 
 def _resolve_datasets(raw_paths: list[str]) -> list[str]:
-    base = os.path.join(os.path.dirname(__file__), 'logs', 'datasets')
+    base = os.path.join(_ROOT, 'logs', 'datasets')
     resolved = []
     for p in raw_paths:
         full = os.path.join(base, p)
@@ -66,14 +71,14 @@ def main():
     datasets = _resolve_datasets(args.datasets)
     os.makedirs(args.out_dir, exist_ok=True)
 
-    from tuning.grid_search import (
+    from test.tuning.grid_search import (
         STAGE_PARAMS, sensitivity_scan, top_sensitive_params, grid_search,
     )
-    from tuning.reporter import (
+    from test.tuning.reporter import (
         save_sensitivity_table, save_top_configs, plot_trajectory_comparison,
     )
-    from tuning.headless_runner import run_dataset
-    from tuning.config_patcher import patch_cfg, reset_cfg
+    from test.tuning.headless_runner import run_dataset
+    from test.tuning.config_patcher import patch_cfg, reset_cfg
 
     stage_label = {0: 'core', 1: 'drawing', 2: 'fast', 3: 'air', 4: 'gates'}
     print(f"\n{'='*60}")

@@ -7,7 +7,7 @@ with the single changed leaf, then write it back to the live cfg singleton
 via object.__setattr__ (bypasses frozen protection at the CPython C level).
 
 Usage:
-    from tuning.config_patcher import patch_cfg, reset_cfg
+    from test.tuning.config_patcher import patch_cfg, reset_cfg
 
     patch_cfg({'fusion_eskf.modes.drawing.sigma_scale': 0.9,
                'fusion_eskf.sigma_a': 2.8})

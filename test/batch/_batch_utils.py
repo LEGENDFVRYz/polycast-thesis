@@ -3,7 +3,7 @@ test/batch/_batch_utils.py — Shared utilities for the batch replay/plot flow.
 
 Provides:
   - _FIELDNAMES / _row(ev)        CSV schema + row extractor
-  - _compute_metrics(results)     summary metrics dict (fusion health + geometry)
+  - compute_metrics(results)      summary metrics dict (fusion health + geometry)
   - _ink_rows / _per_stroke       stroke helpers
   - _straightness / _closure / _bbox / _path_length / _pct  geometry
   - run_one(tag, dataset, overrides, raw_dir, out_dir)       headless run + CSV write
@@ -21,7 +21,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
-# ── ensure project root is on sys.path ────────────────────────────────────────
+# Ensure project root is on sys.path
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -40,7 +40,9 @@ _COL_FUSED = '#1a1a1a'
 _COL_AIR   = '#888888'
 _COL_UWB   = '#e07b00'
 
-# ── CSV column schema ─────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# CSV Column Schema
+# -----------------------------------------------------------------------------
 
 _FIELDNAMES = [
     'ts_hw', 'source',
@@ -139,7 +141,9 @@ def _row(ev: dict) -> dict:
     }
 
 
-# ── geometry helpers ──────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Geometry Helpers
+# -----------------------------------------------------------------------------
 
 def _ink_rows(results: list[dict]) -> list[dict]:
     return [r for r in results if r.get('stroke_active') and r.get('contact_raw', True)
@@ -201,7 +205,9 @@ def _mean(vals: list) -> float:
     return sum(vals) / len(vals) if vals else 0.0
 
 
-# ── postprocess stroke collection ────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Postprocess Stroke Collection
+# -----------------------------------------------------------------------------
 
 def collect_strokes(results: list[dict]) -> list[dict]:
     """Run StrokeReconstructor over fused results and return closed stroke dicts.
@@ -209,6 +215,7 @@ def collect_strokes(results: list[dict]) -> list[dict]:
     Each returned stroke has a 'postprocess' key populated by StrokePostprocessor
     (centroid alignment + min-jerk) when cfg.postprocess.enabled is True.
     """
+
     rec = StrokeReconstructor()
     strokes: list[dict] = []
     for ev in results:
@@ -223,6 +230,7 @@ def collect_strokes(results: list[dict]) -> list[dict]:
 
 def _compute_pp_metrics(strokes: list[dict]) -> dict:
     """Aggregate postprocess correction stats across all closed strokes."""
+
     empty = {
         'pp_strokes_total':     0,
         'pp_strokes_corrected': 0,
@@ -271,10 +279,13 @@ def _compute_pp_metrics(strokes: list[dict]) -> dict:
     }
 
 
-# ── imu event attachment ──────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# IMU Event Attachment
+# -----------------------------------------------------------------------------
 
 def attach_imu_events(results: list[dict], raw_path: str) -> None:
     """Attach _imu_ev dicts to IMU-source result rows by re-running preprocess."""
+
     imu_prep = IMUPreprocessor()
     contact  = ContactStateDetector()
     events   = parse_dataset(raw_path)
@@ -291,7 +302,9 @@ def attach_imu_events(results: list[dict], raw_path: str) -> None:
         r['_imu_ev'] = imu_annotated[i] if i < len(imu_annotated) else {}
 
 
-# ── metrics computation ───────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Metrics Computation
+# -----------------------------------------------------------------------------
 
 _LINE_DATASETS  = {'hline', 'vline', 'dline'}
 _CLOSED_DATASETS = {'circle', 'square', 'triangle'}
@@ -306,6 +319,7 @@ _LINE_EXPECTED_ANGLE = {
 
 def _lateral_thickness(pts) -> float:
     """Bounding-box minor-axis thickness in mm (perpendicular to stroke direction)."""
+
     if len(pts) < 2:
         return 0.0
     w, h = _bbox(pts)
@@ -323,6 +337,7 @@ def compute_metrics(results: list[dict], dataset: str, tag: str = '',
     Fix 4: P_trace_max, innovation_max, and UWB reject pct computed
            both globally and after-initialization (active window).
     """
+
     per_stroke = _per_stroke(results)
     ink        = _ink_rows(results)
 
@@ -532,7 +547,9 @@ def compute_metrics(results: list[dict], dataset: str, tag: str = '',
     }
 
 
-# ── run one combination ───────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Run One Combination
+# -----------------------------------------------------------------------------
 
 def run_one(tag: str, dataset: str, overrides: dict,
             raw_dir: str, out_dir: str) -> dict:
@@ -564,7 +581,9 @@ def run_one(tag: str, dataset: str, overrides: dict,
     return metrics
 
 
-# ── summary CSV writer ────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Summary CSV Writer
+# -----------------------------------------------------------------------------
 
 _SUMMARY_FIELDS = [
     'tag', 'dataset', 'strokes', 'ink_events', 'total_events',
@@ -634,7 +653,9 @@ def write_summary(all_metrics: list[dict], summary_path: str,
         print(f'Strokes -> {strokes_path}')
 
 
-# ── plot helpers ──────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Plot Helpers
+# -----------------------------------------------------------------------------
 
 def _f(row: dict, key: str, default: float = 0.0) -> float:
     try:
@@ -873,6 +894,7 @@ def plot_postprocess(strokes: list[dict], title: str, out_path: str,
     Gray = raw polyline (before PP); Black = corrected polyline (after PP).
     Skipped if no strokes are provided.
     """
+
     if not strokes:
         return
 
@@ -942,6 +964,7 @@ def plot_postprocess(strokes: list[dict], title: str, out_path: str,
 def plot_compare(csv_paths: list[tuple], dataset: str,
                  zoom: bool, out_path: str) -> None:
     """Side-by-side comparison. csv_paths: list of (tag, csv_path)."""
+
     n = len(csv_paths)
     if n == 0:
         return

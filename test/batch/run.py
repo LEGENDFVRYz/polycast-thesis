@@ -48,7 +48,7 @@ from datetime import datetime
 from typing import Any
 
 
-# ── Project import path ──────────────────────────────────────────────────────
+# Project import path
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 _TEST_ROOT = os.path.dirname(_TEST_DIR)
 _ROOT = os.path.dirname(_TEST_ROOT)
@@ -59,7 +59,7 @@ if _TEST_DIR not in sys.path:
     sys.path.insert(0, _TEST_DIR)
 
 
-# ── Local test utilities ─────────────────────────────────────────────────────
+# Local test utilities
 from _batch_utils import (  # noqa: E402
     run_one,
     write_summary,
@@ -77,12 +77,13 @@ DEFAULT_RAW_DIR = os.path.join(_TEST_ROOT, "_datasets")
 DEFAULT_OUT_BASE = os.path.join(_TEST_DIR, "outputs")
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 # Helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def _safe_name(name: str) -> str:
     """Make a filesystem-safe test name."""
+
     name = name.strip()
     name = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
     name = name.strip("._-")
@@ -91,6 +92,7 @@ def _safe_name(name: str) -> str:
 
 def _jsonable(obj: Any) -> Any:
     """Convert dataclasses/tuples/objects into JSON-safe values."""
+
     if dataclasses.is_dataclass(obj):
         return _jsonable(dataclasses.asdict(obj))
     if isinstance(obj, dict):
@@ -104,12 +106,14 @@ def _jsonable(obj: Any) -> Any:
 
 def _config_dict() -> dict[str, Any]:
     """Full config snapshot as a JSON-serializable dict."""
+
     return _jsonable(cfg)
 
 
 def _important_knobs() -> list[str]:
     """Human-readable list of key tuning knobs."""
-    m = cfg.fusion_eskf.modes
+
+    modes = cfg.fusion_eskf.modes
     return [
         f"serial.port:                  {cfg.serial.port}",
         f"serial.baud:                  {cfg.serial.baud}",
@@ -129,23 +133,23 @@ def _important_knobs() -> list[str]:
         f"uwb.pos_alpha:                {cfg.uwb.pos_alpha}",
         f"uwb.pos_beta:                 {cfg.uwb.pos_beta}",
         "",
-        f"drawing.sigma_scale:          {m.drawing.sigma_scale}",
-        f"drawing.pos_gain_cap:         {m.drawing.pos_gain_cap}",
-        f"drawing.drag_inv_s:           {m.drawing.drag_inv_s}",
-        f"drawing.acc_scale:            {m.drawing.acc_scale}",
+        f"drawing.sigma_scale:          {modes.drawing.sigma_scale}",
+        f"drawing.pos_gain_cap:         {modes.drawing.pos_gain_cap}",
+        f"drawing.drag_inv_s:           {modes.drawing.drag_inv_s}",
+        f"drawing.acc_scale:            {modes.drawing.acc_scale}",
         "",
-        f"drawing_fast.sigma_scale:     {m.drawing_fast.sigma_scale}",
-        f"drawing_fast.pos_gain_cap:    {m.drawing_fast.pos_gain_cap}",
-        f"drawing_fast.drag_inv_s:      {m.drawing_fast.drag_inv_s}",
-        f"drawing_fast.acc_scale:       {m.drawing_fast.acc_scale}",
+        f"drawing_fast.sigma_scale:     {modes.drawing_fast.sigma_scale}",
+        f"drawing_fast.pos_gain_cap:    {modes.drawing_fast.pos_gain_cap}",
+        f"drawing_fast.drag_inv_s:      {modes.drawing_fast.drag_inv_s}",
+        f"drawing_fast.acc_scale:       {modes.drawing_fast.acc_scale}",
         "",
-        f"air.sigma_scale:              {m.air.sigma_scale}",
-        f"air.drag_inv_s:               {m.air.drag_inv_s}",
-        f"air.acc_scale:                {m.air.acc_scale}",
+        f"air.sigma_scale:              {modes.air.sigma_scale}",
+        f"air.drag_inv_s:               {modes.air.drag_inv_s}",
+        f"air.acc_scale:                {modes.air.acc_scale}",
         "",
-        f"static.sigma_scale:           {m.static.sigma_scale}",
-        f"static.drag_inv_s:            {m.static.drag_inv_s}",
-        f"static.acc_scale:             {m.static.acc_scale}",
+        f"static.sigma_scale:           {modes.static.sigma_scale}",
+        f"static.drag_inv_s:            {modes.static.drag_inv_s}",
+        f"static.acc_scale:             {modes.static.acc_scale}",
         "",
         f"fusion.sigma_a:               {cfg.fusion_eskf.sigma_a}",
         f"fusion.sigma_uwb:             {cfg.fusion_eskf.sigma_uwb}",
@@ -167,6 +171,7 @@ def _important_knobs() -> list[str]:
 
 def _write_config_snapshot(out_dir: str, testname: str) -> str:
     """Write config_used.txt, config_used.json, and copy config.py."""
+
     cfg_dict = _config_dict()
     cfg_json = json.dumps(cfg_dict, indent=2, sort_keys=True)
     cfg_hash = hashlib.sha256(cfg_json.encode("utf-8")).hexdigest()[:12]
@@ -200,6 +205,7 @@ def _write_config_snapshot(out_dir: str, testname: str) -> str:
 
 def _discover_datasets(raw_dir: str) -> list[str]:
     """Return dataset names from every *.csv in raw_dir."""
+
     if not os.path.isdir(raw_dir):
         raise FileNotFoundError(f"Raw directory not found: {raw_dir}")
 
@@ -216,6 +222,7 @@ def _discover_datasets(raw_dir: str) -> list[str]:
 
 def _print_report(all_metrics: list[dict]) -> None:
     """Small terminal summary."""
+
     if not all_metrics:
         print("\nNo metrics generated.")
         return
@@ -243,9 +250,68 @@ def _print_report(all_metrics: list[dict]) -> None:
     print()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# Per-dataset run
+# -----------------------------------------------------------------------------
+
+def _run_one_dataset(
+    tag: str, dataset: str, testname: str,
+    raw_dir: str, out_dir: str, plot_dir: str, no_imu_diag: bool,
+) -> dict | None:
+    """Replay one dataset, write its plots, and return its metrics dict.
+
+    Returns None if the run failed or produced no metrics — the caller skips
+    plotting and the summary row for that dataset in either case.
+    """
+
+    print(f"Running {dataset}...")
+    try:
+        metrics = run_one(tag, dataset, {}, raw_dir, out_dir)
+    except Exception as exc:
+        print(f"  [ERROR] {dataset}: {exc}")
+        return None
+
+    if not metrics:
+        print(f"  [WARN] {dataset}: no metrics returned")
+        return None
+
+    csv_path = os.path.join(out_dir, f"{tag}_{dataset}.csv")
+    title = f"batch/{testname} / {dataset}"
+
+    try:
+        plot_zoom(
+            csv_path,
+            title,
+            os.path.join(plot_dir, f"{dataset}_zoom.png"),
+            dataset=dataset,
+        )
+        plot_full(
+            csv_path,
+            title,
+            os.path.join(plot_dir, f"{dataset}_full.png"),
+            dataset=dataset,
+        )
+        plot_postprocess(
+            metrics.get("_stroke_objects", []),
+            title,
+            os.path.join(plot_dir, f"{dataset}_postprocess.png"),
+            dataset=dataset,
+        )
+        if not no_imu_diag:
+            plot_imu_diag(
+                csv_path,
+                title,
+                os.path.join(plot_dir, f"{dataset}_imu_diag.png"),
+            )
+    except Exception as exc:
+        print(f"  [WARN] plot failed for {dataset}: {exc}")
+
+    return metrics
+
+
+# -----------------------------------------------------------------------------
 # Main
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -306,49 +372,11 @@ def main() -> None:
     all_metrics: list[dict] = []
 
     for ds in datasets:
-        print(f"Running {ds}...")
-        try:
-            metrics = run_one(tag, ds, {}, raw_dir, out_dir)
-        except Exception as exc:
-            print(f"  [ERROR] {ds}: {exc}")
-            continue
-
-        if not metrics:
-            print(f"  [WARN] {ds}: no metrics returned")
-            continue
-
-        all_metrics.append(metrics)
-
-        csv_path = os.path.join(out_dir, f"{tag}_{ds}.csv")
-        title = f"batch/{testname} / {ds}"
-
-        try:
-            plot_zoom(
-                csv_path,
-                title,
-                os.path.join(plot_dir, f"{ds}_zoom.png"),
-                dataset=ds,
-            )
-            plot_full(
-                csv_path,
-                title,
-                os.path.join(plot_dir, f"{ds}_full.png"),
-                dataset=ds,
-            )
-            plot_postprocess(
-                metrics.get("_stroke_objects", []),
-                title,
-                os.path.join(plot_dir, f"{ds}_postprocess.png"),
-                dataset=ds,
-            )
-            if not args.no_imu_diag:
-                plot_imu_diag(
-                    csv_path,
-                    title,
-                    os.path.join(plot_dir, f"{ds}_imu_diag.png"),
-                )
-        except Exception as exc:
-            print(f"  [WARN] plot failed for {ds}: {exc}")
+        metrics = _run_one_dataset(
+            tag, ds, testname, raw_dir, out_dir, plot_dir, args.no_imu_diag,
+        )
+        if metrics:
+            all_metrics.append(metrics)
 
     summary_path = os.path.join(out_dir, "batch_summary.csv")
     strokes_path = os.path.join(out_dir, "batch_strokes.csv")

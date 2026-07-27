@@ -2,7 +2,7 @@
 test/batch/run.py — Quick dataset plotting / replay helper.
 
 Purpose:
-    Quickly replay and plot every raw CSV in test/batch/datasets/ using the
+    Quickly replay and plot every raw CSV in test/_datasets/ using the
     current pipeline config, then save the run outputs under:
 
         test/batch/outputs/<testname>/
@@ -25,11 +25,12 @@ Usage:
 
     python test/batch/run.py --testname my_live_test
 
-    python test/batch/run.py --testname my_live_test --raw-dir test/batch/datasets
+    python test/batch/run.py --testname my_live_test --raw-dir test/_datasets
 
 Notes:
     - The script asks for testname when --testname is not supplied.
-    - It discovers every *.csv file inside test/batch/datasets/.
+    - It discovers every *.csv file directly inside test/_datasets/ (subfolders
+      are not scanned unless --raw-dir points at one explicitly).
     - It snapshots the config used during the run.
 """
 
@@ -48,8 +49,9 @@ from typing import Any
 
 
 # ── Project import path ──────────────────────────────────────────────────────
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 _TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEST_ROOT = os.path.dirname(_TEST_DIR)
+_ROOT = os.path.dirname(_TEST_ROOT)
 
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
@@ -71,7 +73,7 @@ from background.pipelines.config import cfg  # noqa: E402
 import background.pipelines.config as config_module  # noqa: E402
 
 
-DEFAULT_RAW_DIR = os.path.join(_TEST_DIR, "datasets")
+DEFAULT_RAW_DIR = os.path.join(_TEST_ROOT, "_datasets")
 DEFAULT_OUT_BASE = os.path.join(_TEST_DIR, "outputs")
 
 
@@ -247,7 +249,7 @@ def _print_report(all_metrics: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Quick replay + plot every raw CSV in test/batch/datasets/."
+        description="Quick replay + plot every raw CSV in test/_datasets/."
     )
     parser.add_argument(
         "--testname",
@@ -257,7 +259,7 @@ def main() -> None:
     parser.add_argument(
         "--raw-dir",
         default=DEFAULT_RAW_DIR,
-        help="Raw CSV folder. Default: test/batch/datasets/",
+        help="Raw CSV folder. Default: test/_datasets/",
     )
     parser.add_argument(
         "--out-base",

@@ -21,7 +21,7 @@
     ],
     "python-envs.pythonProjects": [
         {
-            "path": "test/_quick.py",
+            "path": "test/batch_testing/run.py",
             "envManager": "ms-python.python:venv",
             "packageManager": "ms-python.python:pip"
         }

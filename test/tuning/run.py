@@ -5,10 +5,10 @@ Replaces manual config → replay → inspect cycles with an automated
 Measure → Score → Search → Compare → Keep Best workflow.
 
 Usage:
-  python test/tuning/run.py --stage 1 --datasets v2/abc_s1.csv v2/ct_square1.csv
-  python test/tuning/run.py --stage 1 --datasets v2/abc_s1.csv --trials 81 --top-params 4
-  python test/tuning/run.py --stage 2 --datasets v3/abc_c4.csv v3/abc_c5.csv --trials 27
-  python test/tuning/run.py --stage 4 --datasets v2/abc_s1.csv v3/abc_c4.csv --top-n 5
+  python test/tuning/run.py --stage 1 --datasets abc_s1.csv ct_square1.csv
+  python test/tuning/run.py --stage 1 --datasets abc_s1.csv --trials 81 --top-params 4
+  python test/tuning/run.py --stage 2 --datasets abc_c4.csv abc_c5.csv --trials 27
+  python test/tuning/run.py --stage 4 --datasets abc_s1.csv abc_c4.csv --top-n 5
 
 Stage order (sequential — tune earlier stages before later ones):
   1  drawing mode      (sigma, drag, pos_floor, acc_scale)
@@ -29,16 +29,19 @@ import os
 import sys
 
 # ── Project import path ──────────────────────────────────────────────────────
-_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_TUNING_DIR = os.path.dirname(os.path.abspath(__file__))
+_TEST_ROOT = os.path.dirname(_TUNING_DIR)
+_ROOT = os.path.dirname(_TEST_ROOT)
 if _ROOT not in sys.path:
     sys.path.insert(0, _ROOT)
 
+DEFAULT_DATASET_DIR = os.path.join(_TEST_ROOT, '_datasets')
 
-def _resolve_datasets(raw_paths: list[str]) -> list[str]:
-    base = os.path.join(_ROOT, 'logs', 'datasets')
+
+def _resolve_datasets(raw_paths: list[str], dataset_dir: str) -> list[str]:
     resolved = []
     for p in raw_paths:
-        full = os.path.join(base, p)
+        full = os.path.join(dataset_dir, p)
         if not os.path.exists(full):
             print(f"[ERROR] Dataset not found: {full}")
             sys.exit(1)
@@ -54,8 +57,10 @@ def main():
     parser.add_argument('--stage', type=int, choices=[0, 1, 2, 3, 4], default=1,
                         help='Tuning stage (1=drawing, 2=fast, 3=air, 4=gates, 0=core)')
     parser.add_argument('--datasets', nargs='+', required=True,
-                        help='Dataset paths relative to logs/datasets/ '
-                             '(e.g. v2/abc_s1.csv v3/abc_c4.csv)')
+                        help='Dataset filenames relative to --dataset-dir '
+                             '(e.g. abc_s1.csv abc_c4.csv)')
+    parser.add_argument('--dataset-dir', default=DEFAULT_DATASET_DIR,
+                        help='Dataset folder. Default: test/_datasets/')
     parser.add_argument('--trials', type=int, default=81,
                         help='Max Phase B grid search trials (default: 81)')
     parser.add_argument('--top-params', type=int, default=4,
@@ -68,7 +73,7 @@ def main():
                         help='Run sensitivity scan only, skip grid search')
     args = parser.parse_args()
 
-    datasets = _resolve_datasets(args.datasets)
+    datasets = _resolve_datasets(args.datasets, args.dataset_dir)
     os.makedirs(args.out_dir, exist_ok=True)
 
     from test.tuning.grid_search import (
@@ -87,7 +92,7 @@ def main():
     print(f"  Trials    : {args.trials}  |  Top params: {args.top_params}")
     print(f"{'='*60}\n")
 
-    # ── Phase A: Sensitivity scan ────────────────────────────────────────────
+    # Phase A: Sensitivity scan
     print("[Phase A] Sensitivity scan ...")
     sens = sensitivity_scan(args.stage, datasets)
 
@@ -107,7 +112,7 @@ def main():
         print("\n[Done — Phase A only]\n")
         return
 
-    # ── Phase B: Grid search ─────────────────────────────────────────────────
+    # Phase B: Grid search
     n_values = max(2, int(math.floor(args.trials ** (1.0 / args.top_params))))
     print(f"\n[Phase B] Grid search: {args.top_params} params × {n_values} values "
           f"= {n_values ** args.top_params} combinations ...")
@@ -127,7 +132,7 @@ def main():
         for k, v in r['overrides'].items():
             print(f"      {k} = {v}")
 
-    # ── Phase C: Overlay comparison plot ─────────────────────────────────────
+    # Phase C: Overlay comparison plot 
     print("\n[Phase C] Generating best-vs-worst overlay plot ...")
     reset_cfg()
 

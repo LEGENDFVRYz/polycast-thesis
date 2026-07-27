@@ -2,7 +2,7 @@
 PolyCast Async Stream CSV Recorder
 ==================================
 Records the live asynchronous serial stream from the ESP32 WROOM receiver to a
-CSV file for later offline replay (via _tx1replay.py) and pipeline testing.
+CSV file for later offline replay (via serial_replayer.py) and pipeline testing.
 
 Each incoming line is validated against the packet layouts that data_parser.py
 expects, and anything malformed is counted and discarded rather than written:
@@ -14,9 +14,9 @@ All recordings are written into utils/recorded_data/; --output names the file
 within that folder, it does not choose a location.
 
 Usage:
-    python _tx1logger.py                     # defaults: COM5, square_1.csv
-    python _tx1logger.py --port COM3         # specify port
-    python _tx1logger.py --output data.csv   # -> utils/recorded_data/data.csv
+    python utils/serial_recorder.py                    # defaults: COM5, sample_1.csv
+    python utils/serial_recorder.py --port COM3        # specify port
+    python utils/serial_recorder.py --output data.csv  # -> recorded_data/data.csv
 
 Press Ctrl+C to stop recording. Statistics are printed at the end.
 """
@@ -40,7 +40,10 @@ MODE      = "sample"
 TEST_NAME = "1"
 
 # Capture Data Location
-RECORDED_DATA_DIR = 'utils/recorded_data'
+# Anchored to this file so captures land in the same folder regardless of the
+# directory the script is launched from.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+RECORDED_DATA_DIR = os.path.join(_SCRIPT_DIR, 'recorded_data')
 
 DEFAULT_DATASET_FILENAME = f"{MODE}_{TEST_NAME}.csv"
 

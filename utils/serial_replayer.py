@@ -1,8 +1,8 @@
 """
 PolyCast Log Replayer
 =====================
-Streams a previously recorded dataset (via _tx1logger.py) out over a virtual COM
-port so the downstream pipeline can be exercised without the prototype hardware.
+Streams a previously recorded dataset (via serial_recorder.py) out over a virtual
+COM port so the downstream pipeline can be exercised without the prototype hardware.
 
 Each line is re-parsed, validated against the IMU/UWB layouts the receiver
 expects, and re-emitted as a strict comma-separated packet. 
@@ -24,7 +24,14 @@ VIRTUAL_COM_PORT = 'COM19'
 BAUD_RATE        = 921600
 MODE             = "circle"
 TEST_NAME        = "2"
-LOG_FILE         = f'test/_datasets/{MODE}_{TEST_NAME}.csv'
+
+# Datasets live at the repository root, one level above this script:
+#    - (location) "test/_datasets" by default
+# 
+# Anchored to this file so the replayer works regardless of the directory it is launched from.
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATASETS_DIR  = os.path.join(_PROJECT_ROOT, 'test', '_datasets')
+LOG_FILE      = os.path.join(DATASETS_DIR, f'{MODE}_{TEST_NAME}.csv')
 
 # Packet field counts accepted by the receiver's unpacker. 
 # IMU has two valid shapes: the 11-field legacy layout and the 14-field extended layout with gyro.

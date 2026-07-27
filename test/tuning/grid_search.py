@@ -121,6 +121,7 @@ def sensitivity_scan(stage: int, dataset_paths: list[str], on_progress=None) -> 
 
     Returns list of {'param', 'value', 'score', 'delta'} dicts.
     """
+
     from test.tuning.scorer import score_datasets
 
     params = STAGE_PARAMS[stage]
@@ -152,6 +153,7 @@ def top_sensitive_params(sensitivity_rows: list[dict], n: int) -> list[str]:
     """
     Return the top-N most sensitive parameter dot-paths (no duplicates).
     """
+
     seen = {}
     result = []
     for row in sensitivity_rows:
@@ -187,6 +189,7 @@ def grid_search(
     Each dict has 'overrides', 'total', 'filter_health', 'smoothness',
     'stability', 'n_frames', 'uwb_accepted', 'uwb_rejected'.
     """
+
     from test.tuning.scorer import score_datasets
 
     params = STAGE_PARAMS[stage]

@@ -25,13 +25,14 @@ def patch_cfg(overrides: dict) -> None:
     Apply {dot-path: value} overrides to the live cfg singleton in-place.
 
     Supported path depths:
-      'fusion_eskf.sigma_a'                       — 2 levels
-      'fusion_eskf.modes.drawing.sigma_scale'     — 4 levels
-      'uwb.trilat_max_residual'                   — 2 levels
+        'fusion_eskf.sigma_a'                       — 2 levels
+        'fusion_eskf.modes.drawing.sigma_scale'     — 4 levels
+        'uwb.trilat_max_residual'                   — 2 levels
 
     All pipeline objects must be re-instantiated after this call because
     several preprocessors cache config values at __init__ time.
     """
+
     for dotpath, value in overrides.items():
         _apply_dotpath(cfg, dotpath, value)
 
@@ -41,6 +42,7 @@ def reset_cfg() -> None:
     Restore cfg to factory defaults by rebuilding all sub-configs from scratch.
     Call this between tuning trials to guarantee a clean slate.
     """
+
     defaults = _cfg_module.Config()
     for f in dataclasses.fields(defaults):
         object.__setattr__(cfg, f.name, getattr(defaults, f.name))
@@ -52,11 +54,12 @@ def _apply_dotpath(root_cfg, dotpath: str, value) -> None:
     patch the top-level field on root_cfg with object.__setattr__.
 
     For 'fusion_eskf.modes.drawing.sigma_scale':
-      1. new_drawing = replace(cfg.fusion_eskf.modes.drawing, sigma_scale=value)
-      2. new_modes   = replace(cfg.fusion_eskf.modes, drawing=new_drawing)
-      3. new_eskf    = replace(cfg.fusion_eskf, modes=new_modes)
-      4. object.__setattr__(cfg, 'fusion_eskf', new_eskf)
+        1. new_drawing = replace(cfg.fusion_eskf.modes.drawing, sigma_scale=value)
+        2. new_modes   = replace(cfg.fusion_eskf.modes, drawing=new_drawing)
+        3. new_eskf    = replace(cfg.fusion_eskf, modes=new_modes)
+        4. object.__setattr__(cfg, 'fusion_eskf', new_eskf)
     """
+
     parts = dotpath.split('.')
 
     # Build chain:

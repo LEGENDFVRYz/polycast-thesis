@@ -1,6 +1,5 @@
 """
-Headless dataset runner — drives the full ESKF pipeline directly from a CSV
-file with no serial I/O and no real-time delays.
+Drives the full ESKF pipeline directly from a CSV file with no serial I/O and no real-time delays.
 
 Replaces the COM-port + _tx1replay.py loop for automated tuning.
 
@@ -38,6 +37,7 @@ def parse_dataset(csv_path: str) -> list[dict]:
     Uses the same split logic as _tx1replay.py (re.split + empty-string filter)
     to handle trailing commas in v2/v3 datasets.
     """
+
     events = []
     with open(csv_path, 'r', encoding='utf-8') as f:
         for line in f:
@@ -87,6 +87,7 @@ def run_dataset(csv_path: str) -> list[dict]:
     All pipeline objects are freshly instantiated to pick up any cfg patches.
     No file I/O, no serial ports, no timing delays.
     """
+
     events = parse_dataset(csv_path)
 
     imu_prep   = IMUPreprocessor()

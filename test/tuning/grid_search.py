@@ -110,11 +110,14 @@ def _linspace(spec: dict) -> list:
 # Phase A: Sensitivity scan
 # ---------------------------------------------------------------------------
 
-def sensitivity_scan(stage: int, dataset_paths: list[str]) -> list[dict]:
+def sensitivity_scan(stage: int, dataset_paths: list[str], on_progress=None) -> list[dict]:
     """
     For each parameter in the stage, sweep its full range in 5 steps with
     all others at default. Score each trial. Return rows sorted by |delta|
     descending so the most impactful parameters appear first.
+
+    on_progress, if given, is called as on_progress(done, total) after each
+    trial (done starts at 1) so callers can drive a progress bar/spinner.
 
     Returns list of {'param', 'value', 'score', 'delta'} dicts.
     """
@@ -124,7 +127,10 @@ def sensitivity_scan(stage: int, dataset_paths: list[str]) -> list[dict]:
     baseline = score_datasets(dataset_paths, overrides=None)
     baseline_total = baseline['total']
 
+    total_trials = sum(len(_linspace(spec)) for spec in params.values())
+
     rows = []
+    done = 0
     for param_path, spec in params.items():
         for v in _linspace(spec):
             s = score_datasets(dataset_paths, overrides={param_path: v})
@@ -134,6 +140,9 @@ def sensitivity_scan(stage: int, dataset_paths: list[str]) -> list[dict]:
                 'score': s['total'],
                 'delta': s['total'] - baseline_total,
             })
+            done += 1
+            if on_progress is not None:
+                on_progress(done, total_trials)
 
     rows.sort(key=lambda r: abs(r['delta']), reverse=True)
     return rows
@@ -164,12 +173,15 @@ def grid_search(
     dataset_paths: list[str],
     param_paths: list[str],
     n_values: int = 3,
+    on_progress=None,
 ) -> list[dict]:
     """
     Full combinatorial grid search over the specified parameters.
 
     param_paths: dot-paths to search (must exist in STAGE_PARAMS[stage])
     n_values: number of evenly-spaced values per parameter
+    on_progress, if given, is called as on_progress(done, total, best_so_far)
+    after each trial (done starts at 1) so callers can drive a progress bar.
 
     Returns list of trial result dicts sorted by total score descending.
     Each dict has 'overrides', 'total', 'filter_health', 'smoothness',
@@ -199,16 +211,14 @@ def grid_search(
     for v in param_values:
         total_combos *= len(v)
 
-    print(f"  Grid search: {len(param_names)} params × {n_values} values = {total_combos} trials")
-
     for i, combo in enumerate(itertools.product(*param_values), 1):
         overrides = dict(zip(param_names, combo))
         s = score_datasets(dataset_paths, overrides=overrides)
         s['overrides'] = overrides
         trial_results.append(s)
-        if i % 10 == 0 or i == total_combos:
-            print(f"    [{i}/{total_combos}] best so far: "
-                  f"{max(r['total'] for r in trial_results):.2f}")
+        if on_progress is not None:
+            best_so_far = max(r['total'] for r in trial_results)
+            on_progress(i, total_combos, best_so_far)
 
     trial_results.sort(key=lambda r: r['total'], reverse=True)
     return trial_results

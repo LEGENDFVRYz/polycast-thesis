@@ -1,89 +1,67 @@
 """
-Module 2 — Stream Normalizer
+Module 2 - Stream Normalizer
 
-Responsibility:
-    - Consume raw packet dictionaries from tv1_unpacker.py
-    - Standardize all events into a consistent schema
-    - NOTE: Because the new async dual-stream hardware sends unbatched data, 
-      the unpacker already outputs flat events. This normalizer now acts as a 
-      schema validator, pass-through, and statistical tracker for the pipeline.
+Validates and republishes unpacker events under a fixed schema, and counts what
+passes through.
 
-Input  (from tv1_unpacker.read_new_packets):
-    IMU event: { 'sensor': 'IMU', 'packet_id': int, 'sample_idx': 0, 'quat': (...), 'acc': (...), 'force': float, 'ts_hw': int }
-    UWB event: { 'sensor': 'UWB', 'packet_id': int, 'sample_idx': 0, 'dists': (...), 'ts_hw': int }
+The hardware now sends one unbatched reading per line, so the unpacker already
+emits flat events and no reshaping is left to do. 
 
-Output (normalized event schema):
-    IMU event:
-    {
-        'sensor':     'IMU',
-        'packet_id':  int,
-        'sample_idx': int,      # always 0 (new async format)
-        'ts_hw':      int,      # hardware timestamp from sensor
-        'quat':       (qx, qy, qz, qw),
-        'acc':        (ax, ay, az),
-        'gyro':       (gx, gy, gz) | None,
-        'force':      float
-    }
+(Legacy Code for sudden changes)
 
-    UWB event:
-    {
-        'sensor':     'UWB',
-        'packet_id':  int,
-        'sample_idx': 0,        # always 0
-        'ts_hw':      int,
-        'dists':      (d0, d1, d2, d3)
-    }
+What remains is a scheme boundary: every downstream stage can rely on the exact key 
+set declared here regardless of which wire layout produced the event, since optional 
+fields are normalized to an explicit None rather than being absent.
+
+Output schema:
+    IMU: {'sensor', 'packet_id', 'sample_idx', 'ts_hw', 'quat', 'acc', 'gyro', 'force'}
+    UWB: {'sensor', 'packet_id', 'sample_idx', 'ts_hw', 'dists'}
+
+Usage (Import as helper or run directly to trace normalized events):
+    python -m background.pipelines.cleaner.normalizer
 """
 
+_DEFAULT_SAMPLE_INDEX = 0
+
+
 class StreamNormalizer:
-    """
-    Converts raw packet dictionaries from the unpacker into a flat,
-    standardized event stream — one dict per sensor reading.
-    """
+    """Republishes raw unpacker packets under the canonical event schema."""
 
     def __init__(self):
         self._total_imu_events = 0
         self._total_uwb_events = 0
         self._total_packets_in = 0
-    
+
     def normalize(self, packets: list[dict]) -> list[dict]:
         """
-        Main entry point.
+        Convert a batch of raw packets into normalized events, preserving order.
 
-        Args:
-            packets: List of raw packet dicts returned by
-                     tv1_unpacker.SerialStreamer.read_new_packets()
-
-        Returns:
-            Flat list of normalized event dicts (preserve order).
+        Packets from an unrecognized sensor are dropped rather than passed on,
+        so a malformed event cannot reach a stage that assumes the schema.
         """
-        events = []
-        
-        for pkt in packets:
-            self._total_packets_in += 1
-            # The new unpacker uses 'sensor' instead of 'type'
-            sensor_type = pkt.get('sensor')
 
-            if sensor_type == 'IMU':
-                events.extend(self._flatten_imu(pkt))
-                
-            elif sensor_type == 'UWB':
-                ev = self._flatten_uwb(pkt)
-                if ev:
-                    events.append(ev)
-                    self._total_uwb_events += 1
+        events = []
+
+        for packet in packets:
+            self._total_packets_in += 1
+            sensor = packet.get('sensor')
+
+            if sensor == 'IMU':
+                events.append(self._normalize_imu(packet))
+                self._total_imu_events += 1
+            elif sensor == 'UWB':
+                events.append(self._normalize_uwb(packet))
+                self._total_uwb_events += 1
 
         return events
 
     def stats(self) -> dict:
-        """
-        Returns cumulative normalization statistics since instantiation.
-        Useful for validating event counts in tests.
-        """
+        """Return cumulative event counts since construction."""
+
         return {
-            'packets_in':   self._total_packets_in,
-            'imu_events':   self._total_imu_events,
-            'uwb_events':   self._total_uwb_events,
+            'packets_in': self._total_packets_in,
+            'imu_events': self._total_imu_events,
+            'uwb_events': self._total_uwb_events,
             'total_events': self._total_imu_events + self._total_uwb_events,
         }
 
@@ -92,88 +70,70 @@ class StreamNormalizer:
         self._total_uwb_events = 0
         self._total_packets_in = 0
 
-    # --- private helpers ---
-    def _flatten_imu(self, pkt: dict) -> list[dict]:
-        """
-        Passes through the already-flat IMU event from the new unpacker.
-        """
-        # We wrap it in a list so normalize() can still use .extend()
-        self._total_imu_events += 1
-        return [{
-            'sensor':     'IMU',
-            'packet_id':  pkt.get('packet_id'),
-            'sample_idx': pkt.get('sample_idx', 0),
-            'ts_hw':      pkt.get('ts_hw'),
-            'quat':       pkt.get('quat'),
-            'acc':        pkt.get('acc'),
-            # Optional hardware gyro passthrough.  Current packets may omit this;
-            # imu.py falls back to quaternion-derived omega when absent.
-            'gyro':       pkt.get('gyro'),
-            'force':      pkt.get('force'),
-        }]
-
-    def _flatten_uwb(self, pkt: dict) -> dict | None:
-        """
-        Passes through the already-flat UWB event from the new unpacker.
-        """
+    @staticmethod
+    def _normalize_imu(packet: dict) -> dict:
         return {
-            'sensor':     'UWB',
-            'packet_id':  pkt.get('packet_id'),
-            'sample_idx': pkt.get('sample_idx', 0),
-            'ts_hw':      pkt.get('ts_hw'),
-            'dists':      pkt.get('dists'),
+            'sensor': 'IMU',
+            'packet_id': packet.get('packet_id'),
+            'sample_idx': packet.get('sample_idx', _DEFAULT_SAMPLE_INDEX),
+            'ts_hw': packet.get('ts_hw'),
+            'quat': packet.get('quat'),
+            'acc': packet.get('acc'),
+            # Explicit None on legacy packets that carry no gyro, so imu.py can
+            # detect the absence and fall back to quaternion-derived omega.
+            'gyro': packet.get('gyro'),
+            'force': packet.get('force'),
+        }
+
+    @staticmethod
+    def _normalize_uwb(packet: dict) -> dict:
+        return {
+            'sensor': 'UWB',
+            'packet_id': packet.get('packet_id'),
+            'sample_idx': packet.get('sample_idx', _DEFAULT_SAMPLE_INDEX),
+            'ts_hw': packet.get('ts_hw'),
+            'dists': packet.get('dists'),
         }
 
 
-# ==============================================================================
-# LIVE HARDWARE VALIDATION
-#   - Connects to tv1_unpacker.SerialStreamer
-#   - Normalizes the fetched hardware data
-# ==============================================================================
+# =============================================================================
+# MODULE TESTING
+#   Live hardware trace: prints every normalized event as it arrives, then a
+#   final count summary. Use this to confirm the schema and the IMU/UWB event
+#   split before moving on to the time-alignment stage.
+#
+#   Run:  python -m background.pipelines.cleaner.normalizer
+# =============================================================================
 if __name__ == '__main__':
-    
+    import time
+
     from background.pipelines.cleaner.unpacker import SerialStreamer
     from background.pipelines.config import cfg
-    import time
-    
-    # CONFIGURATION
-    SERIAL_PORT = cfg.serial.port
-    BAUD_RATE = cfg.serial.baud
-    
-    # Initialize modules
-    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm = StreamNormalizer()
+
+    streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
+    normalizer = StreamNormalizer()
 
     print("=" * 60)
-    print(f"  --- Pipeline Testing: @{SERIAL_PORT} ----")
+    print(f"  --- Pipeline Testing: @{cfg.serial.port} ----")
     print("  > Normalizing hardware packets into flat events...")
     print("=" * 60)
-    
+
     try:
         while True:
-            
             raw_packets = streamer.read_new_packets()
-            
-            if raw_packets:
-                
-                events = norm.normalize(raw_packets)
-                
-                # Print the flattened events
-                for ev in events:
-                    sensor = ev['sensor']
-                    ts = ev['ts_hw']
-                    
-                    if sensor == 'IMU':
-                        # Show packet ID and sample index to verify flattening
-                        print(f"[{sensor}] Pkt:{ev['packet_id']} Sub:{ev['sample_idx']} | TS:{ts} | Force:{ev['force']:.2f}")
-                    
-                    elif sensor == 'UWB':
-                        print(f"[{sensor}] Pkt:{ev['packet_id']} | TS:{ts} | Dist:{ev['dists']}")
+
+            for event in normalizer.normalize(raw_packets):
+                if event['sensor'] == 'IMU':
+                    print(f"[IMU] Pkt:{event['packet_id']} Sub:{event['sample_idx']} "
+                          f"| TS:{event['ts_hw']} | Force:{event['force']:.2f}")
+                else:
+                    print(f"[UWB] Pkt:{event['packet_id']} "
+                          f"| TS:{event['ts_hw']} | Dist:{event['dists']}")
 
             time.sleep(0.01)
 
     except KeyboardInterrupt:
-        stats = norm.stats()
+        stats = normalizer.stats()
         print("\n" + "=" * 60)
         print("  STREAM STOPPED")
         print(f"  Total Packets In: {stats['packets_in']}")

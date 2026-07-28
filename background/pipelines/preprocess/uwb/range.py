@@ -1,320 +1,338 @@
 """
-Module 5 — UWB Range Preprocessor
+Module 5 - UWB Range Preprocessor
 
-Cleans raw anchor distances before they reach trilateration.
+Cleans raw anchor distances before trilateration tries to solve a position from
+them. A single bad range corrupts the whole geometric solve, so each anchor is
+filtered independently and flagged rather than silently trusted.
 
-Input  (from tv2_normalizer — UWB events, updated schema):
-    {
-        'sensor':     'UWB',
-        'packet_id':  int,
-        'sample_idx': 0,
-        'ts_hw':      int,
-        'dists':      (d0, d1, d2, d3)    - raw metres from 4 anchors
-    }
+Process Flow:
+    1. Blind-spot reject   drop physically impossible readings outright
+    2. Offset calibration  correct the antenna delay measured for this anchor
+    3. Sanity check        confirm the range is within the room's plausible bounds
+    4. Jump detection      reject impossible movement between samples
+    5. Anti-lockout        force a resync if the jump gate has held too long
+    6. Median filter       suppress isolated spikes
+    7. Adaptive EMA        smooth, adapting to the real inter-sample interval
 
-Output (cleaned range event):
-    {
-        'sensor':       'UWB',
-        'ts_hw':        int,
-        'packet_id':    int,
-        'raw_dists':    (d0, d1, d2, d3),           - original values, unchanged
-        'clean_dists':  (d0, d1, d2, d3),           - after offset + median + EMA filtering
-        'valid_mask':   (True, True, True, True),   - flags for validity
-        'outlier_flags':(False,False,False,False),  - flags for outliers
-    }
+Steps 4 and 5 are in tension by design: the jump gate rejects NLOS spikes, but
+without the anti-lockout escape a genuine fast move would be rejected forever
+because every new sample is measured against a frozen estimate.
 
-Processing pipeline per anchor:
-    1. Offset Calibration
-    2. Sanity check and Jump detection
-    3. EMA Median filter: window=5 over per-anchor history buffer (alpha=0.25)
+Input:  normalized UWB events from "normalizer" module
+Output: {'sensor', 'ts_hw', 'packet_id', 'raw_dists', 'clean_dists',
+         'valid_mask', 'outlier_flags'}
 
-    - All four anchors are processed independently
-    - An anchor remains "valid" unless it fails the sanity check AND the jump test
+Usage (Import as stage or run directly to trace normalized events):
+    python -m background.pipelines.preprocess.uwb.range
 """
 
 import math
 import statistics
 from collections import deque
+
 from background.pipelines.config import cfg
+
+MICROSECONDS_PER_SECOND = 1_000_000
+
+# Ranges at or below this are the hardware's blind-spot signal, not a distance:
+# a blocked anchor reports 0.0 or a near-zero value rather than failing.
+_BLIND_SPOT_RANGE_M = 0.05
+
+# Emitted when an anchor is rejected before any history exists to fall back on.
+_NO_ESTIMATE_SENTINEL = -1.0
+
+# Consecutive jump rejections tolerated before the estimate is forced to resync.
+_MAX_CONSECUTIVE_JUMPS = 5
+
+# Median-to-estimate gap that counts as real movement rather than noise. 
+# Above it the smoothing opens up so the filter catches up instead of lagging.
+_FAST_MOVEMENT_DELTA_M = 0.10
+_FAST_MOVEMENT_ALPHA_GAIN = 3.0
 
 
 class UWBRangePreprocessor:
-    """
-    Stateful per-anchor range cleaner
-
-    Maintains a rolling buffer and EMA state for each of the 4 anchors.
-    """
+    """Per-anchor range cleaner holding independent filter state for each anchor."""
 
     def __init__(self, offsets: tuple = (0.0, 0.0, 0.0, 0.0)):
-        n = cfg.uwb.num_anchors
-        
-        # Hardware calibration offsets (antenna delay)
-        self.offsets = offsets
-        
-        # Rolling raw-value buffer for median filter
-        self._history:     list[deque] = [
-            deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
-        # Last EMA output per anchor (None = not seeded yet)
-        self._ema:         list[float | None] = [None] * n
-        # Last filtered value used for jump detection
-        self._prev_clean:  list[float | None] = [None] * n
-        
-        # --- Anti-Lockout Counters ---
-        self._jump_count = [0] * n
-        self.max_jumps = 5
+        anchor_count = cfg.uwb.num_anchors
 
-        # Timestamp of last processed event (for time-aware EMA)
+        # Antenna-delay calibration, measured per anchor.
+        self.offsets = offsets
+
+        self._history: list[deque] = [
+            deque(maxlen=cfg.uwb.median_window) for _ in range(anchor_count)
+        ]
+        self._ema: list[float | None] = [None] * anchor_count
+        self._prev_clean: list[float | None] = [None] * anchor_count
+        self._jump_count = [0] * anchor_count
+
+        self.max_jumps = _MAX_CONSECUTIVE_JUMPS
         self._prev_ts: int | None = None
 
-    # ------------------------------------------------------------------
+    # -------------------------------------------------------------------------
     # Public API
-    # ------------------------------------------------------------------
+    # -------------------------------------------------------------------------
 
     def feed(self, events: list[dict]) -> list[dict]:
-        """
-        Process a batch of normalized UWB events.
-        """
-        out = []
-        for ev in events:
-            if ev.get('sensor') != 'UWB':
+        """Process a batch, skipping non-UWB events and unusable samples."""
+
+        cleaned = []
+        for event in events:
+            if event.get('sensor') != 'UWB':
                 continue
-            result = self.process_one(ev)
+            result = self.process_one(event)
             if result:
-                out.append(result)
-        return out
+                cleaned.append(result)
+        return cleaned
 
-    def process_one(self, ev: dict) -> dict | None:
+    def process_one(self, event: dict) -> dict | None:
         """
-        Process one normalized UWB event through the full per-anchor pipeline.
+        Clean one UWB reading, filtering every anchor independently.
 
-        Returns None if the event is missing required fields.
+        Returns None when the event lacks ranges or carries an unexpected anchor
+        count, since the per-anchor state arrays are sized from config.
         """
-        ts    = ev.get('ts_hw')
-        dists = ev.get('dists')
 
-        if ts is None or dists is None:
+        ts = event.get('ts_hw')
+        distances = event.get('dists')
+
+        if ts is None or distances is None:
             return None
-        if len(dists) != cfg.uwb.num_anchors:
-            return None    # unexpected anchor count
+        if len(distances) != cfg.uwb.num_anchors:
+            return None
 
-        # Compute dt for time-aware EMA; fall back to nominal rate on first sample
-        if self._prev_ts is not None:
-            dt_s = (ts - self._prev_ts) / 1_000_000.0
-            if dt_s <= 0:
-                dt_s = 1.0 / cfg.uwb.rate_hz
-        else:
-            dt_s = 1.0 / cfg.uwb.rate_hz
-        self._prev_ts = ts
+        dt_s = self._elapsed_seconds(ts)
+        raw_distances = tuple(distances)
 
-        raw_dists    = tuple(dists)
-        clean_dists  = []
-        valid_mask   = []
+        clean_distances = []
+        valid_mask = []
         outlier_flags = []
 
-        for i, d_raw in enumerate(raw_dists):
-            valid, outlier, d_clean = self._process_anchor(i, d_raw, dt_s)
-            clean_dists.append(d_clean)
+        for index, raw_distance in enumerate(raw_distances):
+            valid, outlier, clean_value = self._process_anchor(index, raw_distance, dt_s)
+            clean_distances.append(clean_value)
             valid_mask.append(valid)
             outlier_flags.append(outlier)
 
         return {
-            'sensor':        'UWB',
-            'ts_hw':         ts,
-            'packet_id':     ev.get('packet_id'),
-            'raw_dists':     raw_dists,
-            'clean_dists':   tuple(clean_dists),
-            'valid_mask':    tuple(valid_mask),
+            'sensor': 'UWB',
+            'ts_hw': ts,
+            'packet_id': event.get('packet_id'),
+            'raw_dists': raw_distances,
+            'clean_dists': tuple(clean_distances),
+            'valid_mask': tuple(valid_mask),
             'outlier_flags': tuple(outlier_flags),
         }
 
     def reset(self):
-        """
-        Reset all per-anchor state.
-        """
-        n = cfg.uwb.num_anchors
-        self._history    = [deque(maxlen=cfg.uwb.median_window) for _ in range(n)]
-        self._ema        = [None] * n
-        self._prev_clean = [None] * n
-        self._prev_ts    = None
+        """Clear all per-anchor filter state."""
 
-    # ------------------------------------------------------------------
-    # Per-anchor pipeline
-    # ------------------------------------------------------------------
+        anchor_count = cfg.uwb.num_anchors
+        self._history = [deque(maxlen=cfg.uwb.median_window) for _ in range(anchor_count)]
+        self._ema = [None] * anchor_count
+        self._prev_clean = [None] * anchor_count
+        self._prev_ts = None
 
-    def _process_anchor(self, idx: int, d_raw: float, dt_s: float = None) -> tuple[bool, bool, float]:
+    # -------------------------------------------------------------------------
+    # Per-anchor filtering
+    # -------------------------------------------------------------------------
+
+    def _elapsed_seconds(self, ts: int) -> float:
+        """Seconds since the previous reading, falling back to the nominal rate."""
+
+        nominal_dt_s = 1.0 / cfg.uwb.rate_hz
+
+        if self._prev_ts is None:
+            self._prev_ts = ts
+            return nominal_dt_s
+
+        dt_s = (ts - self._prev_ts) / MICROSECONDS_PER_SECOND
+        self._prev_ts = ts
+        return dt_s if dt_s > 0 else nominal_dt_s
+
+    def _process_anchor(self, index: int, raw_distance, dt_s: float = None):
         """
-        Run the multi-stage pipeline for one anchor.
+        Filter one anchor's range.
 
         Returns (valid, outlier, clean_value):
-            
-            - valid         : anchor reading is considered trustworthy
-            - outlier       : this specific sample was suspicious (flagged but corrected)
-            - clean_value   : best filtered value to use (falls back to prev if bad)
+            valid       the reading is trustworthy enough for trilateration
+            outlier     this sample was suspicious; clean_value is a fallback
+            clean_value best available range, held over from history when rejected
         """
-        
-        # --- 1. Hardware Blind Spot Check (The Fix) ---
-        # If the hand blocks the anchor, it might report 0.0, <= 0.05, or NaN.
-        # We reject this immediately to prevent median buffer corruption.
-        if d_raw is None or math.isnan(d_raw) or d_raw <= 0.05:
-            # Hold the last known good state. If there is no history yet, flag as -1.0
-            clean_val = self._ema[idx] if self._ema[idx] is not None else -1.0
-            return False, True, clean_val
 
-        # --- 2. Offset Application ---
-        raw_with_offset = d_raw + self.offsets[idx]
+        if self._is_blind_spot(raw_distance):
+            # Hold the last good estimate rather than letting a blocked anchor
+            # poison the median buffer.
+            held = self._ema[index]
+            return False, True, held if held is not None else _NO_ESTIMATE_SENTINEL
 
-        # --- 3. Sanity check ---
-        sane = (cfg.pipeline.uwb_min_range_m <= raw_with_offset <= cfg.pipeline.uwb_max_range_m)
+        calibrated = raw_distance + self.offsets[index]
 
-        # --- 4. Jump detection ---
-        jump = False
-        if sane and self._prev_clean[idx] is not None:
-            delta = abs(raw_with_offset - self._prev_clean[idx])
-            if delta > cfg.uwb.max_range_jump_m:
-                jump = True
+        within_room = (
+            cfg.pipeline.uwb_min_range_m <= calibrated <= cfg.pipeline.uwb_max_range_m
+        )
+        jumped = self._detect_jump(index, calibrated, within_room)
 
-        # --- 5. Anti-Lockout Recovery Logic ---
-        if jump:
-            self._jump_count[idx] += 1
-            if self._jump_count[idx] >= self.max_jumps:
-                # We have been locked out for too long. Force a hard reset to reality.
-                jump = False
-                self._jump_count[idx] = 0
-                self._ema[idx] = raw_with_offset  # Instantly snap EMA to current location
-                self._history[idx].clear()
+        if jumped:
+            jumped = self._register_jump(index, calibrated)
         else:
-            self._jump_count[idx] = 0  # Reset counter if normal movement
-        
-        outlier = (not sane) or jump
-        valid   = sane and not jump
-        
-        if outlier:
-            # Use previous clean value if available, else skip seeding
-            if self._ema[idx] is not None:
-                clean_val = self._ema[idx] 
-            elif sane:
-                # First sample ever but jumped — still seed with raw offset (no history)
-                clean_val = raw_with_offset
-                valid = True
-                outlier = False
-            else:
-                # Insane and no history → return raw offset as a placeholder
-                clean_val = raw_with_offset
-            return valid, outlier, clean_val
+            self._jump_count[index] = 0
 
-        # --- 6. Median filter --- 
-        self._history[idx].append(raw_with_offset)
-        median_val = statistics.median(self._history[idx])
+        is_outlier = (not within_room) or jumped
+        if is_outlier:
+            return self._fallback_value(index, calibrated, within_room)
 
-        # --- 7. Stage 3b: ADAPTIVE TIME-AWARE EMA ---
-        # Base alpha derived from actual inter-sample dt so smoothing is consistent
-        # regardless of serial/UWB jitter (α = 1 - exp(-dt/τ)).
-        _dt = dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
-        base_alpha = 1.0 - math.exp(-_dt / cfg.uwb.range_tau_s)
+        clean_value = self._smooth(index, calibrated, dt_s)
+        self._prev_clean[index] = clean_value
+        return True, False, clean_value
 
-        if self._ema[idx] is None:
-            self._ema[idx] = median_val
+    @staticmethod
+    def _is_blind_spot(raw_distance) -> bool:
+        """True for readings the hardware emits when it cannot see the anchor."""
+
+        return (
+            raw_distance is None
+            or math.isnan(raw_distance)
+            or raw_distance <= _BLIND_SPOT_RANGE_M
+        )
+
+    def _detect_jump(self, index: int, calibrated: float, within_room: bool) -> bool:
+        """True when the range moved further than the tag physically could."""
+
+        if not within_room or self._prev_clean[index] is None:
+            return False
+        return abs(calibrated - self._prev_clean[index]) > cfg.uwb.max_range_jump_m
+
+    def _register_jump(self, index: int, calibrated: float) -> bool:
+        """
+        Count a jump rejection, forcing a resync once the gate has held too long.
+
+        Without this escape a genuine fast move would be rejected indefinitely:
+        each new sample is compared against an estimate that never advances, so
+        the gate would keep firing forever. Returns whether the jump still stands.
+        """
+
+        self._jump_count[index] += 1
+        if self._jump_count[index] < self.max_jumps:
+            return True
+
+        self._jump_count[index] = 0
+        self._ema[index] = calibrated
+        self._history[index].clear()
+        return False
+
+    def _fallback_value(self, index: int, calibrated: float, within_room: bool):
+        """
+        Choose what to report for a rejected sample.
+
+        A first-ever sample that trips the jump gate is accepted anyway: with no
+        history there is nothing to have jumped from, and rejecting it would
+        leave the anchor unseeded forever.
+        """
+
+        if self._ema[index] is not None:
+            return False, True, self._ema[index]
+
+        if within_room:
+            return True, False, calibrated
+
+        return False, True, calibrated
+
+    def _smooth(self, index: int, calibrated: float, dt_s: float) -> float:
+        """
+        Median-filter then EMA-smooth an accepted range.
+
+        The EMA constant is derived from the actual inter-sample interval, so
+        smoothing stays consistent despite serial and UWB jitter rather than
+        varying with how fast samples happen to arrive.
+        """
+
+        self._history[index].append(calibrated)
+        median_value = statistics.median(self._history[index])
+
+        interval_s = dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
+        base_alpha = 1.0 - math.exp(-interval_s / cfg.uwb.range_tau_s)
+
+        if self._ema[index] is None:
+            self._ema[index] = median_value
+            return self._ema[index]
+
+        if abs(median_value - self._ema[index]) > _FAST_MOVEMENT_DELTA_M:
+            alpha = min(base_alpha * _FAST_MOVEMENT_ALPHA_GAIN, 1.0)
         else:
-            # Calculate the physical distance between current state and new reading
-            delta = abs(median_val - self._ema[idx])
+            alpha = base_alpha
 
-            # Dynamic adjustment:
-            # If moving fast (> 10cm jump), triple the alpha to catch up instantly.
-            # If resting/slow, use base alpha to aggressively smooth out the noise.
-            if delta > 0.10:
-                dynamic_alpha = min(base_alpha * 3.0, 1.0)
-            else:
-                dynamic_alpha = base_alpha
-                
-            self._ema[idx] = dynamic_alpha * median_val + (1.0 - dynamic_alpha) * self._ema[idx]
-
-        clean_val = self._ema[idx]
-        self._prev_clean[idx] = clean_val
-
-        return True, False, clean_val
+        self._ema[index] = alpha * median_value + (1.0 - alpha) * self._ema[index]
+        return self._ema[index]
 
 
-
-# ==============================================================================
-# HARDWARE DATA LOGGING & REPORTING (UWB Range Preprocessor)
-#   - Collects processed UWB events in the background
-#   - Exports to a structured CSV on exit (Ctrl+C)
-#   - Generates and displays a 2x2 Matplotlib timeline report on exit
-# ==============================================================================
+# =============================================================================
+# MODULE TESTING
+#   Live range dashboard: raw versus filtered distance per anchor, with rejected
+#   spikes marked. Exports a CSV and a 2x2 per-anchor plot on Ctrl+C.
+#
+#   Watch for an anchor whose raw trace is noisy while the others are clean -
+#   that is usually a blocked or badly placed anchor, not a filter problem.
+#
+#   Run:  python -m background.pipelines.preprocess.uwb.range
+# =============================================================================
 if __name__ == '__main__':
-    import time
-    import os
     import csv
+    import os
+    import time
+
     import matplotlib.pyplot as plt
-    
-    # Adjust imports based on your exact file structure
-    from background.pipelines.cleaner.unpacker import SerialStreamer
+
     from background.pipelines.cleaner.normalizer import StreamNormalizer
+    from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.module_output import ModuleRunOutput
 
-    # CONFIGURATION
-    SERIAL_PORT = cfg.serial.port
-    BAUD_RATE = cfg.serial.baud
-    DISPLAY_RATE = 0.2          # Console update rate (seconds)
+    DISPLAY_RATE_S = 0.2
+    CSV_FILENAME = 'uwb_range_report.csv'
+    PLOT_FILENAME = 'uwb_range_report.png'
 
-    # Initialize pipeline modules
-    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm = StreamNormalizer()
-    
-    # ── Inject Offsets from Global Config ──
-    # Defaults to zeros if not yet added to the config file
-    uwb_offsets = cfg.uwb.range_offsets_m
-    prep = UWBRangePreprocessor(offsets=uwb_offsets)
+    streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
+    normalizer = StreamNormalizer()
+    preprocessor = UWBRangePreprocessor(offsets=cfg.uwb.range_offsets_m)
 
     print("=" * 60)
-    print(f"  UWB Data Logger & Reporter: {SERIAL_PORT}")
-    print(f"  Active Calibration Offsets: {uwb_offsets}")
+    print(f"  UWB Data Logger & Reporter: {cfg.serial.port}")
+    print(f"  Active Calibration Offsets: {cfg.uwb.range_offsets_m}")
     print("  Collecting data silently... Press Ctrl+C to stop and generate reports.")
     print("=" * 60)
 
-    # Buffer to store all processed events
     event_log = []
-    last_print_time = 0
+    last_print_time = 0.0
 
     try:
         while True:
-            # 1. Fetch raw packets
             raw_packets = streamer.read_new_packets()
-            
             if raw_packets:
-                # 2. Normalize to flat events
-                events = norm.normalize(raw_packets)
-                
-                # 3. Preprocess UWB events
-                processed_uwb = prep.feed(events)
-                
-                # 4. Store in memory for post-run reporting
-                if processed_uwb:
-                    event_log.extend(processed_uwb)
-                    
-                    # 5. Live Dashboard (Throttled)
-                    current_time = time.time()
-                    if current_time - last_print_time >= DISPLAY_RATE:
-                        latest = processed_uwb[-1]
-                        
+                cleaned = preprocessor.feed(normalizer.normalize(raw_packets))
+                if cleaned:
+                    event_log.extend(cleaned)
+
+                    now = time.time()
+                    if now - last_print_time >= DISPLAY_RATE_S:
+                        latest = cleaned[-1]
                         os.system('cls' if os.name == 'nt' else 'clear')
-                        print(f"========= LIVE UWB PREPROCESSOR ({DISPLAY_RATE}s update) =========")
+                        print(f"========= LIVE UWB PREPROCESSOR ({DISPLAY_RATE_S}s update) =========")
                         print(f"  Pkt ID     : {latest['packet_id']}")
                         print(f"  TS (hw)    : {latest['ts_hw']}")
                         print("-" * 57)
-                        
-                        for i in range(4):
-                            raw = latest['raw_dists'][i]
-                            clean = latest['clean_dists'][i]
-                            
-                            if not latest['valid_mask'][i] or latest['outlier_flags'][i]:
-                                status = "OUTLIER/SPIKE"
-                            else:
-                                status = "VALID"
-                                
-                            print(f"  Anchor {i}: Raw: {raw:6.2f} m  |  Clean: {clean:6.2f} m  | [{status}]")
-                            
+
+                        for anchor in range(cfg.uwb.num_anchors):
+                            rejected = (
+                                not latest['valid_mask'][anchor]
+                                or latest['outlier_flags'][anchor]
+                            )
+                            status = 'OUTLIER/SPIKE' if rejected else 'VALID'
+                            print(f"  Anchor {anchor}: "
+                                  f"Raw: {latest['raw_dists'][anchor]:6.2f} m  |  "
+                                  f"Clean: {latest['clean_dists'][anchor]:6.2f} m  | [{status}]")
+
                         print("=========================================================")
-                        last_print_time = current_time
+                        last_print_time = now
 
             time.sleep(0.005)
 
@@ -324,78 +342,59 @@ if __name__ == '__main__':
 
         if not event_log:
             print("No data collected to report. Exiting.")
-            exit()
+            raise SystemExit(0)
 
         print(f"Captured {len(event_log)} UWB events. Generating reports...")
 
-        # --- 1. CSV EXPORT ---
-        csv_filename = "uwb_range_report.csv"
-        with open(csv_filename, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                'ts_hw', 'packet_id',
-                'raw_0', 'raw_1', 'raw_2', 'raw_3',
-                'clean_0', 'clean_1', 'clean_2', 'clean_3',
-                'outlier_0', 'outlier_1', 'outlier_2', 'outlier_3'
-            ])
-            for ev in event_log:
-                r = ev['raw_dists']
-                c = ev['clean_dists']
-                o = ev['outlier_flags']
-                writer.writerow([
-                    ev['ts_hw'], ev['packet_id'],
-                    r[0], r[1], r[2], r[3],
-                    c[0], c[1], c[2], c[3],
-                    int(o[0]), int(o[1]), int(o[2]), int(o[3])
-                ])
-        print(f"[EXPORT] Data saved to {csv_filename}")
+        output = ModuleRunOutput('preprocess/uwb/range')
+        output.save_csv(
+            CSV_FILENAME,
+            [[row['ts_hw'], row['packet_id'],
+              *row['raw_dists'], *row['clean_dists'],
+              *[int(flag) for flag in row['outlier_flags']]]
+             for row in event_log],
+            header=['ts_hw', 'packet_id',
+                    'raw_0', 'raw_1', 'raw_2', 'raw_3',
+                    'clean_0', 'clean_1', 'clean_2', 'clean_3',
+                    'outlier_0', 'outlier_1', 'outlier_2', 'outlier_3'],
+        )
 
-        # --- 2. PLOT REPORT ---
         print("[PLOT] Rendering visual report...")
-        
         start_ts = event_log[0]['ts_hw']
-        # Convert microsecond timestamps to relative seconds
-        t_sec = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in event_log]
+        seconds = [(row['ts_hw'] - start_ts) / MICROSECONDS_PER_SECOND for row in event_log]
 
-        # Create a 2x2 grid for the 4 anchors
-        fig, axs = plt.subplots(2, 2, figsize=(14, 10), sharex=True)
-        fig.suptitle('UWB Range Preprocessor: Raw vs. Clean (Spike Rejection)', fontsize=16, fontweight='bold')
+        figure, axes = plt.subplots(2, 2, figsize=(14, 10), sharex=True)
+        figure.suptitle('UWB Range Preprocessor: Raw vs. Clean (Spike Rejection)',
+                        fontsize=16, fontweight='bold')
 
-        # Flatten axes array for easy iteration
-        axs_flat = axs.flatten()
+        for anchor, axis in enumerate(axes.flatten()):
+            raw_values = [row['raw_dists'][anchor] for row in event_log]
+            clean_values = [row['clean_dists'][anchor] for row in event_log]
+            outliers = [row['outlier_flags'][anchor] for row in event_log]
 
-        for i in range(4):
-            ax = axs_flat[i]
-            
-            raw_vals = [ev['raw_dists'][i] for ev in event_log]
-            clean_vals = [ev['clean_dists'][i] for ev in event_log]
-            outliers = [ev['outlier_flags'][i] for ev in event_log]
+            axis.plot(seconds, raw_values, label='Raw Distance',
+                      color='red', alpha=0.3, linewidth=1.5)
+            axis.plot(seconds, clean_values, label='Clean Distance (Median+EMA)',
+                      color='blue', linewidth=2)
 
-            # Plot raw with high transparency
-            ax.plot(t_sec, raw_vals, label='Raw Distance', color='red', alpha=0.3, linewidth=1.5)
-            # Plot clean with thick solid line
-            ax.plot(t_sec, clean_vals, label='Clean Distance (Median+EMA)', color='blue', linewidth=2)
-            
-            # Highlight outlier moments with red vertical markers
-            outlier_times = [t_sec[j] for j, is_out in enumerate(outliers) if is_out]
-            outlier_y = [raw_vals[j] for j, is_out in enumerate(outliers) if is_out]
-            if outlier_times:
-                ax.scatter(outlier_times, outlier_y, color='black', marker='x', s=50, label='Rejected Spike')
+            spike_times = [seconds[i] for i, flag in enumerate(outliers) if flag]
+            spike_values = [raw_values[i] for i, flag in enumerate(outliers) if flag]
+            if spike_times:
+                axis.scatter(spike_times, spike_values, color='black',
+                             marker='x', s=50, label='Rejected Spike')
 
-            ax.set_title(f'Anchor A{i}')
-            ax.set_ylabel('Distance (Metres)')
-            ax.grid(True, linestyle='--', alpha=0.6)
-            if i == 1: # Only put legend on one chart to save space
-                ax.legend(loc='upper right')
+            axis.set_title(f'Anchor A{anchor}')
+            axis.set_ylabel('Distance (Metres)')
+            axis.grid(True, linestyle='--', alpha=0.6)
+            if anchor == 1:
+                axis.legend(loc='upper right')
 
-        axs[1, 0].set_xlabel('Time (Seconds)')
-        axs[1, 1].set_xlabel('Time (Seconds)')
+        axes[1, 0].set_xlabel('Time (Seconds)')
+        axes[1, 1].set_xlabel('Time (Seconds)')
 
         plt.tight_layout()
         plt.subplots_adjust(top=0.92)
-        
-        plot_filename = "uwb_range_report.png"
-        plt.savefig(plot_filename, dpi=300)
-        print(f"[PLOT] Report saved as {plot_filename}")
-        
+        plt.savefig(output.path(PLOT_FILENAME), dpi=300)
+        output.record(PLOT_FILENAME)
+        output.finish()
         plt.show()

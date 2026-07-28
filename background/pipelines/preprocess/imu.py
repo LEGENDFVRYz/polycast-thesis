@@ -1,71 +1,77 @@
 """
-Module 4 — IMU Preprocessor
+Module 4 - IMU Preprocessor
 
-Responsibility:
-    - Transforms raw normalized IMU events into clean, fusion-ready IMU motion events
-    - (Note) Optimize for Adafruit BNO085 running SH-2 Firmware
+Turns raw BNO085 readings into fusion-ready motion events on the 2D board plane.
 
-Input  (from tv2_normalizer — IMU events):
-    {
-        'sensor':     'IMU',
-        'packet_id':  int,
-        'sample_idx': int,
-        'ts_hw':      int,
-        'quat':       (qx, qy, qz, qw),     - Rotation Vector
-        'acc':        (ax, ay, az),         - Linear Acceleration (in m/s²)
-        'force':      float
-    }
+The marker's sensors sit at the back of the pen, but the pipeline needs motion
+at the tip, so the main job here is a rigid-body correction that removes the
+rotational contribution of the lever arm between them.
 
-Output (processed IMU event):
-    {
-        'sensor':      'IMU',
-        'ts_hw':       int,
-        'packet_id':   int,
-        'sample_idx':  int,
-        'quat':        (qx, qy, qz, qw),      - normalized unit quaternion
+Processing order matters and is deliberate:
 
-        'acc_sensor':  (ax, ay, az),          - raw sensor linear acc (m/s²)
+    1.  Filter in the body frame BEFORE differentiating. Angular acceleration and
+        jerk are derivatives, so taking them from raw frame-to-frame deltas would
+        amplify sensor noise into the very signals that gate turn detection.
+    2.  Apply the rigid-body tip correction in the body frame, where omega and the
+        lever arm share coordinates.
+    3.  Only then rotate into the world frame and project onto the board plane.
 
-        # Legacy / diagnostic — sensor-point (back of pen), NOT tip-corrected:
-        'acc_world':    (ax, ay, az),         - sensor-point, world frame, Path-A EMA
-        'acc_board':    (bx, bz),             - sensor-point, 2D board projection
-        'acc_board_hp': (bx, bz),             - sensor-point, HPF bias-stripped (Path C)
+Three filter paths run in parallel on the same acceleration, because different
+consumers need different trade-offs:
 
-        # Canonical ESKF inputs — rigid-body tip-corrected:
-        'acc_tip_world':    (ax, ay, az),     - tip, world frame, Path-A EMA
-        'acc_board_tip':    (bx, bz),         - tip, 2D board projection
-        'acc_board_hp_tip': (bx, bz),         - tip, HPF bias-stripped (Path C)
+    Path A  light EMA     retains slow real motion, and its bias with it
+    Path B  heavy EMA     stillness detection only, never exported
+    Path C  high-pass     strips slow bias, keeps fast stroke detail
 
-        # Angular kinematics (exposed for ESKF turn detection):
-        'omega_world': (wx, wy, wz),          - angular velocity, world frame (rad/s)
-        'omega_body':  (wx, wy, wz),          - angular velocity, body frame (rad/s)
-        'alpha_world': (ax, ay, az),          - angular accel, world frame, EMA-filtered (rad/s²)
+The ESKF blends A and C; Path B exists purely so micro-tremor cannot block ZUPT.
 
-        'jerk':        float,                 - body-frame Δacc magnitude / dt (m/s³)
-        'is_static':   bool,                  - ZUPT decision
-        'contact':     bool,                  - pen touching board?
-        'force':       float,                 - raw force value
-    }
+Input:  normalized IMU events from cleaner/normalizer.py
+Output: one motion event per sample, carrying both sensor-point (diagnostic) and
+        tip-corrected (canonical) acceleration, angular kinematics, and the
+        contact/stillness flags the downstream stages gate on.
+
+Usage (Import as stage or run directly to trace normalized events):
+    python -m background.pipelines.preprocess.imu
 """
 
 import math
+
 from background.pipelines.config import cfg
 
+MICROSECONDS_PER_SECOND = 1_000_000
 
-# --- vector / quaternion math ---
-def _qnorm(q):
-    return math.sqrt(sum(v * v for v in q))
+# Body-frame LPF divergence above which the raw sample is flagged as clipped.
+_ACC_CLIP_THRESHOLD_MS2 = 0.5
 
-def _qnormalize(q):
-    n = _qnorm(q)
-    if n < cfg.imu.quat_norm_epsilon:
-        return (0.0, 0.0, 0.0, 1.0)   # identity fallback
-    return tuple(v / n for v in q)
+# Path B smoothing weight. Deliberately heavy: 
+# this signal only decides whether the pen is still
+_ZUPT_EMA_PREVIOUS_WEIGHT = 0.95
 
-def _quat_rotate(q, v):
-    """Rotate vector v by unit quaternion q."""
-    qx, qy, qz, qw = q
-    vx, vy, vz = v
+_AXIS_INDEX = {'x': 0, 'y': 1, 'z': 2}
+
+
+# -----------------------------------------------------------------------------
+# Vector and Quaternion Math
+# -----------------------------------------------------------------------------
+
+def _quat_norm(quaternion):
+    return math.sqrt(sum(component * component for component in quaternion))
+
+
+def _quat_normalize(quaternion):
+    """Scale a quaternion to unit length, falling back to identity if degenerate."""
+
+    norm = _quat_norm(quaternion)
+    if norm < cfg.imu.quat_norm_epsilon:
+        return (0.0, 0.0, 0.0, 1.0)
+    return tuple(component / norm for component in quaternion)
+
+
+def _quat_rotate(quaternion, vector):
+    """Rotate a 3-vector by a unit quaternion [x, y, z, w]."""
+
+    qx, qy, qz, qw = quaternion
+    vx, vy, vz = vector
     tx = 2 * (qy * vz - qz * vy)
     ty = 2 * (qz * vx - qx * vz)
     tz = 2 * (qx * vy - qy * vx)
@@ -75,28 +81,12 @@ def _quat_rotate(q, v):
         vz + qw * tz + qx * ty - qy * tx,
     )
 
-def _vmag(v):
-    return math.sqrt(sum(x * x for x in v))
 
-def _vsub(a, b):
-    return tuple(x - y for x, y in zip(a, b))
+def _quat_multiply(left, right):
+    """Hamilton product left (x) right, both stored as [x, y, z, w]."""
 
-# Body-frame LPF divergence threshold for acc_clipped quality flag (m/s²).
-_ACC_CLIP_THRESHOLD_MS2 = 0.5
-
-def _project_board_axes(v):
-    """Extracts 2D board coordinates based on the config axes map."""
-    axis_map = {'x': 0, 'y': 1, 'z': 2}
-    a0, a1 = cfg.imu.board_axes
-    return (v[axis_map[a0]], v[axis_map[a1]])
-
-
-# --- rigid-body helpers (lever-arm kinematics) ---
-
-def _quat_mul(q1, q2):
-    """Hamilton product q1 ⊗ q2, both [x, y, z, w]."""
-    x1, y1, z1, w1 = q1
-    x2, y2, z2, w2 = q2
+    x1, y1, z1, w1 = left
+    x2, y2, z2, w2 = right
     return (
         w1*x2 + x1*w2 + y1*z2 - z1*y2,
         w1*y2 - x1*z2 + y1*w2 + z1*x2,
@@ -104,512 +94,640 @@ def _quat_mul(q1, q2):
         w1*w2 - x1*x2 - y1*y2 - z1*z2,
     )
 
-def _quat_conj(q):
-    """Conjugate (= inverse for unit quaternion), [x,y,z,w] → [-x,-y,-z,w]."""
-    return (-q[0], -q[1], -q[2], q[3])
 
-def _q_to_R(q):
-    """Quaternion [x,y,z,w] → 3×3 rotation matrix (body→world), as nested tuples."""
-    x, y, z, w = q
+def _quat_conjugate(quaternion):
+    """Conjugate, which equals the inverse for a unit quaternion."""
+
+    return (-quaternion[0], -quaternion[1], -quaternion[2], quaternion[3])
+
+
+def _quat_to_rotation_matrix(quaternion):
+    """Convert a unit quaternion to a 3x3 body-to-world rotation matrix."""
+
+    x, y, z, w = quaternion
     return (
         (1 - 2*(y*y + z*z),     2*(x*y - w*z),     2*(x*z + w*y)),
         (    2*(x*y + w*z), 1 - 2*(x*x + z*z),     2*(y*z - w*x)),
         (    2*(x*z - w*y),     2*(y*z + w*x), 1 - 2*(x*x + y*y)),
     )
 
-def _matvec3(R, v):
-    """Multiply 3×3 matrix R (nested tuples) by 3-vector v (tuple)."""
+
+def _matrix_times_vector(matrix, vector):
     return (
-        R[0][0]*v[0] + R[0][1]*v[1] + R[0][2]*v[2],
-        R[1][0]*v[0] + R[1][1]*v[1] + R[1][2]*v[2],
-        R[2][0]*v[0] + R[2][1]*v[1] + R[2][2]*v[2],
+        matrix[0][0]*vector[0] + matrix[0][1]*vector[1] + matrix[0][2]*vector[2],
+        matrix[1][0]*vector[0] + matrix[1][1]*vector[1] + matrix[1][2]*vector[2],
+        matrix[2][0]*vector[0] + matrix[2][1]*vector[1] + matrix[2][2]*vector[2],
     )
 
-def _vcross(a, b):
-    """3-vector cross product a × b."""
+
+def _vec_magnitude(vector):
+    return math.sqrt(sum(component * component for component in vector))
+
+
+def _vec_subtract(left, right):
+    return tuple(a - b for a, b in zip(left, right))
+
+
+def _vec_add(left, right):
+    return (left[0] + right[0], left[1] + right[1], left[2] + right[2])
+
+
+def _vec_scale(vector, scalar):
+    return (vector[0] * scalar, vector[1] * scalar, vector[2] * scalar)
+
+
+def _vec_cross(left, right):
     return (
-        a[1]*b[2] - a[2]*b[1],
-        a[2]*b[0] - a[0]*b[2],
-        a[0]*b[1] - a[1]*b[0],
+        left[1]*right[2] - left[2]*right[1],
+        left[2]*right[0] - left[0]*right[2],
+        left[0]*right[1] - left[1]*right[0],
     )
 
-def _vadd(a, b):
-    return (a[0]+b[0], a[1]+b[1], a[2]+b[2])
 
-def _vscale(a, s):
-    return (a[0]*s, a[1]*s, a[2]*s)
+def _ema_vector(previous, current, current_weight: float):
+    """Exponential moving average where current_weight applies to the new sample."""
 
-def _ema_vec(prev, cur, alpha_new: float):
-    """Exponential moving average using alpha as current-sample weight."""
-    if prev is None:
-        return cur
-    a = max(0.0, min(1.0, float(alpha_new)))
+    if previous is None:
+        return current
+    weight = max(0.0, min(1.0, float(current_weight)))
     return (
-        a * cur[0] + (1.0 - a) * prev[0],
-        a * cur[1] + (1.0 - a) * prev[1],
-        a * cur[2] + (1.0 - a) * prev[2],
+        weight * current[0] + (1.0 - weight) * previous[0],
+        weight * current[1] + (1.0 - weight) * previous[1],
+        weight * current[2] + (1.0 - weight) * previous[2],
     )
 
-def _deadband_vec(v, threshold: float):
-    """Snap small vector magnitudes to exact zero."""
+
+def _deadband_vector(vector, threshold: float):
+    """Snap a vector to exact zero when its magnitude is below the noise floor."""
+
     if threshold <= 0.0:
-        return v
-    return (0.0, 0.0, 0.0) if _vmag(v) < threshold else v
+        return vector
+    return (0.0, 0.0, 0.0) if _vec_magnitude(vector) < threshold else vector
 
 
-# --- IMU preprocessor ---
+def _project_board_axes(vector_world):
+    """Project a world-frame 3-vector onto the configured 2D board plane."""
+
+    first_axis, second_axis = cfg.imu.board_axes
+    return (vector_world[_AXIS_INDEX[first_axis]], vector_world[_AXIS_INDEX[second_axis]])
+
+
+# -----------------------------------------------------------------------------
+# IMU Preprocessor
+# -----------------------------------------------------------------------------
+
 class IMUPreprocessor:
+    """Converts raw IMU samples into tip-corrected, board-projected motion events."""
+
     def __init__(self):
-        # History for Body-Frame Jerk
-        self._prev_acc_body = None  # legacy/raw fallback only
+        self._prev_ts = None
+
+        # Pre-derivative body-frame filter state.
         self._acc_body_lpf = None
-        self._prev_acc_body_lpf_for_jerk = None
-        # History for World-Frame EMA Smoothing (Path A — ESKF feed)
+        self._omega_body_lpf = None
+        self._prev_omega_body_lpf = None
+        self._ema_alpha_body = None
+        self._prev_quat_rb = None
+
+        # Path A: light EMA on world-frame acceleration, sensor point and tip.
         self._prev_acc_world_clean = None
-        self._prev_acc_tip_clean   = None   # Path A on tip-corrected signal
-        # Path B — heavy EMA state for ZUPT only
+        self._prev_acc_tip_clean = None
+
+        # Path B: heavy EMA feeding stillness detection only.
         self._prev_acc_world_zupt = None
         self._prev_acc_world_zupt_old = None
-        # High-pass filter state (sensor-point Path C)
-        self._acc_world_hp_prev = None   # last HPF output y[n-1]
-        self._acc_world_in_prev = None   # last HPF input  x[n-1]
-        # High-pass filter state (tip-corrected Path C)
+
+        # Path C: high-pass filter state, sensor point and tip.
+        self._acc_world_hp_prev = None
+        self._acc_world_in_prev = None
         self._acc_tip_hp_prev = None
         self._acc_tip_in_prev = None
-        # Time and ZUPT state
-        self._prev_ts = None
+
+        # Jerk and stillness tracking.
+        self._prev_acc_body = None
+        self._prev_acc_body_lpf_for_jerk = None
         self._still_streak = 0
         self._zupt_active = False
 
-        # Rigid-body kinematics state (lever-arm tip correction)
-        self._prev_quat_rb      = None   # previous normalized quat — for fallback ω_body derivation
-        self._omega_body_lpf    = None   # low-pass omega before alpha derivative
-        self._prev_omega_body_lpf = None # previous filtered omega for alpha derivative
-        self._ema_alpha_body    = None   # EMA-smoothed α_body (noisy 2nd derivative)
-        self._prev_omega_world  = None   # legacy diagnostic compatibility
-        self._ema_alpha_world   = None   # legacy diagnostic compatibility
+        # Retained for external diagnostics that read these names.
+        self._prev_omega_world = None
+        self._ema_alpha_world = None
 
-        # Minimum samples required for ZUPT_MIN_DURATION_S
-        dt_nom_s = 1.0 / cfg.imu.sample_rate_hz
-        self._zupt_min_samples = max(1, int(cfg.imu.zupt_min_duration_s / dt_nom_s))
+        nominal_dt_s = 1.0 / cfg.imu.sample_rate_hz
+        self._zupt_min_samples = max(1, int(cfg.imu.zupt_min_duration_s / nominal_dt_s))
+
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
 
     def feed(self, events: list[dict]) -> list[dict]:
-        out = []
-        for ev in events:
-            if ev.get('sensor') != 'IMU':
+        """Process a batch, skipping non-IMU events and unusable samples."""
+
+        processed = []
+        for event in events:
+            if event.get('sensor') != 'IMU':
                 continue
-            processed = self.process_one(ev)
-            if processed:
-                out.append(processed)
-        return out
+            result = self.process_one(event)
+            if result:
+                processed.append(result)
+        return processed
 
-    def process_one(self, ev: dict) -> dict | None:
-        ts  = ev.get('ts_hw')
-        q   = ev.get('quat')
-        acc = ev.get('acc')
+    def process_one(self, event: dict) -> dict | None:
+        """
+        Convert one raw IMU sample into a motion event.
 
-        if ts is None or q is None or acc is None:
+        Returns None when the sample lacks required fields or its timestamp does
+        not advance, since every derivative below divides by dt.
+        """
+
+        ts = event.get('ts_hw')
+        quaternion = event.get('quat')
+        acceleration = event.get('acc')
+
+        if ts is None or quaternion is None or acceleration is None:
             return None
 
-        # --- dt (Microsecond Delta) ---
-        if self._prev_ts is not None:
-            dt_us = ts - self._prev_ts
-            if dt_us <= 0:
-                return None
+        dt_s = self._advance_clock(ts)
+        if dt_s is None:
+            return None
 
-            if dt_us > (cfg.pipeline.imu_max_dt_ms * 1000):
-                self.reset()
+        # Hardware reports linear acceleration in m/s^2, already in the body frame.
+        acc_body_raw = tuple(float(component) for component in acceleration)
 
-            dt_s = dt_us / 1_000_000.0
-        else:
-            dt_s = 1.0 / cfg.imu.sample_rate_hz
+        quat_norm_magnitude = _quat_norm(quaternion)
+        quat_unit = _quat_normalize(quaternion)
+        rotation_body_to_world = _quat_to_rotation_matrix(quat_unit)
+
+        angular = self._compute_angular_kinematics(event, quat_unit, dt_s, rotation_body_to_world)
+        acc_body_filtered, acc_clipped = self._filter_body_acceleration(acc_body_raw)
+
+        acc_tip_body = self._apply_rigid_body_tip_correction(
+            acc_body_filtered, angular['omega_body'], angular['alpha_body']
+        )
+
+        acc_world_raw = _quat_rotate(quat_unit, acc_body_filtered)
+        acc_tip_world_raw = _quat_rotate(quat_unit, acc_tip_body)
+
+        self._store_derivative_state(quat_unit, acc_body_filtered, angular)
+
+        acc_world, acc_tip_world = self._apply_light_smoothing(acc_world_raw, acc_tip_world_raw)
+        acc_world_zupt = self._apply_stillness_smoothing(acc_world_raw)
+
+        high_pass = self._apply_high_pass(acc_world, acc_tip_world, dt_s)
+
+        jerk = self._compute_jerk(acc_body_filtered, dt_s)
+        zupt_jerk = self._compute_zupt_jerk(acc_world_zupt, dt_s)
+
+        omega_magnitude = _vec_magnitude(angular['omega_world'])
+        self._update_stillness(acc_world_zupt, zupt_jerk, omega_magnitude)
+
+        self._prev_acc_body = acc_body_raw
+
+        force = event.get('force', 0.0)
+
+        return {
+            'sensor': 'IMU',
+            'ts_hw': ts,
+            'packet_id': event.get('packet_id'),
+            'sample_idx': event.get('sample_idx'),
+            'quat': quat_unit,
+            'acc_sensor': acc_body_raw,
+            'acc_body_lpf': acc_body_filtered,
+
+            # Sensor-point outputs, kept for diagnostics and legacy comparisons.
+            'acc_world': acc_world,
+            'acc_board': _project_board_axes(acc_world),
+            'acc_board_hp': high_pass['acc_board_hp'],
+
+            # Tip-corrected outputs, the canonical ESKF inputs.
+            'acc_tip_world': acc_tip_world,
+            'acc_board_tip': _project_board_axes(acc_tip_world),
+            'acc_board_hp_tip': high_pass['acc_board_hp_tip'],
+
+            'omega_world': angular['omega_world'],
+            'omega_body': angular['omega_body'],
+            'omega_body_raw': angular['omega_body_raw'],
+            'alpha_world': angular['alpha_world'],
+            'alpha_body': angular['alpha_body'],
+
+            'jerk': round(jerk, 6),
+            'omega_mag_world': round(omega_magnitude, 6),
+            'is_static': self._zupt_active,
+            'contact': force >= cfg.imu.force_contact_threshold,
+            'force': force,
+
+            'dt_s': dt_s,
+            'hpf_alpha': high_pass['alpha'],
+            'lever_arm_m': cfg.marker.r_imu_body_m,
+            'gyro_source': angular['gyro_source'],
+            'imu_quality': {
+                'quat_norm_mag': quat_norm_magnitude,
+                'is_static': self._zupt_active,
+                'gyro_clipped': angular['gyro_clipped'],
+                'acc_clipped': acc_clipped,
+                'hpf_active': cfg.imu.hpf_enabled,
+            },
+        }
+
+    def reset(self):
+        """Clear all filter and integration history."""
+
+        self.__init__()
+
+    # -------------------------------------------------------------------------
+    # Timing
+    # -------------------------------------------------------------------------
+
+    def _advance_clock(self, ts: int) -> float | None:
+        """
+        Seconds since the previous sample, or None if the timestamp did not advance.
+
+        A long hardware gap means the filter histories describe motion that is no
+        longer continuous with the current sample, so they are dropped rather
+        than allowed to contaminate the first sample after the gap.
+        """
+
+        if self._prev_ts is None:
+            self._prev_ts = ts
+            return 1.0 / cfg.imu.sample_rate_hz
+
+        dt_us = ts - self._prev_ts
+        if dt_us <= 0:
+            return None
+
+        if dt_us > (cfg.pipeline.imu_max_dt_ms * 1000):
+            self.reset()
 
         self._prev_ts = ts
+        return dt_us / MICROSECONDS_PER_SECOND
 
-        # Hardware outputs m/s² natively, in the IMU/body frame.
-        acc_ms2 = tuple(float(x) for x in acc)
+    # -------------------------------------------------------------------------
+    # Angular kinematics
+    # -------------------------------------------------------------------------
 
-        # --- Normalize quaternion; all derivative-sensitive math below is
-        # --- filtered in the body frame BEFORE rotating to world coordinates.
-        quat_norm_mag = _qnorm(q)
-        q_norm        = _qnormalize(q)
-        R_body_to_world = _q_to_R(q_norm)
+    def _read_body_angular_velocity(self, event: dict, quat_unit, dt_s: float):
+        """
+        Obtain body-frame angular velocity, preferring the hardware gyro.
 
-        # ==========================================================
-        # PRE-DERIVATIVE LOW-PASS + DEADBAND
-        # ==========================================================
-        # Never compute alpha or jerk from raw frame-to-frame noise.  First
-        # low-pass the body-frame angular velocity and acceleration.  If a
-        # hardware gyro is present, use it; otherwise fall back to quaternion
-        # delta-derived omega so older recordings still work.
-        gyro_ev = ev.get('gyro') or ev.get('gyr') or ev.get('omega_body_raw')
-        if gyro_ev is not None:
+        Falls back to differentiating consecutive quaternions so recordings made
+        before the gyro field existed still process.
+        """
+
+        gyro = event.get('gyro') or event.get('gyr') or event.get('omega_body_raw')
+
+        if gyro is not None:
             try:
-                omega_body_raw = tuple(float(x) for x in gyro_ev)
-                gyro_source = 'hardware'
+                return tuple(float(component) for component in gyro), 'hardware'
             except (TypeError, ValueError):
-                omega_body_raw = (0.0, 0.0, 0.0)
-                gyro_source = 'hardware'
-        elif self._prev_quat_rb is not None and dt_s > 1e-6:
-            q_delta = _quat_mul(q_norm, _quat_conj(self._prev_quat_rb))
-            if q_delta[3] < 0:              # choose shorter arc
-                q_delta = (-q_delta[0], -q_delta[1], -q_delta[2], -q_delta[3])
-            omega_body_raw = _vscale(q_delta[:3], 2.0 / dt_s)
-            gyro_source = 'quat_delta'
-        else:
-            omega_body_raw = (0.0, 0.0, 0.0)
-            gyro_source = 'quat_delta'
+                return (0.0, 0.0, 0.0), 'hardware'
+
+        if self._prev_quat_rb is not None and dt_s > 1e-6:
+            delta = _quat_multiply(quat_unit, _quat_conjugate(self._prev_quat_rb))
+            # Negating gives the shorter arc; both represent the same rotation.
+            if delta[3] < 0:
+                delta = (-delta[0], -delta[1], -delta[2], -delta[3])
+            return _vec_scale(delta[:3], 2.0 / dt_s), 'quat_delta'
+
+        return (0.0, 0.0, 0.0), 'quat_delta'
+
+    def _compute_angular_kinematics(self, event, quat_unit, dt_s, rotation_body_to_world) -> dict:
+        """
+        Derive filtered angular velocity and acceleration in body and world frames.
+
+        Omega is low-passed before alpha is taken from it, because differentiating
+        raw gyro noise produces an alpha large enough to corrupt the centripetal
+        term in the tip correction.
+        """
+
+        omega_body_raw, gyro_source = self._read_body_angular_velocity(event, quat_unit, dt_s)
 
         if cfg.imu.pre_derivative_lpf_enabled:
-            acc_body_clean = _ema_vec(self._acc_body_lpf, acc_ms2, cfg.imu.acc_lpf_alpha)
-            omega_body = _ema_vec(self._omega_body_lpf, omega_body_raw, cfg.imu.gyro_lpf_alpha)
+            omega_body = _ema_vector(self._omega_body_lpf, omega_body_raw, cfg.imu.gyro_lpf_alpha)
         else:
-            acc_body_clean = acc_ms2
             omega_body = omega_body_raw
 
-        acc_clipped = _vmag(_vsub(acc_body_clean, acc_ms2)) > _ACC_CLIP_THRESHOLD_MS2
+        # Silence near-zero gyro noise before it reaches the centripetal term,
+        # turn detection, or ZUPT, so a held-still marker stays truly silent.
+        omega_before_deadband = omega_body
+        omega_body = _deadband_vector(omega_body, cfg.imu.omega_deadband_rads)
+        gyro_clipped = (
+            omega_body == (0.0, 0.0, 0.0) and omega_before_deadband != (0.0, 0.0, 0.0)
+        )
 
-        # Dynamic deadband: silence near-zero gyro noise before it enters
-        # centripetal correction, turn detection, ZUPT, or alpha derivation.
-        omega_body_pre_deadband = omega_body
-        omega_body = _deadband_vec(omega_body, cfg.imu.omega_deadband_rads)
-        gyro_clipped = (omega_body == (0.0, 0.0, 0.0)) and (omega_body_pre_deadband != (0.0, 0.0, 0.0))
-        omega_world = _matvec3(R_body_to_world, omega_body)
-
-        # Alpha is the derivative of the already-filtered omega.  Then apply the
-        # existing alpha EMA as a second guard against derivative amplification.
         if self._prev_omega_body_lpf is not None and dt_s > 1e-6:
-            alpha_body_raw = _vscale(_vsub(omega_body, self._prev_omega_body_lpf), 1.0 / dt_s)
+            alpha_body_raw = _vec_scale(
+                _vec_subtract(omega_body, self._prev_omega_body_lpf), 1.0 / dt_s
+            )
         else:
             alpha_body_raw = (0.0, 0.0, 0.0)
 
-        a_ema = cfg.imu.alpha_ema_alpha
+        # Second guard against derivative amplification. Uses previous-sample
+        # weight, unlike the pre-derivative filters above.
+        previous_weight = cfg.imu.alpha_ema_alpha
         if self._ema_alpha_body is None:
             alpha_body = alpha_body_raw
         else:
-            alpha_body = (
-                a_ema * self._ema_alpha_body[0] + (1.0 - a_ema) * alpha_body_raw[0],
-                a_ema * self._ema_alpha_body[1] + (1.0 - a_ema) * alpha_body_raw[1],
-                a_ema * self._ema_alpha_body[2] + (1.0 - a_ema) * alpha_body_raw[2],
+            alpha_body = tuple(
+                previous_weight * self._ema_alpha_body[i]
+                + (1.0 - previous_weight) * alpha_body_raw[i]
+                for i in range(3)
             )
-        alpha_body = _deadband_vec(alpha_body, cfg.imu.alpha_deadband_rads2)
-        alpha_world = _matvec3(R_body_to_world, alpha_body)
+        alpha_body = _deadband_vector(alpha_body, cfg.imu.alpha_deadband_rads2)
 
-        # ==========================================================
-        # RIGID-BODY TIP CORRECTION (BODY FRAME FIRST)
-        # Converts IMU/sensor acceleration → marker-tip acceleration.
-        #
-        #   a_tip = a_sensor − α×r − ω×(ω×r)
-        #
-        # r is the tip→IMU vector in the same body frame as omega/alpha.
-        # The body-frame correction is rotated into world coordinates only
-        # after tangential and centripetal terms are removed.
-        # ==========================================================
-        r_imu = cfg.marker.r_imu_body_m
-        s = float(cfg.imu.rigid_body_sign)
-        # Preserve the previously validated sign convention.  With the current
-        # config rigid_body_sign=-1, this resolves to cfg.marker.r_imu_body_m.
-        r_body_tip_to_sensor = (-r_imu[0] * s, -r_imu[1] * s, -r_imu[2] * s)
+        return {
+            'omega_body_raw': omega_body_raw,
+            'omega_body': omega_body,
+            'omega_world': _matrix_times_vector(rotation_body_to_world, omega_body),
+            'alpha_body': alpha_body,
+            'alpha_world': _matrix_times_vector(rotation_body_to_world, alpha_body),
+            'gyro_source': gyro_source,
+            'gyro_clipped': gyro_clipped,
+        }
 
-        tangential_body  = _vcross(alpha_body, r_body_tip_to_sensor)
-        centripetal_body = _vcross(omega_body, _vcross(omega_body, r_body_tip_to_sensor))
+    # -------------------------------------------------------------------------
+    # Acceleration paths
+    # -------------------------------------------------------------------------
 
-        if cfg.imu.rigid_body_enabled:
-            acc_tip_body_raw = (
-                acc_body_clean[0] - tangential_body[0] - centripetal_body[0],
-                acc_body_clean[1] - tangential_body[1] - centripetal_body[1],
-                acc_body_clean[2] - tangential_body[2] - centripetal_body[2],
+    def _filter_body_acceleration(self, acc_body_raw):
+        """Low-pass body acceleration and flag samples the filter had to pull hard."""
+
+        if cfg.imu.pre_derivative_lpf_enabled:
+            acc_body_filtered = _ema_vector(
+                self._acc_body_lpf, acc_body_raw, cfg.imu.acc_lpf_alpha
             )
         else:
-            acc_tip_body_raw = acc_body_clean
+            acc_body_filtered = acc_body_raw
 
-        # Rotate cleaned sensor and tip acceleration into world frame.
-        acc_world_raw = _quat_rotate(q_norm, acc_body_clean)
-        acc_tip_world_raw = _quat_rotate(q_norm, acc_tip_body_raw)
+        divergence = _vec_magnitude(_vec_subtract(acc_body_filtered, acc_body_raw))
+        return acc_body_filtered, divergence > _ACC_CLIP_THRESHOLD_MS2
 
-        # Update derivative state for next sample.
-        self._prev_quat_rb = q_norm
-        self._acc_body_lpf = acc_body_clean
-        self._omega_body_lpf = omega_body
-        self._prev_omega_body_lpf = omega_body
-        self._ema_alpha_body = alpha_body
-        # Keep legacy names populated for any external diagnostics.
-        self._prev_omega_world = omega_world
-        self._ema_alpha_world = alpha_world
+    @staticmethod
+    def _apply_rigid_body_tip_correction(acc_body, omega_body, alpha_body):
+        """
+        Convert sensor-point acceleration to marker-tip acceleration.
 
-        # ==========================================================
-        # DUAL-PATH EMA ARCHITECTURE
-        # ==========================================================
+            a_tip = a_sensor - alpha x r - omega x (omega x r)
 
-        eskf_alpha = cfg.imu.smooth_alpha_eskf
+        Both correction terms are computed in the body frame, where omega and the
+        lever arm share coordinates; rotating to world happens afterwards.
+        """
 
-        # PATH A (legacy / diagnostic) — light EMA on sensor-point world acc.
-        if self._prev_acc_world_clean is None:
-            acc_world = acc_world_raw
-        else:
-            acc_world = (
-                eskf_alpha * self._prev_acc_world_clean[0] + (1 - eskf_alpha) * acc_world_raw[0],
-                eskf_alpha * self._prev_acc_world_clean[1] + (1 - eskf_alpha) * acc_world_raw[1],
-                eskf_alpha * self._prev_acc_world_clean[2] + (1 - eskf_alpha) * acc_world_raw[2],
-            )
+        if not cfg.imu.rigid_body_enabled:
+            return acc_body
+
+        lever_arm = cfg.marker.r_imu_body_m
+        sign = float(cfg.imu.rigid_body_sign)
+
+        # Preserves the validated sign convention: with rigid_body_sign = -1 this
+        # resolves back to +r_imu_body_m.
+        tip_to_sensor = (
+            -lever_arm[0] * sign, -lever_arm[1] * sign, -lever_arm[2] * sign
+        )
+
+        tangential = _vec_cross(alpha_body, tip_to_sensor)
+        centripetal = _vec_cross(omega_body, _vec_cross(omega_body, tip_to_sensor))
+
+        return (
+            acc_body[0] - tangential[0] - centripetal[0],
+            acc_body[1] - tangential[1] - centripetal[1],
+            acc_body[2] - tangential[2] - centripetal[2],
+        )
+
+    def _apply_light_smoothing(self, acc_world_raw, acc_tip_world_raw):
+        """Path A: light EMA on both world-frame acceleration signals."""
+
+        # Config value is the previous-sample weight, so it is passed inverted.
+        current_weight = 1.0 - cfg.imu.smooth_alpha_eskf
+
+        acc_world = _ema_vector(self._prev_acc_world_clean, acc_world_raw, current_weight)
         self._prev_acc_world_clean = acc_world
 
-        # PATH A (tip-corrected) — light EMA on tip-corrected world acc.
-        if self._prev_acc_tip_clean is None:
-            acc_tip_world = acc_tip_world_raw
-        else:
-            acc_tip_world = (
-                eskf_alpha * self._prev_acc_tip_clean[0] + (1 - eskf_alpha) * acc_tip_world_raw[0],
-                eskf_alpha * self._prev_acc_tip_clean[1] + (1 - eskf_alpha) * acc_tip_world_raw[1],
-                eskf_alpha * self._prev_acc_tip_clean[2] + (1 - eskf_alpha) * acc_tip_world_raw[2],
-            )
+        acc_tip_world = _ema_vector(self._prev_acc_tip_clean, acc_tip_world_raw, current_weight)
         self._prev_acc_tip_clean = acc_tip_world
 
-        # PATH B — Heavy EMA for ZUPT only: kills micro-tremor, never exported.
-        zupt_alpha = 0.95
+        return acc_world, acc_tip_world
+
+    def _apply_stillness_smoothing(self, acc_world_raw):
+        """Path B: heavy EMA used only to decide whether the pen is still."""
+
         if self._prev_acc_world_zupt is None:
-            self._prev_acc_world_zupt     = acc_world_raw
+            self._prev_acc_world_zupt = acc_world_raw
             self._prev_acc_world_zupt_old = acc_world_raw
 
-        acc_world_zupt = (
-            zupt_alpha * self._prev_acc_world_zupt[0] + (1 - zupt_alpha) * acc_world_raw[0],
-            zupt_alpha * self._prev_acc_world_zupt[1] + (1 - zupt_alpha) * acc_world_raw[1],
-            zupt_alpha * self._prev_acc_world_zupt[2] + (1 - zupt_alpha) * acc_world_raw[2],
+        acc_world_zupt = _ema_vector(
+            self._prev_acc_world_zupt, acc_world_raw, 1.0 - _ZUPT_EMA_PREVIOUS_WEIGHT
         )
         self._prev_acc_world_zupt = acc_world_zupt
+        return acc_world_zupt
 
-        # --- Board Projection ---
-        acc_board     = _project_board_axes(acc_world)        # legacy diagnostic
-        acc_board_tip = _project_board_axes(acc_tip_world)    # canonical ESKF input
+    def _apply_high_pass(self, acc_world, acc_tip_world, dt_s) -> dict:
+        """
+        Path C: first-order high-pass that strips slow bias, keeping stroke detail.
 
-        # PATH C — 1st-order High-Pass Filter on acc_tip_world (bias rejection).
-        # Runs on the tip-corrected signal so both rotational whip AND bias are removed.
-        # Formula: y[n] = α·(y[n-1] + x[n] − x[n-1]),  α = RC/(RC+dt)
-        if cfg.imu.hpf_enabled:
-            RC        = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
-            hpf_alpha = RC / (RC + dt_s)
-            alpha_h   = hpf_alpha
-            if self._acc_world_in_prev is None:
-                acc_world_hp     = (0.0, 0.0, 0.0)
-                acc_tip_world_hp = (0.0, 0.0, 0.0)
-                self._acc_world_hp_prev     = acc_world_hp
-                self._acc_tip_hp_prev       = acc_tip_world_hp
-            else:
-                acc_world_hp = (
-                    alpha_h * (self._acc_world_hp_prev[0] + acc_world[0] - self._acc_world_in_prev[0]),
-                    alpha_h * (self._acc_world_hp_prev[1] + acc_world[1] - self._acc_world_in_prev[1]),
-                    alpha_h * (self._acc_world_hp_prev[2] + acc_world[2] - self._acc_world_in_prev[2]),
-                )
-                acc_tip_world_hp = (
-                    alpha_h * (self._acc_tip_hp_prev[0] + acc_tip_world[0] - self._acc_tip_in_prev[0]),
-                    alpha_h * (self._acc_tip_hp_prev[1] + acc_tip_world[1] - self._acc_tip_in_prev[1]),
-                    alpha_h * (self._acc_tip_hp_prev[2] + acc_tip_world[2] - self._acc_tip_in_prev[2]),
-                )
-                self._acc_world_hp_prev = acc_world_hp
-                self._acc_tip_hp_prev   = acc_tip_world_hp
-            self._acc_world_in_prev = acc_world
-            self._acc_tip_in_prev   = acc_tip_world
-            acc_board_hp     = _project_board_axes(acc_world_hp)
-            acc_board_hp_tip = _project_board_axes(acc_tip_world_hp)
+            y[n] = alpha * (y[n-1] + x[n] - x[n-1]),  alpha = RC / (RC + dt)
+
+        Runs on the tip-corrected signal so both rotational whip and sensor bias
+        are removed in one pass.
+        """
+
+        if not cfg.imu.hpf_enabled:
+            return {
+                'alpha': 0.0,
+                'acc_board_hp': _project_board_axes(acc_world),
+                'acc_board_hp_tip': _project_board_axes(acc_tip_world),
+            }
+
+        rc = 1.0 / (2.0 * math.pi * cfg.imu.hpf_cutoff_hz)
+        alpha = rc / (rc + dt_s)
+
+        if self._acc_world_in_prev is None:
+            acc_world_hp = (0.0, 0.0, 0.0)
+            acc_tip_world_hp = (0.0, 0.0, 0.0)
         else:
-            hpf_alpha        = 0.0
-            acc_board_hp     = acc_board
-            acc_board_hp_tip = acc_board_tip
+            acc_world_hp = tuple(
+                alpha * (self._acc_world_hp_prev[i] + acc_world[i] - self._acc_world_in_prev[i])
+                for i in range(3)
+            )
+            acc_tip_world_hp = tuple(
+                alpha * (self._acc_tip_hp_prev[i] + acc_tip_world[i] - self._acc_tip_in_prev[i])
+                for i in range(3)
+            )
 
-        # --- Body-Frame Jerk (pre-derivative low-pass) ---
-        # Jerk is also a derivative, so use the filtered body acceleration.
-        # This prevents micro-tremor/electrical noise from arming turn logic.
-        if self._prev_acc_body_lpf_for_jerk is not None and dt_s > 0:
-            delta_body = _vsub(acc_body_clean, self._prev_acc_body_lpf_for_jerk)
-            jerk = _vmag(delta_body) / dt_s
-        else:
+        self._acc_world_hp_prev = acc_world_hp
+        self._acc_tip_hp_prev = acc_tip_world_hp
+        self._acc_world_in_prev = acc_world
+        self._acc_tip_in_prev = acc_tip_world
+
+        return {
+            'alpha': alpha,
+            'acc_board_hp': _project_board_axes(acc_world_hp),
+            'acc_board_hp_tip': _project_board_axes(acc_tip_world_hp),
+        }
+
+    # -------------------------------------------------------------------------
+    # Jerk and stillness
+    # -------------------------------------------------------------------------
+
+    def _compute_jerk(self, acc_body_filtered, dt_s) -> float:
+        """
+        Body-frame jerk magnitude, taken from the low-passed acceleration.
+
+        Jerk arms turn detection, so deriving it from raw deltas would let
+        micro-tremor and electrical noise trigger corner handling constantly.
+        """
+
+        if self._prev_acc_body_lpf_for_jerk is None or dt_s <= 0:
             jerk = 0.0
-        self._prev_acc_body_lpf_for_jerk = acc_body_clean
-        self._prev_acc_body = acc_ms2
-
-        # --- Smoothed ZUPT Jerk (Path B — prevents tremor spikes blocking ZUPT) ---
-        if dt_s > 0:
-            delta_zupt = _vsub(acc_world_zupt, self._prev_acc_world_zupt_old)
-            zupt_jerk  = _vmag(delta_zupt) / dt_s
         else:
-            zupt_jerk = 0.0
-        self._prev_acc_world_zupt_old = acc_world_zupt
+            delta = _vec_subtract(acc_body_filtered, self._prev_acc_body_lpf_for_jerk)
+            jerk = _vec_magnitude(delta) / dt_s
 
-        # --- ZUPT (motion detector — uses Path B only) ---
-        # Rule 1: true stillness requires |a| ≈ 0, jerk ≈ 0, AND |ω| ≈ 0.
-        # omega_world already computed above; its board-plane magnitude is sufficient.
-        lin_mag_zupt = _vmag(acc_world_zupt)
-        omega_mag    = _vmag(omega_world) if omega_world is not None else 0.0
+        self._prev_acc_body_lpf_for_jerk = acc_body_filtered
+        return jerk
+
+    def _compute_zupt_jerk(self, acc_world_zupt, dt_s) -> float:
+        """Jerk on the heavily-smoothed Path B signal, so tremor cannot block ZUPT."""
+
+        if dt_s <= 0:
+            zupt_jerk = 0.0
+        else:
+            delta = _vec_subtract(acc_world_zupt, self._prev_acc_world_zupt_old)
+            zupt_jerk = _vec_magnitude(delta) / dt_s
+
+        self._prev_acc_world_zupt_old = acc_world_zupt
+        return zupt_jerk
+
+    def _update_stillness(self, acc_world_zupt, zupt_jerk, omega_magnitude):
+        """
+        Update the ZUPT flag from sustained low acceleration, jerk, and rotation.
+
+        All three must agree: a pen being rotated in place still reads low linear
+        acceleration, and calling that "still" would zero a real velocity.
+        A minimum duration prevents a single quiet sample from firing ZUPT.
+        """
+
         still_now = (
-            lin_mag_zupt < cfg.imu.zupt_acc_threshold and
-            zupt_jerk    < cfg.imu.zupt_jerk_threshold and
-            omega_mag    < cfg.imu.zupt_omega_threshold
+            _vec_magnitude(acc_world_zupt) < cfg.imu.zupt_acc_threshold
+            and zupt_jerk < cfg.imu.zupt_jerk_threshold
+            and omega_magnitude < cfg.imu.zupt_omega_threshold
         )
 
         if still_now:
             self._still_streak += 1
         else:
             self._still_streak = 0
-            self._zupt_active  = False
+            self._zupt_active = False
 
         if self._still_streak >= self._zupt_min_samples:
             self._zupt_active = True
 
-        # --- Force Contact ---
-        force   = ev.get('force', 0.0)
-        contact = force >= cfg.imu.force_contact_threshold
+    def _store_derivative_state(self, quat_unit, acc_body_filtered, angular):
+        """Carry the state the next sample's derivatives depend on."""
 
-        return {
-            'sensor':      'IMU',
-            'ts_hw':       ts,
-            'packet_id':   ev.get('packet_id'),
-            'sample_idx':  ev.get('sample_idx'),
-            'quat':        q_norm,
-            'acc_sensor':  acc_ms2,
-            'acc_body_lpf': acc_body_clean,
-            # --- legacy / diagnostic (sensor-point, not tip-corrected) ---
-            'acc_world':    acc_world,
-            'acc_board':    acc_board,
-            'acc_board_hp': acc_board_hp,
-            # --- tip-corrected outputs (canonical ESKF inputs) ---
-            'acc_tip_world':    acc_tip_world,
-            'acc_board_tip':    acc_board_tip,
-            'acc_board_hp_tip': acc_board_hp_tip,
-            # --- angular kinematics (consumed by ESKF turn detection) ---
-            'omega_world': omega_world,
-            'omega_body':  omega_body,
-            'omega_body_raw': omega_body_raw,
-            'alpha_world': alpha_world,
-            'alpha_body':  alpha_body,
-            # --- contact / motion ---
-            'jerk':           round(jerk, 6),
-            'omega_mag_world': round(omega_mag, 6),
-            'is_static':      self._zupt_active,
-            'contact':        contact,
-            'force':          force,
-            # --- debug / replay quality fields ---
-            'dt_s':        dt_s,
-            'hpf_alpha':   hpf_alpha,
-            'lever_arm_m': r_imu,
-            'gyro_source': gyro_source,
-            'imu_quality': {
-                'quat_norm_mag': quat_norm_mag,
-                'is_static':     self._zupt_active,
-                'gyro_clipped':  gyro_clipped,
-                'acc_clipped':   acc_clipped,
-                'hpf_active':    cfg.imu.hpf_enabled,
-            },
-        }
+        self._prev_quat_rb = quat_unit
+        self._acc_body_lpf = acc_body_filtered
+        self._omega_body_lpf = angular['omega_body']
+        self._prev_omega_body_lpf = angular['omega_body']
+        self._ema_alpha_body = angular['alpha_body']
 
-    def reset(self):
-        """Clear integration history on startup or buffer limit"""
-        self._prev_acc_body = None
-        self._acc_body_lpf = None
-        self._prev_acc_body_lpf_for_jerk = None
-        self._prev_acc_world_clean = None
-        self._prev_acc_world_zupt = None
-        self._prev_acc_world_zupt_old = None
-        self._acc_world_hp_prev = None
-        self._acc_world_in_prev = None
-        self._prev_ts = None
-        self._still_streak = 0
-        self._zupt_active = False
-        self._prev_quat_rb     = None
-        self._omega_body_lpf = None
-        self._prev_omega_body_lpf = None
-        self._ema_alpha_body = None
-        self._prev_omega_world = None
-        self._ema_alpha_world  = None
-        self._prev_acc_tip_clean = None
-        self._acc_tip_hp_prev    = None
-        self._acc_tip_in_prev    = None
+        # Legacy names, retained for external diagnostic consumers.
+        self._prev_omega_world = angular['omega_world']
+        self._ema_alpha_world = angular['alpha_world']
 
 
-
-# ==============================================================================
-# HARDWARE DATA LOGGING & LIVE REPORTING
-# ==============================================================================
+# =============================================================================
+# MODULE TESTING
+#   Live IMU dashboard: world acceleration, body jerk, force, and a 2D stroke
+#   built by naive double integration.
+#
+#   The 2D plot is intentionally unfused - it shows what the IMU alone produces,
+#   which is how you see raw drift before UWB corrects it. Exports a CSV and a
+#   full-session plot on Ctrl+C.
+#
+#   Run:  python -m background.pipelines.preprocess.imu
+# =============================================================================
 if __name__ == '__main__':
-    import time
     import csv
-    import math
-    import matplotlib.pyplot as plt
+    import time
+
     import matplotlib.gridspec as gridspec
-    from background.pipelines.cleaner.unpacker import SerialStreamer
+    import matplotlib.pyplot as plt
+
     from background.pipelines.cleaner.normalizer import StreamNormalizer
+    from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.module_output import ModuleRunOutput
 
-    # CONFIGURATION
-    SERIAL_PORT = cfg.serial.port
-    BAUD_RATE = cfg.serial.baud
-    REPORT_NAME = "imu_stationary"
-
-    # LIVE PLOT CONFIGURATION
-    WINDOW_SIZE = 500  # Slightly larger window to see more context
+    REPORT_NAME = 'imu_stationary'
+    WINDOW_SIZE = 500
     REFRESH_RATE_S = 0.1
 
-    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm = StreamNormalizer()
-    prep = IMUPreprocessor()
+    # Guards the naive integrator against a hardware timestamp gap.
+    MAX_INTEGRATION_DT_S = 0.1
+
+    streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
+    normalizer = StreamNormalizer()
+    preprocessor = IMUPreprocessor()
 
     print("=" * 60)
-    print(f"  Live IMU Dashboard: {SERIAL_PORT}")
+    print(f"  Live IMU Dashboard: {cfg.serial.port}")
     print("  Collecting data and plotting live... Press Ctrl+C to save and exit.")
     print("=" * 60)
 
     event_log = []
-
-    # --- KINEMATICS STATE (For Stroke Tracking) ---
-    vel_board = [0.0, 0.0]
-    pos_board = [0.0, 0.0]
+    velocity_board = [0.0, 0.0]
+    position_board = [0.0, 0.0]
     last_integration_ts = None
 
-    # --- LIVE PLOT SETUP ---
     plt.ion()
-    fig = plt.figure(figsize=(14, 8))
-    fig.canvas.manager.set_window_title("Live IMU Kinematics & Drawing")
-    fig.suptitle('Live IMU Kinematics & 2D Stroke Reconstruction', fontsize=14, fontweight='bold')
+    figure = plt.figure(figsize=(14, 8))
+    figure.canvas.manager.set_window_title('Live IMU Kinematics & Drawing')
+    figure.suptitle('Live IMU Kinematics & 2D Stroke Reconstruction',
+                    fontsize=14, fontweight='bold')
 
-    # Create a Grid: Left column for Time Series (3 rows), Right column for 2D Drawing (1 row spanning all)
-    gs = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
-    
-    ax_acc = fig.add_subplot(gs[0, 0])
-    ax_jerk = fig.add_subplot(gs[1, 0])
-    ax_force = fig.add_subplot(gs[2, 0])
-    ax_stroke = fig.add_subplot(gs[:, 1])
+    grid = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
+    axis_acc = figure.add_subplot(grid[0, 0])
+    axis_jerk = figure.add_subplot(grid[1, 0])
+    axis_force = figure.add_subplot(grid[2, 0])
+    axis_stroke = figure.add_subplot(grid[:, 1])
 
-    # Time Series Lines
-    line_wx, = ax_acc.plot([], [], label='World X', alpha=0.8)
-    line_wy, = ax_acc.plot([], [], label='World Y', alpha=0.8)
-    line_wz, = ax_acc.plot([], [], label='World Z', alpha=0.8)
-    ax_acc.set_title('World Acceleration')
-    ax_acc.set_ylabel('Accel (m/s²)')
-    ax_acc.legend(loc='upper right')
-    ax_acc.grid(True, linestyle='--', alpha=0.6)
+    line_acc_x, = axis_acc.plot([], [], label='World X', alpha=0.8)
+    line_acc_y, = axis_acc.plot([], [], label='World Y', alpha=0.8)
+    line_acc_z, = axis_acc.plot([], [], label='World Z', alpha=0.8)
+    axis_acc.set_title('World Acceleration')
+    axis_acc.set_ylabel('Accel (m/s^2)')
+    axis_acc.legend(loc='upper right')
+    axis_acc.grid(True, linestyle='--', alpha=0.6)
 
-    line_jerk, = ax_jerk.plot([], [], label='Jerk (m/s³)', color='purple')
-    ax_jerk.set_title('Body-Frame Jerk')
-    ax_jerk.set_ylabel('Jerk')
-    ax_jerk.legend(loc='upper right')
-    ax_jerk.grid(True, linestyle='--', alpha=0.6)
+    line_jerk, = axis_jerk.plot([], [], label='Jerk (m/s^3)', color='purple')
+    axis_jerk.set_title('Body-Frame Jerk')
+    axis_jerk.set_ylabel('Jerk')
+    axis_jerk.legend(loc='upper right')
+    axis_jerk.grid(True, linestyle='--', alpha=0.6)
 
-    text_zupt = ax_jerk.text(0.02, 0.85, 'STATE: WAITING', transform=ax_jerk.transAxes, fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+    text_zupt = axis_jerk.text(
+        0.02, 0.85, 'STATE: WAITING', transform=axis_jerk.transAxes,
+        fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8),
+    )
 
-    line_force, = ax_force.plot([], [], label='Raw Force', color='orange')
-    ax_force.set_title('Force Sensor')
-    ax_force.set_ylabel('Force')
-    ax_force.set_xlabel('Time (Seconds)')
-    ax_force.legend(loc='upper right')
-    ax_force.grid(True, linestyle='--', alpha=0.6)
+    line_force, = axis_force.plot([], [], label='Raw Force', color='orange')
+    axis_force.set_title('Force Sensor')
+    axis_force.set_ylabel('Force')
+    axis_force.set_xlabel('Time (Seconds)')
+    axis_force.legend(loc='upper right')
+    axis_force.grid(True, linestyle='--', alpha=0.6)
 
-    text_contact = ax_force.text(0.02, 0.85, 'PEN: WAITING', transform=ax_force.transAxes, fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8))
+    text_contact = axis_force.text(
+        0.02, 0.85, 'PEN: WAITING', transform=axis_force.transAxes,
+        fontsize=12, fontweight='bold', bbox=dict(facecolor='white', alpha=0.8),
+    )
 
-    # 2D Stroke Plot Line
-    line_stroke, = ax_stroke.plot([], [], color='black', linewidth=2)
-    ax_stroke.set_title('2D Board Strokes (Position)')
-    ax_stroke.set_xlabel('Board X (m)')
-    ax_stroke.set_ylabel('Board Z (m)')
-    ax_stroke.axis('equal')  # Critical: Keeps 1cm X equal to 1cm Z visually
-    ax_stroke.grid(True, linestyle='--', alpha=0.6)
+    line_stroke, = axis_stroke.plot([], [], color='black', linewidth=2)
+    axis_stroke.set_title('2D Board Strokes (Position)')
+    axis_stroke.set_xlabel('Board X (m)')
+    axis_stroke.set_ylabel('Board Z (m)')
+    # Equal aspect keeps 1 cm on X visually equal to 1 cm on Z.
+    axis_stroke.axis('equal')
+    axis_stroke.grid(True, linestyle='--', alpha=0.6)
 
     plt.tight_layout()
     plt.subplots_adjust(top=0.92)
@@ -619,91 +737,72 @@ if __name__ == '__main__':
 
     try:
         while True:
-            # Ingest and Process Data
             raw_packets = streamer.read_new_packets()
             if raw_packets:
-                events = norm.normalize(raw_packets)
-                processed_imu = prep.feed(events)
+                processed_events = preprocessor.feed(normalizer.normalize(raw_packets))
 
-                if processed_imu:
-                    if start_ts is None:
-                        start_ts = processed_imu[0]['ts_hw']
-                    
-                    # --- INTEGRATE TO POSITION FOR STROKES ---
-                    for ev in processed_imu:
-                        if last_integration_ts is not None:
-                            dt_s = (ev['ts_hw'] - last_integration_ts) / 1_000_000.0
-                            if dt_s > 0 and dt_s < 0.1: # Protect against massive time jumps
-                                if ev['is_static']:
-                                    vel_board = [0.0, 0.0] # ZUPT: Kill drift
-                                else:
-                                    vel_board[0] += ev['acc_board'][0] * dt_s
-                                    vel_board[1] += ev['acc_board'][1] * dt_s
-                                
-                                pos_board[0] += vel_board[0] * dt_s
-                                pos_board[1] += vel_board[1] * dt_s
-                        
-                        last_integration_ts = ev['ts_hw']
-                        ev['pos_x'] = pos_board[0]
-                        ev['pos_z'] = pos_board[1]
-                        
-                        event_log.append(ev)
+                if processed_events and start_ts is None:
+                    start_ts = processed_events[0]['ts_hw']
 
-            # Update Live Plot
-            current_time = time.time()
-            if event_log and (current_time - last_plot_time >= REFRESH_RATE_S):
-                window_data = event_log[-WINDOW_SIZE:]
+                for motion in processed_events:
+                    if last_integration_ts is not None:
+                        step_s = (motion['ts_hw'] - last_integration_ts) / MICROSECONDS_PER_SECOND
+                        if 0 < step_s < MAX_INTEGRATION_DT_S:
+                            if motion['is_static']:
+                                velocity_board = [0.0, 0.0]
+                            else:
+                                velocity_board[0] += motion['acc_board'][0] * step_s
+                                velocity_board[1] += motion['acc_board'][1] * step_s
 
-                t_sec = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in window_data]
+                            position_board[0] += velocity_board[0] * step_s
+                            position_board[1] += velocity_board[1] * step_s
 
-                # Update Time Series
-                line_wx.set_data(t_sec, [ev['acc_world'][0] for ev in window_data])
-                line_wy.set_data(t_sec, [ev['acc_world'][1] for ev in window_data])
-                line_wz.set_data(t_sec, [ev['acc_world'][2] for ev in window_data])
-                line_jerk.set_data(t_sec, [ev['jerk'] for ev in window_data])
-                line_force.set_data(t_sec, [ev['force'] for ev in window_data])
+                    last_integration_ts = motion['ts_hw']
+                    motion['pos_x'] = position_board[0]
+                    motion['pos_z'] = position_board[1]
+                    event_log.append(motion)
 
-                # Update 2D Strokes (Plotting full history so the drawing doesn't disappear)
-                # We inject NaN when contact is False to break the line between strokes
-                stroke_x = [ev['pos_x'] if ev['contact'] else float('nan') for ev in event_log]
-                stroke_z = [ev['pos_z'] if ev['contact'] else float('nan') for ev in event_log]
-                line_stroke.set_data(stroke_x, stroke_z)
+            now = time.time()
+            if event_log and (now - last_plot_time >= REFRESH_RATE_S):
+                window = event_log[-WINDOW_SIZE:]
+                seconds = [
+                    (row['ts_hw'] - start_ts) / MICROSECONDS_PER_SECOND for row in window
+                ]
 
-                # Rescale Time Series axes
-                x_min, x_max = t_sec[0], t_sec[-1]
-                for ax in [ax_acc, ax_jerk, ax_force]:
-                    ax.set_xlim(x_min, max(x_max, x_min + 0.1))
+                line_acc_x.set_data(seconds, [row['acc_world'][0] for row in window])
+                line_acc_y.set_data(seconds, [row['acc_world'][1] for row in window])
+                line_acc_z.set_data(seconds, [row['acc_world'][2] for row in window])
+                line_jerk.set_data(seconds, [row['jerk'] for row in window])
+                line_force.set_data(seconds, [row['force'] for row in window])
 
-                ax_acc.set_ylim(-3, 3)
-                ax_force.set_ylim(0, 5000.0)
+                # NaN between non-contact samples breaks the polyline so lifted
+                # moves are not drawn as ink.
+                line_stroke.set_data(
+                    [row['pos_x'] if row['contact'] else float('nan') for row in event_log],
+                    [row['pos_z'] if row['contact'] else float('nan') for row in event_log],
+                )
 
-                # Rescale dynamic axes
-                if len(window_data) % 5 == 0:
-                    ax_jerk.relim()
-                    ax_jerk.autoscale_view(scalex=False, scaley=True)
-                    ax_stroke.relim()
-                    ax_stroke.autoscale_view()
+                for axis in (axis_acc, axis_jerk, axis_force):
+                    axis.set_xlim(seconds[0], max(seconds[-1], seconds[0] + 0.1))
 
-                latest = window_data[-1]
+                axis_acc.set_ylim(-3, 3)
+                axis_force.set_ylim(0, 5000.0)
 
-                if latest['is_static']:
-                    text_zupt.set_text('STATE: STATIC')
-                    text_zupt.set_color('green')
-                else:
-                    text_zupt.set_text('STATE: MOVING')
-                    text_zupt.set_color('red')
+                if len(window) % 5 == 0:
+                    axis_jerk.relim()
+                    axis_jerk.autoscale_view(scalex=False, scaley=True)
+                    axis_stroke.relim()
+                    axis_stroke.autoscale_view()
 
-                if latest['contact']:
-                    text_contact.set_text('PEN: DRAWING')
-                    text_contact.set_color('blue')
-                else:
-                    text_contact.set_text('PEN: LIFTED')
-                    text_contact.set_color('gray')
+                latest = window[-1]
+                text_zupt.set_text('STATE: STATIC' if latest['is_static'] else 'STATE: MOVING')
+                text_zupt.set_color('green' if latest['is_static'] else 'red')
+                text_contact.set_text('PEN: DRAWING' if latest['contact'] else 'PEN: LIFTED')
+                text_contact.set_color('blue' if latest['contact'] else 'gray')
 
-                fig.canvas.draw_idle()
+                figure.canvas.draw_idle()
                 plt.pause(0.001)
-
-                last_plot_time = current_time
+                last_plot_time = now
 
             time.sleep(0.002)
 
@@ -713,105 +812,92 @@ if __name__ == '__main__':
 
         if not event_log:
             print("No data collected. Exiting.")
-            exit()
+            raise SystemExit(0)
 
         print(f"Captured {len(event_log)} IMU events. Exporting CSV...")
 
-        # --- CSV EXPORT ---
-        csv_filename = f"{REPORT_NAME}.csv"
-        with open(csv_filename, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow([
-                'ts_hw', 'packet_id', 'sample_idx',
-                'acc_world_x', 'acc_world_y', 'acc_world_z',
-                'acc_board_x', 'acc_board_z',
-                'pos_board_x', 'pos_board_z',
-                'jerk', 'is_static', 'contact', 'force'
-            ])
-            for ev in event_log:
-                writer.writerow([
-                    ev['ts_hw'], ev['packet_id'], ev['sample_idx'],
-                    ev['acc_world'][0], ev['acc_world'][1], ev['acc_world'][2],
-                    ev['acc_board'][0], ev['acc_board'][1],
-                    ev['pos_x'], ev['pos_z'],
-                    ev['jerk'], int(ev['is_static']), int(ev['contact']), ev['force']
-                ])
-        print(f"[EXPORT] Data saved to {csv_filename}")
+        output = ModuleRunOutput('preprocess/imu')
+        output.save_csv(
+            f"{REPORT_NAME}.csv",
+            [[row['ts_hw'], row['packet_id'], row['sample_idx'],
+              row['acc_world'][0], row['acc_world'][1], row['acc_world'][2],
+              row['acc_board'][0], row['acc_board'][1],
+              row['pos_x'], row['pos_z'],
+              row['jerk'], int(row['is_static']), int(row['contact']), row['force']]
+             for row in event_log],
+            header=['ts_hw', 'packet_id', 'sample_idx',
+                    'acc_world_x', 'acc_world_y', 'acc_world_z',
+                    'acc_board_x', 'acc_board_z',
+                    'pos_board_x', 'pos_board_z',
+                    'jerk', 'is_static', 'contact', 'force'],
+        )
 
-
-        # --- FULL SESSION PLOT EXPORT ---
         print("[EXPORT] Generating full-session plot...")
+        report_figure = plt.figure(figsize=(16, 10))
+        report_figure.suptitle('IMU Full Session Report', fontsize=16, fontweight='bold')
+        report_grid = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
 
-        # Create clean static figure with GridSpec
-        fig2 = plt.figure(figsize=(16, 10))
-        fig2.suptitle('IMU Full Session Report', fontsize=16, fontweight='bold')
-        gs2 = gridspec.GridSpec(3, 2, width_ratios=[1.5, 1])
+        report_acc = report_figure.add_subplot(report_grid[0, 0])
+        report_jerk = report_figure.add_subplot(report_grid[1, 0])
+        report_force = report_figure.add_subplot(report_grid[2, 0])
+        report_stroke = report_figure.add_subplot(report_grid[:, 1])
 
-        ax2_acc = fig2.add_subplot(gs2[0, 0])
-        ax2_jerk = fig2.add_subplot(gs2[1, 0])
-        ax2_force = fig2.add_subplot(gs2[2, 0])
-        ax2_stroke = fig2.add_subplot(gs2[:, 1])
+        all_seconds = [
+            (row['ts_hw'] - start_ts) / MICROSECONDS_PER_SECOND for row in event_log
+        ]
 
-        t_sec_full = [(ev['ts_hw'] - start_ts) / 1_000_000.0 for ev in event_log]
+        for index, label in enumerate(('World X', 'World Y', 'World Z')):
+            report_acc.plot(all_seconds, [row['acc_world'][index] for row in event_log], label=label)
+        report_acc.set_title('World Acceleration')
+        report_acc.set_ylabel('m/s^2')
+        report_acc.legend()
+        report_acc.grid(True, linestyle='--', alpha=0.6)
 
-        # --- Acceleration ---
-        ax2_acc.plot(t_sec_full, [ev['acc_world'][0] for ev in event_log], label='World X')
-        ax2_acc.plot(t_sec_full, [ev['acc_world'][1] for ev in event_log], label='World Y')
-        ax2_acc.plot(t_sec_full, [ev['acc_world'][2] for ev in event_log], label='World Z')
-        ax2_acc.set_title('World Acceleration')
-        ax2_acc.set_ylabel('m/s²')
-        ax2_acc.legend()
-        ax2_acc.grid(True, linestyle='--', alpha=0.6)
+        report_jerk.plot(all_seconds, [row['jerk'] for row in event_log],
+                         label='Jerk', color='purple')
+        report_jerk.set_title('Body-Frame Jerk')
+        report_jerk.set_ylabel('m/s^3')
+        report_jerk.legend()
+        report_jerk.grid(True, linestyle='--', alpha=0.6)
 
-        # --- Jerk ---
-        ax2_jerk.plot(t_sec_full, [ev['jerk'] for ev in event_log], label='Jerk', color='purple')
-        ax2_jerk.set_title('Body-Frame Jerk')
-        ax2_jerk.set_ylabel('m/s³')
-        ax2_jerk.legend()
-        ax2_jerk.grid(True, linestyle='--', alpha=0.6)
+        report_force.plot(all_seconds, [row['force'] for row in event_log],
+                          label='Force', color='orange')
+        report_force.set_title('Force Sensor')
+        report_force.set_ylabel('Force')
+        report_force.set_xlabel('Time (Seconds)')
+        report_force.legend()
+        report_force.grid(True, linestyle='--', alpha=0.6)
 
-        # --- Force ---
-        ax2_force.plot(t_sec_full, [ev['force'] for ev in event_log], label='Force', color='orange')
-        ax2_force.set_title('Force Sensor')
-        ax2_force.set_ylabel('Force')
-        ax2_force.set_xlabel('Time (Seconds)')
-        ax2_force.legend()
-        ax2_force.grid(True, linestyle='--', alpha=0.6)
+        report_stroke.plot(
+            [row['pos_x'] if row['contact'] else float('nan') for row in event_log],
+            [row['pos_z'] if row['contact'] else float('nan') for row in event_log],
+            color='black', linewidth=1.5,
+        )
+        report_stroke.set_title('Final 2D Drawing Path')
+        report_stroke.set_xlabel('Board X (m)')
+        report_stroke.set_ylabel('Board Z (m)')
+        report_stroke.axis('equal')
+        report_stroke.grid(True, linestyle='--', alpha=0.6)
 
-        # --- 2D Strokes ---
-        stroke_x_full = [ev['pos_x'] if ev['contact'] else float('nan') for ev in event_log]
-        stroke_z_full = [ev['pos_z'] if ev['contact'] else float('nan') for ev in event_log]
-        
-        ax2_stroke.plot(stroke_x_full, stroke_z_full, color='black', linewidth=1.5)
-        ax2_stroke.set_title('Final 2D Drawing Path')
-        ax2_stroke.set_xlabel('Board X (m)')
-        ax2_stroke.set_ylabel('Board Z (m)')
-        ax2_stroke.axis('equal')
-        ax2_stroke.grid(True, linestyle='--', alpha=0.6)
-
-        # Shade static regions in gray
-        static_mask = [ev['is_static'] for ev in event_log]
-        for ax in [ax2_acc, ax2_jerk, ax2_force]:
+        # Shade detected still periods so drift can be read against them.
+        for axis in (report_acc, report_jerk, report_force):
             in_static = False
-            start_static = 0
-
-            for i, is_static in enumerate(static_mask):
-                if is_static and not in_static:
-                    start_static = t_sec_full[i]
+            static_start = 0.0
+            for index, row in enumerate(event_log):
+                if row['is_static'] and not in_static:
+                    static_start = all_seconds[index]
                     in_static = True
-                elif not is_static and in_static:
-                    ax.axvspan(start_static, t_sec_full[i], color='gray', alpha=0.15)
+                elif not row['is_static'] and in_static:
+                    axis.axvspan(static_start, all_seconds[index], color='gray', alpha=0.15)
                     in_static = False
-
             if in_static:
-                ax.axvspan(start_static, t_sec_full[-1], color='gray', alpha=0.15)
+                axis.axvspan(static_start, all_seconds[-1], color='gray', alpha=0.15)
 
         plt.tight_layout()
         plt.subplots_adjust(top=0.92)
 
-        # Save image
         plot_filename = f"{REPORT_NAME}.png"
-        fig2.savefig(plot_filename, dpi=150)
-
-        print(f"[EXPORT] Plot saved to {plot_filename}")
+        report_figure.savefig(output.path(plot_filename), dpi=150)
+        output.record(plot_filename)
+        output.finish()
         print("Done.")

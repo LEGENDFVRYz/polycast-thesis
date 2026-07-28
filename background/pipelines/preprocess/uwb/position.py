@@ -1,130 +1,110 @@
 """
-Module 5c — Position-Level Smoother
+Module 5c - UWB Position Filter
 
-Input  (from trilateration): Raw (x, y) coordinates
-Output (Cleaned Position event): Clamped, EMA-smoothed coordinates
+Applies physical constraints to raw solved positions and publishes the three
+position signals the rest of the pipeline consumes.
+
+Filtering order:
+    1. Speed gate     reject fixes implying motion no pen could produce
+    2. Board clamp    pull positions back inside the physical board (cutoff)
+    3. Alpha-beta     smooth position while tracking velocity
+
+The output is deliberately split rather than reduced to one "best" value,
+because the fusion stage and the display want opposite things:
+
+    pos_for_fusion          clamped only, no smoothing. The ESKF already models UWB
+                            noise, so smoothing here would only add lag to the
+                            Kalman update it feeds.
+    pos_clean_for_display   alpha-beta smoothed, for plots and replay tools.
+    pos_clean               backwards-compatible alias of the display signal.
+
+Input:  solved positions from uwb "trilateration" module
+Output: the same event with the position signals, 'mapped_position' for the
+        ESKF, and 'uwb_quality' metadata added
+
+Usage (import as a stage, or run directly for a live dashboard):
+    python -m background.pipelines.preprocess.uwb.position
 """
 
+import math
 import os
+
 os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
-import math
 from background.pipelines.config import cfg
 
+MICROSECONDS_PER_SECOND = 1_000_000
+
+# Velocity retained after a fix the filter should not have trusted
+# Near-total decay stops the tracker coasting on a trajectory it learned from bad geometry.
+_UNTRUSTED_VELOCITY_RETENTION = 0.2
+
+
 class UWBPositionFilter:
+    """Constrains and smooths solved UWB positions into fusion-ready signals."""
+
     def __init__(self):
         self.board_width = cfg.anchors.board_size_x
         self.board_height = cfg.anchors.board_size_y
         self.max_speed_ms = cfg.uwb.outlier_speed_limit_ms
 
-        # Alpha-Beta filter gains
         self._alpha = cfg.uwb.pos_alpha
-        self._beta  = cfg.uwb.pos_beta
+        self._beta = cfg.uwb.pos_beta
 
-        # Alpha-Beta filter state
         self._est_x: float | None = None
         self._est_y: float | None = None
         self._vel_x: float = 0.0
         self._vel_y: float = 0.0
 
-        # Used by the velocity-outlier gate (pre-filter) and for dt
+        # Held separately from the alpha-beta estimate: 
+        # the speed gate must test the raw measurement sequence, not the smoothed one.
         self._prev_pos = None
         self._prev_ts = None
 
-    def process_one(self, ev: dict) -> dict | None:
-        if ev.get('sensor') != 'POSITION' or 'pos_raw' not in ev:
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
+
+    def process_one(self, event: dict) -> dict | None:
+        """
+        Constrain and smooth one solved position.
+
+        Returns None when the fix implies impossible motion and the config asks
+        for such outliers to be dropped rather than flagged.
+        """
+
+        if event.get('sensor') != 'POSITION' or 'pos_raw' not in event:
             return None
 
-        raw_x, raw_y = ev['pos_raw']
-        ts = ev['ts_hw']
+        raw_x, raw_y = event['pos_raw']
+        ts = event['ts_hw']
 
-        # ── 1. Velocity Consistency Check (Issue 6 FIXED) ──
-        speed_flag = False
-        if self._prev_pos is not None and self._prev_ts is not None:
-            dt_s = (ts - self._prev_ts) / 1_000_000.0
-            if dt_s > 0:
-                dist = math.hypot(raw_x - self._prev_pos[0], raw_y - self._prev_pos[1])
-                speed = dist / dt_s
+        speed_flag = self._exceeds_speed_limit(raw_x, raw_y, ts)
+        if speed_flag and cfg.uwb.drop_speed_outliers:
+            return None
 
-                if speed > self.max_speed_ms:
-                    speed_flag = True
-                    if cfg.uwb.drop_speed_outliers:
-                        return None
-
-        # ── 2. Boundary Clamping ──
         clamped_x = max(0.0, min(self.board_width, raw_x))
         clamped_y = max(0.0, min(self.board_height, raw_y))
+        was_clamped = (clamped_x != raw_x) or (clamped_y != raw_y)
 
-        # ── 3. Alpha-Beta Filter ──
-        dt_s = (ts - self._prev_ts) / 1_000_000.0 if self._prev_ts is not None else 1.0 / cfg.uwb.rate_hz
-        if dt_s <= 0:
-            dt_s = 1.0 / cfg.uwb.rate_hz
+        dt_s = self._elapsed_seconds(ts)
+        self._update_alpha_beta(clamped_x, clamped_y, dt_s)
 
-        if self._est_x is None:
-            # First sample: seed the estimate directly
-            self._est_x, self._est_y = clamped_x, clamped_y
-        else:
-            # Predict
-            pred_x = self._est_x + self._vel_x * dt_s
-            pred_y = self._est_y + self._vel_y * dt_s
-            # Residual
-            err_x = clamped_x - pred_x
-            err_y = clamped_y - pred_y
-            # Update position and velocity
-            self._est_x = pred_x + self._alpha * err_x
-            self._est_y = pred_y + self._alpha * err_y
-            self._vel_x = self._vel_x + (self._beta * err_x) / dt_s
-            self._vel_y = self._vel_y + (self._beta * err_y) / dt_s
-
-        # When geometry is bad or the point was clamped, the velocity the
-        # alpha-beta filter learned is unreliable. Decay it so the filter
-        # doesn't coast on a phantom trajectory between UWB corrections.
-        low_confidence = ev.get('low_confidence', False)
-        was_clamped_early = (
-            max(0.0, min(self.board_width,  raw_x)) != raw_x or
-            max(0.0, min(self.board_height, raw_y)) != raw_y
-        )
-        if low_confidence or was_clamped_early:
-            self._vel_x *= 0.2
-            self._vel_y *= 0.2
-
-        clean_x, clean_y = self._est_x, self._est_y
+        low_confidence = event.get('low_confidence', False)
+        if low_confidence or was_clamped:
+            self._decay_untrusted_velocity()
 
         self._prev_pos = (clamped_x, clamped_y)
         self._prev_ts = ts
 
-        # ── Three named position signals ──────────────────────────────────────
-        # pos_for_fusion:        boundary-clamped only; no alpha-beta smoothing.
-        #                        ESKF already models UWB noise — heavy smoothing
-        #                        here only adds lag to the Kalman update.
-        # pos_clean_for_display: alpha-beta smoothed — for plots and replay tools.
-        # pos_clean:             backward-compat alias so existing scripts are unaffected.
-        ev['pos_for_fusion']        = (round(clamped_x, 4), round(clamped_y, 4))
-        ev['pos_clean_for_display'] = (round(clean_x,   4), round(clean_y,   4))
-        ev['pos_clean']             = ev['pos_clean_for_display']
-        ev['speed_flag']            = speed_flag
-
-        # mapped_position feeds the ESKF (eskf.py reads board_width_x / board_height_y).
-        # Using pos_for_fusion here so the ESKF gets the clamped-only signal.
-        ev['mapped_position'] = {
-            'board_width_x':  ev['pos_for_fusion'][0],
-            'board_height_y': ev['pos_for_fusion'][1],
-            'depth_z':        cfg.anchors.a0[2],   # from AnchorConfig — currently 0.01 m
-        }
-        ev['coordinate_frame'] = 'UWB_BOARD_XY'
-
-        # Quality metadata propagated to ESKF for adaptive R inflation
-        was_clamped = (clamped_x != raw_x) or (clamped_y != raw_y)
-        ev['uwb_quality'] = {
-            'solve_error':    ev.get('solve_error', 0.0),
-            'speed_flag':     speed_flag,
-            'was_clamped':    was_clamped,
-            'low_confidence': ev.get('low_confidence', False),
-        }
-        
-        return ev
+        self._attach_outputs(
+            event, clamped_x, clamped_y, speed_flag, was_clamped, low_confidence
+        )
+        return event
 
     def reset(self):
+        """Clear the alpha-beta estimate and speed-gate history."""
+
         self._est_x = None
         self._est_y = None
         self._vel_x = 0.0
@@ -132,96 +112,190 @@ class UWBPositionFilter:
         self._prev_pos = None
         self._prev_ts = None
 
+    # -------------------------------------------------------------------------
+    # Constraints
+    # -------------------------------------------------------------------------
+
+    def _exceeds_speed_limit(self, raw_x: float, raw_y: float, ts: int) -> bool:
+        """True when the step from the previous fix implies impossible pen speed."""
+
+        if self._prev_pos is None or self._prev_ts is None:
+            return False
+
+        dt_s = (ts - self._prev_ts) / MICROSECONDS_PER_SECOND
+        if dt_s <= 0:
+            return False
+
+        distance = math.hypot(raw_x - self._prev_pos[0], raw_y - self._prev_pos[1])
+        return (distance / dt_s) > self.max_speed_ms
+
+    def _elapsed_seconds(self, ts: int) -> float:
+        """Seconds since the previous fix, falling back to the nominal UWB rate."""
+
+        nominal_dt_s = 1.0 / cfg.uwb.rate_hz
+        if self._prev_ts is None:
+            return nominal_dt_s
+
+        dt_s = (ts - self._prev_ts) / MICROSECONDS_PER_SECOND
+        return dt_s if dt_s > 0 else nominal_dt_s
+
+    # -------------------------------------------------------------------------
+    # Alpha-beta tracking
+    # -------------------------------------------------------------------------
+
+    def _update_alpha_beta(self, measured_x: float, measured_y: float, dt_s: float):
+        """
+        Advance the alpha-beta tracker toward the measurement.
+
+        Alpha corrects position from the residual; beta turns the same residual
+        into a velocity estimate, which lets the tracker predict through the
+        gaps between UWB fixes instead of stepping between them.
+        """
+
+        if self._est_x is None:
+            self._est_x, self._est_y = measured_x, measured_y
+            return
+
+        predicted_x = self._est_x + self._vel_x * dt_s
+        predicted_y = self._est_y + self._vel_y * dt_s
+
+        residual_x = measured_x - predicted_x
+        residual_y = measured_y - predicted_y
+
+        self._est_x = predicted_x + self._alpha * residual_x
+        self._est_y = predicted_y + self._alpha * residual_y
+        self._vel_x += (self._beta * residual_x) / dt_s
+        self._vel_y += (self._beta * residual_y) / dt_s
+
+    def _decay_untrusted_velocity(self):
+        """
+        Shrink the velocity estimate after a fix the tracker should not learn from.
+
+        A clamped or low-confidence measurement produces a residual that reflects
+        solver error rather than motion, so the velocity it implies is phantom.
+        """
+
+        self._vel_x *= _UNTRUSTED_VELOCITY_RETENTION
+        self._vel_y *= _UNTRUSTED_VELOCITY_RETENTION
+
+    # -------------------------------------------------------------------------
+    # Output assembly
+    # -------------------------------------------------------------------------
+
+    def _attach_outputs(self, event, clamped_x, clamped_y,
+                        speed_flag, was_clamped, low_confidence):
+        """Write the position signals and quality metadata onto the event."""
+
+        event['pos_for_fusion'] = (round(clamped_x, 4), round(clamped_y, 4))
+        event['pos_clean_for_display'] = (round(self._est_x, 4), round(self._est_y, 4))
+        event['pos_clean'] = event['pos_clean_for_display']
+        event['speed_flag'] = speed_flag
+
+        # The ESKF reads this, so it carries the clamped-only signal.
+        event['mapped_position'] = {
+            'board_width_x': event['pos_for_fusion'][0],
+            'board_height_y': event['pos_for_fusion'][1],
+            'depth_z': cfg.anchors.a0[2],
+        }
+        event['coordinate_frame'] = 'UWB_BOARD_XY'
+
+        # Drives adaptive measurement-noise inflation in the fusion stage.
+        event['uwb_quality'] = {
+            'solve_error': event.get('solve_error', 0.0),
+            'speed_flag': speed_flag,
+            'was_clamped': was_clamped,
+            'low_confidence': low_confidence,
+        }
 
 
-# ==============================================================================
-# HARDWARE DATA LOGGING & REPORTING (Module 5c: Position Smoother)
-#   - Goal: Validate trajectory smoothing, speed-limit jumps, and board clamping.
-#   - Expectation: Blue line is smooth and stays strictly inside the board bounds,
-#                  even if the red line (raw math) jumps wildly outside.
-# ==============================================================================
+# =============================================================================
+# MODULE TESTING
+#   Live trajectory dashboard: raw solver output versus the clamped and smoothed
+#   result, with optional accuracy measurement against a known coordinate.
+#
+#   The filtered trace should stay smooth and strictly inside the board outline
+#   even where the raw trace jumps outside it.
+#
+#   Run:  python -m background.pipelines.preprocess.uwb.position
+# =============================================================================
 if __name__ == '__main__':
-    import time
-    import os
     import csv
-    import math
+    import time
+
     import matplotlib.pyplot as plt
-    
-    from background.pipelines.cleaner.unpacker import SerialStreamer
+
     from background.pipelines.cleaner.normalizer import StreamNormalizer
+    from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.module_output import ModuleRunOutput
     from background.pipelines.preprocess.uwb.range import UWBRangePreprocessor
     from background.pipelines.preprocess.uwb.trilateration import UWBSolver
-    from background.pipelines.config import cfg
 
-    SERIAL_PORT = cfg.serial.port
-    BAUD_RATE = cfg.serial.baud
-    DISPLAY_RATE = 0.2
+    DISPLAY_RATE_S = 0.2
+    CSV_FILENAME = 'position_filter_report.csv'
+    PLOT_FILENAME = 'position_filter_report.png'
 
-    # Initialize the FULL UWB Pipeline
-    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm = StreamNormalizer()
-    uwb_offsets = cfg.uwb.range_offsets_m
-    range_prep = UWBRangePreprocessor(offsets=uwb_offsets)
+    streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
+    normalizer = StreamNormalizer()
+    range_preprocessor = UWBRangePreprocessor(offsets=cfg.uwb.range_offsets_m)
     solver = UWBSolver()
-    
-    # Initialize the module we are testing
-    pos_filter = UWBPositionFilter()
+    position_filter = UWBPositionFilter()
 
     print("=" * 60)
-    print(f"  [TEST] PHYSICS POLICE: Position Filter: {SERIAL_PORT}")
+    print(f"  [TEST] PHYSICS POLICE: Position Filter: {cfg.serial.port}")
     print("  Press Ctrl+C to stop and generate Trajectory Smoothing reports.")
     print("=" * 60)
 
-    # --- REVISION: Ground Truth Prompt ---
     ground_truth = None
-    print("Do you want to test clean position accuracy against a specific known coordinate? (y/n)")
+    print("Do you want to test clean position accuracy against a known coordinate? (y/n)")
     if input().strip().lower() == 'y':
         try:
-            gt_x = float(input("  Enter expected X coordinate (m): "))
-            gt_y = float(input("  Enter expected Y coordinate (m): "))
-            ground_truth = (gt_x, gt_y)
-            print(f"  [SET] Target ground truth: X={gt_x:.3f}, Y={gt_y:.3f}")
+            ground_truth = (
+                float(input("  Enter expected X coordinate (m): ")),
+                float(input("  Enter expected Y coordinate (m): ")),
+            )
+            print(f"  [SET] Target ground truth: X={ground_truth[0]:.3f}, Y={ground_truth[1]:.3f}")
         except ValueError:
             print("  [ERROR] Invalid input. Proceeding without ground truth.")
     print("=" * 60)
-    # -------------------------------------
 
     event_log = []
-    last_print_time = 0
+    last_print_time = 0.0
 
     try:
         while True:
             raw_packets = streamer.read_new_packets()
             if raw_packets:
-                events = norm.normalize(raw_packets)
-                clean_ranges = range_prep.feed(events)
-                
-                for cr in clean_ranges:
-                    raw_pos_event = solver.process_one(cr)
-                    
-                    if raw_pos_event:
-                        # Pass raw math into the Position Filter
-                        clean_pos_event = pos_filter.process_one(raw_pos_event)
-                        
-                        if clean_pos_event:
-                            event_log.append(clean_pos_event)
-                            
-                            current_time = time.time()
-                            if current_time - last_print_time >= DISPLAY_RATE:
-                                os.system('cls' if os.name == 'nt' else 'clear')
-                                print(f"========= TRAJECTORY SMOOTHER ({DISPLAY_RATE}s) =========")
-                                print(f"  Pkt ID     : {clean_pos_event['packet_id']}")
-                                print(f"  Raw Input  : X: {clean_pos_event['pos_raw'][0]:6.3f} m  |  Y: {clean_pos_event['pos_raw'][1]:6.3f} m")
-                                print(f"  CLEAN OUT  : X: {clean_pos_event['pos_clean'][0]:6.3f} m  |  Y: {clean_pos_event['pos_clean'][1]:6.3f} m")
-                                
-                                # --- REVISION: Live Error Display ---
-                                if ground_truth:
-                                    dist_err = math.hypot(clean_pos_event['pos_clean'][0] - ground_truth[0], clean_pos_event['pos_clean'][1] - ground_truth[1])
-                                    print(f"  POS ERROR  : {dist_err:.4f} m from target (Cleaned)")
-                                # ------------------------------------
-                                
-                                print("==========================================================")
-                                last_print_time = current_time
+                for cleaned in range_preprocessor.feed(normalizer.normalize(raw_packets)):
+                    solved = solver.process_one(cleaned)
+                    if not solved:
+                        continue
+
+                    filtered = position_filter.process_one(solved)
+                    if not filtered:
+                        continue
+
+                    event_log.append(filtered)
+
+                    now = time.time()
+                    if now - last_print_time >= DISPLAY_RATE_S:
+                        os.system('cls' if os.name == 'nt' else 'clear')
+                        print(f"========= TRAJECTORY SMOOTHER ({DISPLAY_RATE_S}s) =========")
+                        print(f"  Pkt ID     : {filtered['packet_id']}")
+                        print(f"  Raw Input  : X: {filtered['pos_raw'][0]:6.3f} m  |  "
+                              f"Y: {filtered['pos_raw'][1]:6.3f} m")
+                        print(f"  CLEAN OUT  : X: {filtered['pos_clean'][0]:6.3f} m  |  "
+                              f"Y: {filtered['pos_clean'][1]:6.3f} m")
+
+                        if ground_truth:
+                            error_m = math.hypot(
+                                filtered['pos_clean'][0] - ground_truth[0],
+                                filtered['pos_clean'][1] - ground_truth[1],
+                            )
+                            print(f"  POS ERROR  : {error_m:.4f} m from target (Cleaned)")
+
+                        print("==========================================================")
+                        last_print_time = now
+
             time.sleep(0.005)
 
     except KeyboardInterrupt:
@@ -230,85 +304,95 @@ if __name__ == '__main__':
 
         if not event_log:
             print("No data collected. Exiting.")
-            exit()
+            raise SystemExit(0)
 
-        # --- REVISION: Final Average Error Calculation ---
         if ground_truth:
-            errors_m = [math.hypot(ev['pos_clean'][0] - ground_truth[0], ev['pos_clean'][1] - ground_truth[1]) for ev in event_log]
-            avg_error = sum(errors_m) / len(errors_m)
+            errors = [
+                math.hypot(row['pos_clean'][0] - ground_truth[0],
+                           row['pos_clean'][1] - ground_truth[1])
+                for row in event_log
+            ]
+            average_error = sum(errors) / len(errors)
             print("\n" + "=" * 60)
-            print(f"  [ACCURACY REPORT (CLEANED POSITION)]")
+            print("  [ACCURACY REPORT (CLEANED POSITION)]")
             print(f"  Target Coordinate : X={ground_truth[0]:.3f}, Y={ground_truth[1]:.3f}")
-            print(f"  Samples Evaluated : {len(errors_m)}")
-            print(f"  Average Error     : {avg_error:.4f} meters ({avg_error * 100:.2f} cm)")
+            print(f"  Samples Evaluated : {len(errors)}")
+            print(f"  Average Error     : {average_error:.4f} meters "
+                  f"({average_error * 100:.2f} cm)")
             print("=" * 60 + "\n")
-        # -------------------------------------------------
 
-        # --- CSV EXPORT ---
-        csv_filename = "position_filter_report.csv"
-        with open(csv_filename, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['ts_hw', 'packet_id', 'raw_x', 'raw_y', 'clean_x', 'clean_y'])
-            for ev in event_log:
-                writer.writerow([ev['ts_hw'], ev['packet_id'], ev['pos_raw'][0], ev['pos_raw'][1], ev['pos_clean'][0], ev['pos_clean'][1]])
-        print(f"[EXPORT] Saved to {csv_filename}")
+        output = ModuleRunOutput('preprocess/uwb/position')
+        output.save_csv(
+            CSV_FILENAME,
+            [[row['ts_hw'], row['packet_id'],
+              row['pos_raw'][0], row['pos_raw'][1],
+              row['pos_clean'][0], row['pos_clean'][1]]
+             for row in event_log],
+            header=['ts_hw', 'packet_id', 'raw_x', 'raw_y', 'clean_x', 'clean_y'],
+        )
 
-        # --- PLOT REPORT ---
         print("[PLOT] Rendering Trajectory Report...")
-        raw_x = [ev['pos_raw'][0] for ev in event_log]
-        raw_y = [ev['pos_raw'][1] for ev in event_log]
-        clean_x = [ev['pos_clean'][0] for ev in event_log]
-        clean_y = [ev['pos_clean'][1] for ev in event_log]
-        t_sec = [(ev['ts_hw'] - event_log[0]['ts_hw']) / 1_000_000.0 for ev in event_log]
+        raw_x = [row['pos_raw'][0] for row in event_log]
+        raw_y = [row['pos_raw'][1] for row in event_log]
+        clean_x = [row['pos_clean'][0] for row in event_log]
+        clean_y = [row['pos_clean'][1] for row in event_log]
+        start_ts = event_log[0]['ts_hw']
+        seconds = [(row['ts_hw'] - start_ts) / MICROSECONDS_PER_SECOND for row in event_log]
 
-        # 3-Panel Plot to prove Physics, Clamping, and Smoothing
-        fig = plt.figure(figsize=(14, 10))
-        fig.suptitle('Module 5c: Position Filtering & Boundary Clamping', fontsize=16, fontweight='bold')
+        board_width = cfg.anchors.board_size_x
+        board_height = cfg.anchors.board_size_y
 
-        # Main Plot: 2D Spatial Board
-        ax1 = plt.subplot(2, 1, 1)
-        board_w = cfg.anchors.board_size_x
-        board_h = cfg.anchors.board_size_y
-        ax1.add_patch(plt.Rectangle((0, 0), board_w, board_h, fill=False, edgecolor='black', linestyle='--', lw=2))
-        ax1.scatter([0, board_w, board_w, 0], [0, 0, board_h, board_h], c='red', s=100, marker='s', label='Anchors')
-        
-        ax1.plot(raw_x, raw_y, label='Raw Math Trajectory (Can exit bounds)', color='red', alpha=0.3, linewidth=1, marker='.')
-        ax1.plot(clean_x, clean_y, label='Filtered Trajectory (Clamped & Smoothed)', color='blue', linewidth=2)
-        
-        # --- REVISION: Plot Ground Truth if available ---
+        figure = plt.figure(figsize=(14, 10))
+        figure.suptitle('Module 5c: Position Filtering & Boundary Clamping',
+                        fontsize=16, fontweight='bold')
+
+        axis_board = plt.subplot(2, 1, 1)
+        axis_board.add_patch(plt.Rectangle(
+            (0, 0), board_width, board_height,
+            fill=False, edgecolor='black', linestyle='--', lw=2,
+        ))
+        axis_board.scatter(
+            [0, board_width, board_width, 0], [0, 0, board_height, board_height],
+            c='red', s=100, marker='s', label='Anchors',
+        )
+        axis_board.plot(raw_x, raw_y, label='Raw Math Trajectory (Can exit bounds)',
+                        color='red', alpha=0.3, linewidth=1, marker='.')
+        axis_board.plot(clean_x, clean_y, label='Filtered Trajectory (Clamped & Smoothed)',
+                        color='blue', linewidth=2)
+
         if ground_truth:
-            ax1.plot(ground_truth[0], ground_truth[1], marker='X', color='green', markersize=12, label='Ground Truth Target')
-        # ------------------------------------------------
-        
-        ax1.set_xlim(-0.2, board_w + 0.2)
-        ax1.set_ylim(-0.2, board_h + 0.2)
-        ax1.set_aspect('equal')
-        ax1.set_title('2D Board Tracking')
-        ax1.grid(True, linestyle=':', alpha=0.7)
-        ax1.legend()
+            axis_board.plot(ground_truth[0], ground_truth[1], marker='X',
+                            color='green', markersize=12, label='Ground Truth Target')
 
-        # Subplot: X-Axis over Time
-        ax2 = plt.subplot(2, 2, 3)
-        ax2.plot(t_sec, raw_x, color='red', alpha=0.3, label='Raw X')
-        ax2.plot(t_sec, clean_x, color='blue', linewidth=2, label='Clean X')
-        ax2.axhline(y=0, color='black', linestyle='--')
-        ax2.axhline(y=board_w, color='black', linestyle='--')
-        ax2.set_title('X-Axis Smoothing & Clamping')
-        ax2.set_xlabel('Time (s)')
-        ax2.set_ylabel('X Position (m)')
-        ax2.grid(True, linestyle='--', alpha=0.5)
+        axis_board.set_xlim(-0.2, board_width + 0.2)
+        axis_board.set_ylim(-0.2, board_height + 0.2)
+        axis_board.set_aspect('equal')
+        axis_board.set_title('2D Board Tracking')
+        axis_board.grid(True, linestyle=':', alpha=0.7)
+        axis_board.legend()
 
-        # Subplot: Y-Axis over Time
-        ax3 = plt.subplot(2, 2, 4, sharex=ax2)
-        ax3.plot(t_sec, raw_y, color='red', alpha=0.3, label='Raw Y')
-        ax3.plot(t_sec, clean_y, color='blue', linewidth=2, label='Clean Y')
-        ax3.axhline(y=0, color='black', linestyle='--')
-        ax3.axhline(y=board_h, color='black', linestyle='--')
-        ax3.set_title('Y-Axis Smoothing & Clamping')
-        ax3.set_xlabel('Time (s)')
-        ax3.set_ylabel('Y Position (m)')
-        ax3.grid(True, linestyle='--', alpha=0.5)
+        axis_x = plt.subplot(2, 2, 3)
+        axis_x.plot(seconds, raw_x, color='red', alpha=0.3, label='Raw X')
+        axis_x.plot(seconds, clean_x, color='blue', linewidth=2, label='Clean X')
+        axis_x.axhline(y=0, color='black', linestyle='--')
+        axis_x.axhline(y=board_width, color='black', linestyle='--')
+        axis_x.set_title('X-Axis Smoothing & Clamping')
+        axis_x.set_xlabel('Time (s)')
+        axis_x.set_ylabel('X Position (m)')
+        axis_x.grid(True, linestyle='--', alpha=0.5)
+
+        axis_y = plt.subplot(2, 2, 4, sharex=axis_x)
+        axis_y.plot(seconds, raw_y, color='red', alpha=0.3, label='Raw Y')
+        axis_y.plot(seconds, clean_y, color='blue', linewidth=2, label='Clean Y')
+        axis_y.axhline(y=0, color='black', linestyle='--')
+        axis_y.axhline(y=board_height, color='black', linestyle='--')
+        axis_y.set_title('Y-Axis Smoothing & Clamping')
+        axis_y.set_xlabel('Time (s)')
+        axis_y.set_ylabel('Y Position (m)')
+        axis_y.grid(True, linestyle='--', alpha=0.5)
 
         plt.tight_layout()
-        plt.savefig("position_filter_report.png", dpi=300)
+        plt.savefig(output.path(PLOT_FILENAME), dpi=300)
+        output.record(PLOT_FILENAME)
+        output.finish()
         plt.show()

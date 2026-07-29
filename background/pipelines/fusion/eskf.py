@@ -1,37 +1,32 @@
 """
-Module 7b — Error-State Kalman Filter (ESKF) Fusion
+Module 7b - Error-State Kalman Filter fusion.
 
-Upgrade path from baseline.py's complementary filter. Differences:
-  - Error-state formulation (linearizes about a nominal state), not full-state.
-  - UWB is a weighted correction via Kalman gain, not a fixed-alpha mix.
-  - NLOS-adaptive R (consumes trilateration solve_error).
-  - UWB↔IMU timestamp interpolation via a short ring buffer.
-  - Lever-arm compensation (tip ≠ UWB tag ≠ IMU).
-  - Sharp-stroke / turn-aware Q inflation from quaternion-derived ω.
+Fuses high-rate IMU motion with low-rate UWB absolute position into a single
+pen-tip trajectory on the board plane.
 
-Build is staged — this file grows Step-by-Step per the plan. The current
-implementation is Step 1 (skeleton): IMU dead-reckoning + UWB passthrough
-with the final output schema wired. Filter math is added in Steps 2–7.
+Division of labour between the sensors:
+    IMU    short-term stroke shape and fast motion detail
+    UWB    long-term absolute anchoring and drift correction
+    Force  stroke state, supplied upstream by preprocess/contact.py
 
-Input events (identical to baseline.py):
-    IMU:      from preprocess/imu.py → preprocess/contact.py
-    POSITION: from preprocess/uwb/{range, trilateration, position}.py
+The two sensors enter through asymmetric paths. IMU events drive the clock:
+they propagate the nominal state and the covariance. UWB events never advance
+time; they only correct, and only after clearing the admission gates in
+gates.py.
 
-Output event:
-    {
-      'ts_hw': int, 'source': 'IMU' | 'POSITION',
-      'fused_x': float, 'fused_y': float,
-      'uwb_x': float, 'uwb_y': float,
-      'state': str, 'stroke_id': int, 'stroke_active': bool,
-      'eskf': {
-        'P_pos_trace': float,        # √(P[0,0]+P[1,1]), 2D position std proxy
-        'innovation_norm': float,    # |y| on last UWB update
-        'r_scale': float,            # NLOS gain scaler on last UWB update
-        'omega_in_plane': float,     # rad/s  (Step 7)
-        'turn_flag': bool,           # (Step 7)
-        'b_a': (float, float),       # current accel-bias estimate
-      }
-    }
+Supporting modules:
+    state.py         nominal state, covariance, numerical hygiene
+    modes.py         per-regime tuning and fast-mode arming
+    gates.py         UWB admission gates and noise scaling
+    updates.py       Kalman prediction and measurement-update primitives
+    constraints.py   stationary-contact lock and stroke boundary guard
+    diagnostics.py   emitted telemetry payload
+
+Input events match preprocess/imu.py -> preprocess/contact.py for IMU, and
+preprocess/uwb/position.py for UWB.
+
+Run directly for a live hardware dashboard:
+    python -m background.pipelines.fusion.eskf
 """
 
 import math
@@ -40,1674 +35,1250 @@ from collections import deque
 import numpy as np
 
 from background.pipelines.config import cfg
+from background.pipelines.fusion.constraints import (
+    ActiveStrokeBoundaryGuard,
+    StationaryContactLock,
+)
+from background.pipelines.fusion.diagnostics import FilterTelemetry, build_eskf_diagnostics
+from background.pipelines.fusion.modes import FusionModeTracker
+from background.pipelines.fusion.quaternion import (
+    board_axis_indices,
+    clip_vector_norm,
+    quaternion_conjugate,
+    quaternion_multiply,
+    quaternion_to_rotation_matrix,
+    slerp,
+)
+from background.pipelines.fusion.state import ESKFState
 from background.pipelines.fusion.stroke_dead_reckoner import StrokeIMUDeadReckoner
+from background.pipelines.fusion.updates import (
+    ErrorStateClipLimits,
+    apply_measurement_update,
+    apply_zero_velocity_update,
+    build_process_noise,
+    build_transition_matrix,
+    position_observation_matrix,
+    velocity_observation_matrix,
+)
+from background.pipelines.fusion import gates
 
+STATE_UWB_CORRECTION = 'UWB_CORRECTION'
+STATE_UWB_BOOTSTRAP = 'UWB_BOOTSTRAP'
+STATE_UWB_DROPPED = 'UWB_DROPPED'
 
-def _q_to_rotation(q: np.ndarray) -> np.ndarray:
-    """Quaternion [x, y, z, w] → 3×3 rotation matrix (body → world)."""
-    x, y, z, w = q
-    return np.array([
-        [1 - 2*(y*y + z*z),   2*(x*y - w*z),       2*(x*z + w*y)    ],
-        [    2*(x*y + w*z),   1 - 2*(x*x + z*z),    2*(y*z - w*x)    ],
-        [    2*(x*z - w*y),       2*(y*z + w*x),     1 - 2*(x*x + y*y)],
-    ], dtype=float)
+# Velocity zeroing at pen-down uses a deliberately loose sigma: the intent is to
+# bleed off air-move momentum, not to assert the pen is perfectly still.
+_PEN_DOWN_ZUPT_SIGMA = 0.05
 
+# A UWB velocity estimate needs three fixes spanning a sane interval before a
+# central difference is meaningful; outside this band the samples are stale,
+# duplicated, or too closely spaced to differentiate.
+_UWB_VELOCITY_MIN_SPAN_S = 0.02
+_UWB_VELOCITY_MAX_SPAN_S = 0.5
+_UWB_VELOCITY_MAX_PLAUSIBLE_MS = 2.0
 
-def _quat_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
-    """q1 ⊗ q2, both stored as [x, y, z, w]."""
-    x1, y1, z1, w1 = q1
-    x2, y2, z2, w2 = q2
-    return np.array([
-        w1*x2 + x1*w2 + y1*z2 - z1*y2,
-        w1*y2 - x1*z2 + y1*w2 + z1*x2,
-        w1*z2 + x1*y2 - y1*x2 + z1*w2,
-        w1*w2 - x1*x2 - y1*y2 - z1*z2,
-    ], dtype=float)
-
-
-def _quat_conjugate(q: np.ndarray) -> np.ndarray:
-    """Conjugate == inverse for unit quaternion: negate xyz, keep w."""
-    return np.array([-q[0], -q[1], -q[2], q[3]], dtype=float)
-
-
-def _slerp(q1: np.ndarray, q2: np.ndarray, t: float) -> np.ndarray:
-    """Spherical linear interpolation between two unit quaternions."""
-    dot = float(np.clip(np.dot(q1, q2), -1.0, 1.0))
-    if dot < 0.0:
-        q2 = -q2
-        dot = -dot
-    if dot > 0.9995:
-        result = q1 + t * (q2 - q1)
-        return result / np.linalg.norm(result)
-    theta0 = math.acos(dot)
-    theta   = theta0 * t
-    q_perp  = q2 - dot * q1
-    n = float(np.linalg.norm(q_perp))
-    if n < 1e-9:
-        return q1.copy()
-    q_perp /= n
-    return math.cos(theta) * q1 + math.sin(theta) * q_perp
-
-
-def _clip_vec_norm(v: np.ndarray, max_norm: float) -> np.ndarray:
-    """Limit a 2D correction by vector magnitude instead of per-axis only."""
-    n = float(np.linalg.norm(v))
-    if not math.isfinite(n) or n <= max_norm or n < 1e-12:
-        return v
-    return v * (max_norm / n)
+# During active ink a correction must never produce a visible fold, so position
+# and velocity corrections are far tighter than in air.
+_ACTIVE_POSITION_CLIP_M = 0.018
+_ACTIVE_VELOCITY_CLIP_MS = 0.025
+_AIR_POSITION_CLIP_M = 0.10
+_AIR_VELOCITY_CLIP_MS = 0.50
 
 
 class ESKF:
+    """Error-state Kalman filter fusing IMU dead-reckoning with UWB position."""
+
     def __init__(self):
-        ecfg = cfg.fusion_eskf
+        board_width = cfg.anchors.board_size_x
+        board_height = cfg.anchors.board_size_y
 
-        # ── Nominal state (propagated directly, not in the filter) ──────────
-        bx = cfg.anchors.board_size_x
-        by = cfg.anchors.board_size_y
-        self.p   = np.array([bx * 0.5, by * 0.5], dtype=float)   # position
-        self.v   = np.zeros(2, dtype=float)                      # velocity
-        self.b_a = np.zeros(2, dtype=float)                      # accel bias
-        self.b_p = np.zeros(2, dtype=float)                      # position bias (Phase 4 EMA tracker)
-        self._active_uwb_guard_fired = False
-        self._active_uwb_guard_correction = 0.0
+        self.modes = FusionModeTracker()
+        self.state = ESKFState(
+            board_width,
+            board_height,
+            position_floor_source=lambda: self.modes.current_parameters().pos_floor,
+        )
+        self.tip_lock = StationaryContactLock()
+        self.boundary_guard = ActiveStrokeBoundaryGuard()
+        self.dead_reckoner = StrokeIMUDeadReckoner()
+        self.telemetry = FilterTelemetry()
 
-        # Mode-aware stationary-contact clamp.  When contact.py reports
-        # CONTACT_STATIC, or when force/contact + low motion indicates that the
-        # tip is planted, the visible tip is pinned to a local anchor and
-        # velocity is aggressively killed.  This prevents start/end hold drift.
-        self._tip_lock_active = False
-        self._tip_lock_candidate = False
-        self._tip_lock_count = 0
-        self._tip_lock_anchor_visible: np.ndarray | None = None
-        self._tip_lock_correction = 0.0
-        self._tip_lock_uwb_blend = 0.0
-        self._tip_lock_reason = 'OFF'
-
-        self.q   = np.array([0.0, 0.0, 0.0, 1.0], dtype=float)   # identity
-
-        # ── Error-state covariance (6×6 block-diag init) ────────────────────
-        # Blocks: δp (2), δv (2), δb_a (2)
-        diag = np.array([
-            ecfg.p0_pos,  ecfg.p0_pos,
-            ecfg.p0_vel,  ecfg.p0_vel,
-            ecfg.p0_bias, ecfg.p0_bias,
-        ]) ** 2
-        self.P = np.diag(diag)
-
-        # ── Ring buffer of (ts, p, v, q) for UWB↔IMU time interpolation ─────
-        self._state_buf: deque[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = (
-            deque(maxlen=ecfg.state_buffer_size)
+        # Recent (ts, position, velocity, attitude) so a UWB fix can be compared
+        # against the state as it was at the UWB timestamp, not the newest frame.
+        self._state_history: deque[tuple[int, np.ndarray, np.ndarray, np.ndarray]] = deque(
+            maxlen=cfg.fusion_eskf.state_buffer_size
         )
 
-        # ── Step-7 turn tracking ────────────────────────────────────────────
-        self._prev_quat: np.ndarray | None = None
+        self._previous_attitude: np.ndarray | None = None
         self._turn_cooldown = 0
-        self._turn_arm_count = 0       # consecutive samples meeting turn+jerk gate
-        self._omega_in_plane_last = 0.0
-        self._turn_flag_last = False
+        self._stroke_active_prev = False
 
-        # ── Contact-edge tracking (for stroke-start soft ZUPT + 3c sigma) ────
-        self._prev_stroke_active = False
-        self._last_stroke_state: str = 'UNKNOWN'   # last stroke_state string from IMU event
+        self._sustained_static_count = 0
 
-        # ── Phase 3a — sustained-static hard reset ───────────────────────────
-        self._zupt_hard_count = 0
+        # Last few accepted UWB fixes, for the central-difference velocity estimate.
+        self._uwb_velocity_history: deque[tuple[int, np.ndarray, float]] = deque(maxlen=5)
 
-        # ── Phase 3b — UWB-velocity pseudo-measurement buffer ────────────────
-        # Stores (ts_hw, pos, solve_error) of the last N accepted UWB corrections.
-        self._uwb_vel_buf: deque[tuple[int, np.ndarray, float]] = deque(maxlen=5)
+        self._last_imu_ts: int | None = None
+        self._last_uwb_ts: int | None = None
+        self.last_uwb_measurement = self.state.position.copy()
 
-        # ── Sliding-window safeguard (Rule 3) ────────────────────────────────
-        # Tracks when the last UWB velocity anchor happened.
-        self._last_uwb_reset_ts: int | None = None
-        self._last_stale_s: float = 0.0
-        self._last_stale_factor: float = 1.0
-        self._last_sigma_v_eff: float = 0.0
+        self._last_accepted_tip: np.ndarray | None = None
+        self._last_accepted_tip_ts: int | None = None
+        self._last_uwb_anchor_ts: int | None = None
 
-        # ── Book-keeping ────────────────────────────────────────────────────
-        self.last_ts: int | None = None        # IMU-only propagation clock
-        self.last_uwb_ts: int | None = None    # UWB arrival timestamp (diagnostics only)
-        self.last_uwb = self.p.copy()
-        self.last_uwb_tip = self.p.copy()  # last accepted lever-arm-corrected UWB tip position
-        self._dead_reckoner = StrokeIMUDeadReckoner()
-        self._last_uwb_fix_ts: int | None = None   # hw ts of the last stored last_uwb
-        self._last_innovation_norm = 0.0
-        self._last_r_scale = 1.0
-        self._last_K_pos = 0.0
-        self._last_uwb_residual_rms = 0.0
-        self._uwb_accepted = 0
-        self._uwb_rejected = 0
-        self._stroke_start_snaps = 0   # number of pen-down soft snaps applied
-        self._stroke_start_ts: int | None = None   # hw ts of current stroke's pen-down edge
         self._have_imu_attitude = False
-        self._last_lever_arm_m = 0.0
-        self._last_lever_r_world = np.zeros(3, dtype=float)
-        self._last_z_uwb_raw     = np.zeros(2, dtype=float)
-        self._last_z_uwb_tip     = np.zeros(2, dtype=float)
-        self._vel_pseudo_applied = False
-        self._vel_pseudo_dx_pos  = np.zeros(2, dtype=float)
-        self._vel_pseudo_dx_vel  = np.zeros(2, dtype=float)
 
-        # ── Adaptive trust tracking ─────────────────────────────────────────
-        self._last_z_tip: np.ndarray | None = None   # last accepted tip position (jump gate)
-        self._last_z_tip_ts: int | None = None        # timestamp of _last_z_tip
-        self._uwb_jump_rejected = 0                   # cumulative jump-gate rejects
-        self._last_dir_factor: float = 1.0            # last direction-disagreement penalty
-        self._last_pos_floor_used: float = 0.025 ** 2 # last position floor value (m²)
-        self._last_pos_cap_used: float = (0.025 * 6.0) ** 2  # last position cap value (m²)
-        self._dir_penalty_count = 0                   # frames where dir_factor > 1
-        self._zupt_fires = 0                           # cumulative _zupt_update invocations
-
-        # ── dt jitter tracking ──────────────────────────────────────────────
-        self._dt_clamps = 0                 # cumulative count of dt-jitter clamps
-        self._cov_resets = 0                # cumulative covariance reset events (NaN recovery)
-        self._cov_reset_suppress = False    # True for one emit cycle after a covariance reset
-
-        # ── Innovation-deadlock recovery ─────────────────────────────────────
-        # Counts consecutive UWB updates rejected by the innovation hard-gate.
-        # When the streak reaches innov_recovery_n with clean UWB geometry, the
-        # filter is assumed lost and _snap_to_uwb() re-localizes the position.
-        self._innov_reject_streak = 0
-        self._uwb_snap_count = 0     # cumulative re-localizations for diagnostics
-
-        # ── DRAWING_FAST mode tracking ───────────────────────────────────────
-        self._fast_arm_count: int   = 0    # consecutive frames at/above speed threshold
-        self._fast_burst_count: int = 0    # hold-down counter after trigger fires
-        self._in_fast_mode: bool    = False
-
-        # ── Mode statistics (accelerate per-regime tuning) ───────────────────
-        # Frame counters are driven by IMU events (accurate mode classification).
-        self._frames_contact = 0     # CONTACT_DRAWING (normal speed) IMU frames
-        self._frames_fast    = 0     # DRAWING_FAST IMU frames
-        self._frames_air     = 0     # AIR_MOVE IMU frames
-        self._frames_static  = 0     # IDLE / CONTACT_STATIC IMU frames
-        # K-sum counters are driven by accepted UWB events so the averages reflect
-        # actual Kalman gain at UWB-update time, not a stale carry-over value.
-        self._k_contact_sum  = 0.0   # K_pos sum during accepted UWB fixes in normal-contact mode
-        self._k_contact_uwb  = 0     # accepted UWB count during normal-contact mode
-        self._k_fast_sum     = 0.0   # K_pos sum during accepted UWB fixes in fast-contact mode
-        self._k_fast_uwb     = 0     # accepted UWB count during fast-contact mode
-        self._k_air_sum      = 0.0   # K_pos sum during accepted UWB fixes in air mode
-        self._k_air_uwb      = 0     # accepted UWB count during air mode
-
-        self._board_w = bx
-        self._board_h = by
-
-    # ────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
     # Public API
-    # ────────────────────────────────────────────────────────────────────────
-    def process_event(self, ev: dict) -> dict | None:
-        ts = ev.get('ts_hw')
+    # -------------------------------------------------------------------------
+
+    def process_event(self, event: dict) -> dict | None:
+        """
+        Consume one preprocessed sensor event and return the fused result.
+
+        Returns None for events without a timestamp or from an unknown sensor.
+        """
+
+        ts = event.get('ts_hw')
         if ts is None:
             return None
 
-        sensor = ev.get('sensor')
+        sensor = event.get('sensor')
         if sensor == 'IMU':
-            return self._on_imu(ev, ts)
+            return self._on_imu(event, ts)
         if sensor == 'POSITION':
-            return self._on_uwb(ev, ts)
+            return self._on_uwb(event, ts)
         return None
 
     def reset(self):
+        """Return the filter to its initial state."""
+
         self.__init__()
 
-    def _update_and_resolve_mode(self):
-        """Update DRAWING_FAST state and return mode params — call ONCE per IMU frame.
+    # -------------------------------------------------------------------------
+    # IMU path - prediction, stillness, contact edges
+    # -------------------------------------------------------------------------
 
-        DRAWING_FAST arms after drawing_fast_min_frames consecutive frames where
-        tip speed >= drawing_fast_speed_thresh, then holds for drawing_fast_burst_frames
-        additional IMU frames before returning to DRAWING.  This gives IMU a bounded
-        authority window on short fast strokes without letting it drift indefinitely.
-        Resets immediately on pen-up.
-
-        This method mutates _fast_arm_count, _fast_burst_count, _in_fast_mode.
-        Use _mode_params() everywhere else (pure read, no side effects).
-        """
-        ecfg = cfg.fusion_eskf
-        if self._prev_stroke_active:
-            speed = float(np.linalg.norm(self.v))
-            if speed >= ecfg.drawing_fast_speed_thresh:
-                self._fast_arm_count += 1
-            else:
-                self._fast_arm_count = max(0, self._fast_arm_count - 1)
-
-            triggered = self._fast_arm_count >= ecfg.drawing_fast_min_frames
-            if triggered:
-                # Re-arm the burst hold-down every time the trigger condition holds.
-                self._fast_burst_count = ecfg.drawing_fast_burst_frames
-            elif self._fast_burst_count > 0:
-                self._fast_burst_count -= 1
-
-            self._in_fast_mode = self._fast_burst_count > 0
-            if self._in_fast_mode:
-                return ecfg.modes.drawing_fast
-            return ecfg.modes.drawing
-        self._fast_arm_count = 0
-        self._fast_burst_count = 0
-        self._in_fast_mode = False
-        return ecfg.modes.air
-
-    def _mode_params(self):
-        """Return current mode params — pure read, no side effects.
-
-        Uses the state already computed by _update_and_resolve_mode() on the last
-        IMU frame.  Safe to call from UWB path, covariance helpers, etc.
-        """
-        ecfg = cfg.fusion_eskf
-        if self._prev_stroke_active:
-            return ecfg.modes.drawing_fast if self._in_fast_mode else ecfg.modes.drawing
-        if self._last_stroke_state in ('IDLE', 'CONTACT_STATIC'):
-            return ecfg.modes.static
-        return ecfg.modes.air
-
-    def _mode_name(self) -> str:
-        """Human-readable fusion mode name matching _mode_params() — pure read."""
-        if self._tip_lock_active:
-            return 'CONTACT_STATIC_LOCK'
-        if self._prev_stroke_active:
-            return 'DRAWING_FAST' if self._in_fast_mode else 'CONTACT_DRAWING'
-        if self._last_stroke_state in ('IDLE', 'CONTACT_STATIC'):
-            return 'IDLE'
-        return 'AIR_MOVE'
-
-    def _stroke_age_cap_mult(self, ts: int) -> float:
-        """Return pos_gain_cap multiplier based on active-stroke age.
-
-        Linearly ramps from 1.0 (pure IMU shape authority for short strokes) up
-        to age_ramp_mult_max (drift guard for long geometric strokes).  Returns
-        1.0 when no stroke is active so AIR/STATIC caps are unaffected.
-        """
-        if self._stroke_start_ts is None:
-            return 1.0
-        ecfg = cfg.fusion_eskf
-        age_s = (ts - self._stroke_start_ts) * 1e-6   # µs → s
-        if age_s <= ecfg.age_ramp_start_s:
-            return 1.0
-        if age_s >= ecfg.age_ramp_end_s:
-            return ecfg.age_ramp_mult_max
-        t = (age_s - ecfg.age_ramp_start_s) / (ecfg.age_ramp_end_s - ecfg.age_ramp_start_s)
-        return 1.0 + t * (ecfg.age_ramp_mult_max - 1.0)
-
-    # ────────────────────────────────────────────────────────────────────────
-    # IMU path — prediction + ZUPT update + turn-aware Q (Steps 2 + 7)
-    # ────────────────────────────────────────────────────────────────────────
-    def _on_imu(self, ev: dict, ts: int) -> dict:
+    def _on_imu(self, event: dict, ts: int) -> dict:
         dt_s = self._advance_imu_clock(ts)
 
-        # Step 7: Update quaternion first so omega and Q use the current sample.
-        q_raw = ev.get('quat')
-        q_new = np.asarray(q_raw, dtype=float) if q_raw is not None else self.q.copy()
-        
-        # Use precomputed ω from imu.py when available; fall back to quat-diff.
-        current_jerk    = ev.get('jerk', 0.0)
-        omega_world_ev  = ev.get('omega_world')   # None on older recorded events
-        self._update_omega_and_turn(q_new, dt_s, current_jerk, omega_world_ev)
-        
-        self.q = q_new
-        self._have_imu_attitude = True
+        self._update_attitude_and_turn(event, dt_s)
 
-        # Sliding-window safeguard (Rule 3): track how long since the last UWB
-        # velocity anchor.  When stale, inflate Q and tighten velocity drag so
-        # IMU dead-reckoning can't accumulate unbounded error.
-        ecfg = cfg.fusion_eskf
-        stale_s = 0.0
-        if self._last_uwb_reset_ts is not None:
-            stale_s = max(0.0, (ts - self._last_uwb_reset_ts) / 1_000_000.0)
-        stale_factor = 1.0
-        if stale_s > ecfg.uwb_window_s:
-            over = (stale_s - ecfg.uwb_window_s) / ecfg.uwb_window_s
-            stale_factor = 1.0 + min(ecfg.uwb_stale_max_k, over * ecfg.uwb_stale_k)
-        self._last_stale_s = stale_s
-        self._last_stale_factor = stale_factor
+        stale_factor = self._uwb_staleness_factor(ts)
 
-        # 1. Nominal state propagation (mid-point integration).
-        # Separate the two tip-corrected sources produced by imu.py:
-        #   acc_hpf — Path C (HPF): bias stripped, fast-motion detail preserved.
-        #   acc_raw — Path A (EMA): bias still present, slow motion preserved.
-        # Both already have rigid-body lever-arm correction applied.
-        acc_hpf = np.asarray(
-            ev.get('acc_board_hp_tip') or ev.get('acc_board', (0.0, 0.0)),
-            dtype=float)
-        acc_raw = np.asarray(
-            ev.get('acc_board_tip') or ev.get('acc_board', (0.0, 0.0)),
-            dtype=float)
+        stroke_state = event.get('stroke_state', 'UNKNOWN')
+        stroke_active_now = bool(event.get('stroke_active', False))
+        stroke_active_prev = self._stroke_active_prev
+        self.modes.stroke_state = stroke_state
+        self.modes.stroke_active = stroke_active_prev
 
-        # Read contact state before propagation.  contact.py already separates
-        # CONTACT_STATIC from CONTACT_DRAWING; the clamp uses that mode to avoid
-        # integrating IMU noise while the physical tip is planted.
-        stroke_state = ev.get('stroke_state', 'UNKNOWN')
-        stroke_active_now = bool(ev.get('stroke_active', False))
-        stroke_active_prev = self._prev_stroke_active
-        self._last_stroke_state = stroke_state   # used by _mode_params / _mode_name
-        contact_static_candidate = self._contact_static_candidate(ev, acc_hpf, stroke_state)
+        board_acceleration_hpf, board_acceleration_raw = self._read_board_acceleration(event)
 
-        mode_p = self._update_and_resolve_mode()
-        ecfg = cfg.fusion_eskf
-        dr_cfg = ecfg.dead_reckoner
+        tip_is_planted = self.tip_lock.is_candidate(
+            event,
+            board_acceleration_hpf,
+            stroke_state,
+            self.state.speed,
+            self.telemetry.omega_in_plane,
+        )
 
-        # Contact-state-aware blended acceleration.
-        # CONTACT_DRAWING: blend raw-minus-bias (physical slow motion) with HPF
-        #   (bias-free fast detail) — preserves both slow strokes and fast curvature.
-        # AIR_MOVE: minimal HPF only — limits air drift without blackout.
-        # CONTACT_STATIC / IDLE / UNKNOWN: zero — no integration while planted.
-        detail_w = 0.0
-        if contact_static_candidate:
-            mode_p = ecfg.modes.static
-            a = np.zeros(2, dtype=float)
-            self._in_fast_mode = False
-            self._fast_arm_count = 0
-            self._fast_burst_count = 0
-        elif stroke_state == 'CONTACT_DRAWING':
-            detail_w = float(dr_cfg.detail_weight)
-            a = (acc_raw - self.b_a) * (1.0 - detail_w) + acc_hpf * detail_w
-            if ecfg.acc_spike_clamp_enabled and self._prev_stroke_active:
-                a = _clip_vec_norm(a, ecfg.acc_spike_clamp_ms2)
-        elif stroke_state == 'AIR_MOVE':
-            detail_w = float(dr_cfg.air_scale)
-            a = acc_hpf * detail_w
-            if ecfg.acc_spike_clamp_enabled:
-                a = _clip_vec_norm(a, ecfg.acc_spike_clamp_ms2)
-        else:
-            # CONTACT_STATIC / IDLE / UNKNOWN
-            a = np.zeros(2, dtype=float)
+        mode_parameters = self.modes.update_fast_mode(self.state.speed)
+        if tip_is_planted:
+            mode_parameters = cfg.fusion_eskf.modes.static
+            self.modes.force_stationary()
 
-        # Apply per-mode acceleration scale — defined in config but was never applied.
-        # drawing=0.50 halves IMU integration growth; static/zero paths are unaffected.
-        a *= mode_p.acc_scale
+        acceleration, detail_weight = self._blend_acceleration(
+            stroke_state, tip_is_planted, board_acceleration_hpf, board_acceleration_raw
+        )
+        acceleration = acceleration * mode_parameters.acc_scale
 
-        # Keep acc pointing at the HPF source so downstream consumers
-        # (imu_cleaner payload, spike-clamp paths that reference acc) are unaffected.
-        acc = acc_hpf
+        self._update_dead_reckoner(
+            acceleration, dt_s, mode_parameters, stroke_state, tip_is_planted, detail_weight
+        )
 
-        # Dead reckoner: accumulate stroke-local relative displacement alongside
-        # the global ESKF state. Only active during confirmed ink frames.
-        self._dead_reckoner.set_blend_weight(detail_w)
-        if stroke_state == 'CONTACT_DRAWING' and not contact_static_candidate:
-            self._dead_reckoner.update(
-                acc_blend=a,
-                dt_s=dt_s,
-                drag_inv_s=mode_p.drag_inv_s,
-            )
+        self._propagate(acceleration, dt_s, mode_parameters, stale_factor)
 
-        self.p += self.v * dt_s + 0.5 * a * dt_s * dt_s
-        self.v += a * dt_s
-        # Velocity drag — further scaled by stale_factor when UWB is silent.
-        drag_inv_s = mode_p.drag_inv_s * stale_factor
-        self.v *= max(0.0, 1.0 - drag_inv_s * dt_s)
-        # Active-stroke safety cap: prevents acceleration bursts from becoming
-        # 30–40 cm loops while still allowing fast handwriting.
-        if self._prev_stroke_active:
-            self.v = _clip_vec_norm(self.v, cfg.fusion_eskf.active_vel_cap_ms)
+        self._apply_stillness(event)
 
-        # 2. Error-state covariance propagation:   P ← F·P·Fᵀ + Q
-        #    Q is turn-aware; also inflated by stale_factor² when UWB is silent.
-        F = self._build_F(dt_s)
-        Q = self._build_Q(dt_s) * (stale_factor ** 2)
-        self.P = F @ self.P @ F.T + Q
-        self._sanitize_covariance()
-        self._apply_covariance_floor()
-        self._sanitize_state()
+        self._handle_contact_edges(ts, stroke_active_now)
+        self._stroke_active_prev = stroke_active_now
+        self.modes.stroke_active = stroke_active_now
 
-        # 3. ZUPT pseudo-measurement (v = 0) when the IMU preprocessor
-        #    flags the pen as still.
-        if ev.get('is_static', False):
-            self._zupt_update()
-            # Phase 3a: sustained static → hard-zero velocity after N samples.
-            # Prevents drift from compounding when the pen sits still between strokes.
-            # b_a is deliberately kept so bias convergence is not disrupted.
-            self._zupt_hard_count += 1
-            if self._zupt_hard_count >= cfg.fusion_eskf.zupt_hard_reset_n:
-                self.v[:] = 0
-        else:
-            self._zupt_hard_count = 0
-
-        # 4. Contact edge handling.
-        #    Rising edge (inactive → active): soft ZUPT — tip velocity near zero.
-        #    Falling edge (active → inactive): damp lingering momentum so it
-        #    doesn't leak into the next stroke.
-        if stroke_active_now and not self._prev_stroke_active:
-            self._stroke_start_ts = ts
-            # Hard velocity zero: prevents air-move momentum from hooking stroke start.
-            self.v[:] = 0.0
-            self._zupt_soft_update(sigma=0.05)
-            self._stroke_start_uwb_snap(ts)
-            self._dead_reckoner.reset(
-                uwb_tip=self.last_uwb_tip,
-                current_p=self.p,
-            )
-        elif (not stroke_active_now) and self._prev_stroke_active:
-            self._stroke_start_ts = None
-            ecfg_se = cfg.fusion_eskf
-            # If the user paused at the end before lifting, preserve the locked
-            # endpoint instead of letting the final pen-up frame move it.
-            locked_endpoint = (
-                np.asarray(self._tip_lock_anchor_visible, dtype=float).copy()
-                if self._tip_lock_active and self._tip_lock_anchor_visible is not None
-                else None
-            )
-            # Explicit hard zero: stroke_end_v_decay=0.0 achieves this, but stated
-            # explicitly so a future config change cannot leak momentum across strokes.
-            self.v[:] = 0.0
-            self._dead_reckoner.close_stroke()
-            self.P[2, 2] *= ecfg_se.stroke_end_p_vel_scale
-            self.P[3, 3] *= ecfg_se.stroke_end_p_vel_scale
-            self._apply_covariance_floor()
-            # Phase 4: decay position bias on pen-up so the next stroke starts
-            # with a fresh (near-zero) b_p, giving the stroke-start snap and
-            # the new stroke's own EMA a clean slate.
-            self.b_p *= ecfg_se.bias_decay
-            if locked_endpoint is not None:
-                self.p = locked_endpoint - self.b_p
-        self._prev_stroke_active = stroke_active_now
-
-        # Contact-static tip lock: pen-down stabilization, mid-stroke micro-pause
-        # hold, and pen-up final stabilization all share this mode-aware clamp.
-        self._apply_contact_static_lock(
-            ts=ts,
-            candidate=contact_static_candidate,
+        self.tip_lock.apply(
+            state=self.state,
+            candidate=tip_is_planted,
             stroke_active_now=stroke_active_now,
             stroke_active_prev=stroke_active_prev,
             stroke_state=stroke_state,
+            uwb_age_s=self._accepted_tip_age_s(ts),
         )
 
-        # IMU frame counters — mode classification from contact detector.
-        # K averages are accumulated in _on_uwb (UWB-event-driven) so they
-        # reflect the actual gain at update time, not a stale carry-over.
-        if stroke_state == 'CONTACT_DRAWING':
-            if self._in_fast_mode:
-                self._frames_fast += 1
-            else:
-                self._frames_contact += 1
-        elif stroke_state == 'AIR_MOVE':
-            self._frames_air += 1
-        else:
-            self._frames_static += 1
+        self.telemetry.record_mode_frame(stroke_active_now, self.modes.in_fast_mode, stroke_state)
 
-        # Snapshot for UWB time interpolation (Step 4 consumes this).
-        self._state_buf.append((ts, self.p.copy(), self.v.copy(), self.q.copy()))
-
-        self._clamp_to_board()
-
-        out = self._emit(
-            ts       = ts,
-            source   = 'IMU',
-            state    = stroke_state,
-            sid      = ev.get('stroke_id', 0),
-            active   = ev.get('stroke_active', False),
+        self._state_history.append(
+            (ts, self.state.position.copy(), self.state.velocity.copy(), self.state.attitude.copy())
         )
-        # Forward physical contact flag so reconstruct.py can gate ink strictly.
-        # contact_raw=True is the safe default for events that predate this field.
-        out['contact_raw'] = bool(ev.get('contact', True))
 
-        # Stroke-finalization IMU cleaner payload. This is intentionally attached
-        # only to IMU-originated fused events because reconstruct.py ignores UWB
-        # events for ink, but needs per-point IMU samples after pen-up.
-        out['imu_cleaner'] = {
-            'acc_board_hp_tip': (float(acc[0]), float(acc[1])),
+        self.state.clamp_to_board()
+
+        fused = self._emit(
+            ts=ts,
+            source='IMU',
+            state_label=stroke_state,
+            stroke_id=event.get('stroke_id', 0),
+            stroke_active=event.get('stroke_active', False),
+        )
+
+        # contact_raw lets reconstruct.py gate ink on physical contact rather
+        # than on the debounced logical stroke. Defaults True for events that
+        # predate the field.
+        fused['contact_raw'] = bool(event.get('contact', True))
+
+        # Attached only to IMU events: reconstruct.py ignores UWB events for ink
+        # but needs per-point IMU samples to clean the stroke after pen-up.
+        fused['imu_cleaner'] = {
+            'acc_board_hp_tip': (
+                float(board_acceleration_hpf[0]),
+                float(board_acceleration_hpf[1]),
+            ),
             'dt_s': float(dt_s),
-            'vel': (float(self.v[0]), float(self.v[1])),
-            'rel_pos': (float(self.p[0]), float(self.p[1])),
-            'uwb': (float(self.last_uwb_tip[0]), float(self.last_uwb_tip[1])),
-            'contact': bool(ev.get('contact', True)),
-            'is_static': bool(ev.get('is_static', False)),
+            'vel': (float(self.state.velocity[0]), float(self.state.velocity[1])),
+            'rel_pos': (float(self.state.position[0]), float(self.state.position[1])),
+            'uwb': (float(self.state.last_uwb_tip[0]), float(self.state.last_uwb_tip[1])),
+            'contact': bool(event.get('contact', True)),
+            'is_static': bool(event.get('is_static', False)),
         }
-        return out
+        return fused
 
-    # ────────────────────────────────────────────────────────────────────────
-    # UWB path — Kalman correction (Steps 3+4)
-    #   Step 5 adds NLOS-adaptive R.
-    #   Step 6 adds lever-arm compensation on the measurement.
-    # ────────────────────────────────────────────────────────────────────────
-    def _on_uwb(self, ev: dict, ts: int) -> dict:
-        self.last_uwb_ts = ts   # UWB does not propagate state; do not advance IMU clock
+    @staticmethod
+    def _read_board_acceleration(event: dict) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Pull both tip-corrected acceleration paths produced by imu.py.
 
-        # Prefer the board-clamped, alpha-beta smoothed position so the position
-        # filter's protection actually reaches the Kalman update. Only fall back to
-        # pos_raw when neither mapped_position nor pos_clean is present.
-        mapped = ev.get('mapped_position')
-        if mapped:
-            uwb = (mapped['board_width_x'], mapped['board_height_y'])
+        The high-pass path has slow bias stripped but keeps fast stroke detail;
+        the EMA path retains slow real motion along with the bias. Both already
+        carry the rigid-body lever-arm correction.
+        """
+
+        high_pass = np.asarray(
+            event.get('acc_board_hp_tip') or event.get('acc_board', (0.0, 0.0)), dtype=float
+        )
+        smoothed = np.asarray(
+            event.get('acc_board_tip') or event.get('acc_board', (0.0, 0.0)), dtype=float
+        )
+        return high_pass, smoothed
+
+    def _blend_acceleration(
+        self,
+        stroke_state: str,
+        tip_is_planted: bool,
+        high_pass: np.ndarray,
+        smoothed: np.ndarray,
+    ) -> tuple[np.ndarray, float]:
+        """
+        Choose the acceleration driving prediction, based on what the pen is doing.
+
+        Returns (acceleration, detail_weight) where detail_weight is the HPF
+        share, reused by the dead reckoner so both integrators stay consistent.
+        """
+
+        eskf_cfg = cfg.fusion_eskf
+        dead_reckoner_cfg = eskf_cfg.dead_reckoner
+
+        if tip_is_planted:
+            return np.zeros(2, dtype=float), 0.0
+
+        if stroke_state == 'CONTACT_DRAWING':
+            detail_weight = float(dead_reckoner_cfg.detail_weight)
+            acceleration = (
+                (smoothed - self.state.accel_bias) * (1.0 - detail_weight)
+                + high_pass * detail_weight
+            )
+            # Clamped only while ink is already committed, so an impulse spike
+            # cannot bloom into an oversized loop mid-stroke.
+            if eskf_cfg.acc_spike_clamp_enabled and self._stroke_active_prev:
+                acceleration = clip_vector_norm(acceleration, eskf_cfg.acc_spike_clamp_ms2)
+            return acceleration, detail_weight
+
+        if stroke_state == 'AIR_MOVE':
+            detail_weight = float(dead_reckoner_cfg.air_scale)
+            acceleration = high_pass * detail_weight
+            if eskf_cfg.acc_spike_clamp_enabled:
+                acceleration = clip_vector_norm(acceleration, eskf_cfg.acc_spike_clamp_ms2)
+            return acceleration, detail_weight
+
+        # CONTACT_STATIC / IDLE / UNKNOWN: integrating here would only add noise.
+        return np.zeros(2, dtype=float), 0.0
+
+    def _update_dead_reckoner(
+        self,
+        acceleration: np.ndarray,
+        dt_s: float,
+        mode_parameters,
+        stroke_state: str,
+        tip_is_planted: bool,
+        detail_weight: float,
+    ) -> None:
+        self.dead_reckoner.set_blend_weight(detail_weight)
+        if stroke_state == 'CONTACT_DRAWING' and not tip_is_planted:
+            self.dead_reckoner.update(
+                acc_blend=acceleration,
+                dt_s=dt_s,
+                drag_inv_s=mode_parameters.drag_inv_s,
+            )
+
+    def _propagate(
+        self,
+        acceleration: np.ndarray,
+        dt_s: float,
+        mode_parameters,
+        stale_factor: float,
+    ) -> None:
+        """Advance the nominal state and inflate the error covariance."""
+
+        self.state.position += self.state.velocity * dt_s + 0.5 * acceleration * dt_s * dt_s
+        self.state.velocity += acceleration * dt_s
+
+        # Drag tightens as UWB goes stale, bounding how far unaided IMU
+        # dead-reckoning can wander before the next correction arrives.
+        drag = mode_parameters.drag_inv_s * stale_factor
+        self.state.velocity *= max(0.0, 1.0 - drag * dt_s)
+
+        if self._stroke_active_prev:
+            self.state.velocity = clip_vector_norm(
+                self.state.velocity, cfg.fusion_eskf.active_vel_cap_ms
+            )
+
+        transition = build_transition_matrix(dt_s)
+        process_noise = build_process_noise(dt_s, self.telemetry.turn_detected)
+
+        # Squared because the stale factor inflates a standard deviation, while
+        # Q is expressed in variance.
+        process_noise = process_noise * (stale_factor ** 2)
+
+        self.state.covariance = (
+            transition @ self.state.covariance @ transition.T + process_noise
+        )
+        self.state.sanitize_covariance()
+        self.state.apply_covariance_floor()
+        self.state.sanitize_nominal_state()
+
+    def _apply_stillness(self, event: dict) -> None:
+        """Run ZUPT when the preprocessor reports the pen as still."""
+
+        if not event.get('is_static', False):
+            self._sustained_static_count = 0
+            return
+
+        self.telemetry.zupt_fires += 1
+        apply_zero_velocity_update(self.state, cfg.fusion_eskf.sigma_zupt)
+
+        # A long uninterrupted still period means residual velocity is drift,
+        # not motion. Bias is deliberately kept so its convergence is preserved.
+        self._sustained_static_count += 1
+        if self._sustained_static_count >= cfg.fusion_eskf.zupt_hard_reset_n:
+            self.state.velocity[:] = 0
+
+    def _handle_contact_edges(self, ts: int, stroke_active_now: bool) -> None:
+        """Apply the special handling that pen-down and pen-up edges require."""
+
+        eskf_cfg = cfg.fusion_eskf
+
+        if stroke_active_now and not self._stroke_active_prev:
+            self.modes.stroke_start_ts = ts
+            # Hard zero, not decay: leftover air-move momentum would otherwise
+            # hook the first few samples of the stroke.
+            self.state.velocity[:] = 0.0
+            apply_zero_velocity_update(self.state, _PEN_DOWN_ZUPT_SIGMA)
+            self._snap_stroke_start_to_uwb(ts)
+            self.dead_reckoner.reset(
+                uwb_tip=self.state.last_uwb_tip,
+                current_p=self.state.position,
+            )
+            return
+
+        if (not stroke_active_now) and self._stroke_active_prev:
+            self.modes.stroke_start_ts = None
+
+            # If the writer paused before lifting, the locked endpoint is the
+            # true end of the ink; the final pen-up frame should not move it.
+            locked_endpoint = (
+                np.asarray(self.tip_lock.anchor_visible, dtype=float).copy()
+                if self.tip_lock.active and self.tip_lock.anchor_visible is not None
+                else None
+            )
+
+            self.state.velocity[:] = 0.0
+            self.dead_reckoner.close_stroke()
+
+            self.state.covariance[2, 2] *= eskf_cfg.stroke_end_p_vel_scale
+            self.state.covariance[3, 3] *= eskf_cfg.stroke_end_p_vel_scale
+            self.state.apply_covariance_floor()
+
+            # Decaying the placement bias gives the next stroke's own snap and
+            # EMA a clean slate rather than inheriting this stroke's offset.
+            self.state.position_bias *= eskf_cfg.bias_decay
+
+            if locked_endpoint is not None:
+                self.state.position = locked_endpoint - self.state.position_bias
+
+
+    def _snap_stroke_start_to_uwb(self, ts: int) -> None:
+        """
+        Soft position pull toward UWB at pen-down so each letter starts in place.
+
+        Targets the last accepted lever-arm-corrected tip rather than the raw tag
+        position: snapping to the tag would bake the tag-to-tip offset into the
+        start of the stroke as a hidden placement error.
+        """
+
+        eskf_cfg = cfg.fusion_eskf
+        if self._last_accepted_tip is None or self._last_accepted_tip_ts is None:
+            return
+
+        age_s = (ts - self._last_accepted_tip_ts) / 1_000_000.0
+        if age_s > eskf_cfg.stroke_start_uwb_max_age_s:
+            return
+
+        sigma = eskf_cfg.sigma_uwb * eskf_cfg.stroke_start_sigma_scale
+        innovation = self._last_accepted_tip.copy() - self.state.position
+
+        applied, _, _ = apply_measurement_update(
+            state=self.state,
+            observation_matrix=position_observation_matrix(),
+            innovation=innovation,
+            measurement_noise=(sigma ** 2) * np.eye(2),
+            limits=ErrorStateClipLimits(position_m=0.15, velocity_ms=0.50),
+        )
+        if applied:
+            self.telemetry.stroke_start_snaps += 1
+
+    # -------------------------------------------------------------------------
+    # UWB path - gated Kalman correction
+    # -------------------------------------------------------------------------
+
+    def _on_uwb(self, event: dict, ts: int) -> dict:
+        # UWB never advances the filter clock; it only corrects.
+        self._last_uwb_ts = ts
+
+        measurement = self._read_uwb_measurement(event)
+        if measurement is None:
+            return self._emit(ts, 'POSITION', STATE_UWB_DROPPED, 0, False)
+
+        self.last_uwb_measurement = measurement.copy()
+
+        ts_uwb = event.get('ts_hw', ts)
+        interpolated = self._interpolate_state_at(ts_uwb)
+        if interpolated is not None:
+            reference_position, _, reference_attitude = interpolated
         else:
-            uwb = ev.get('pos_clean') or ev.get('pos_raw')
-        if uwb is None:
-            return self._emit(ts, 'POSITION', 'UWB_DROPPED', 0, False)
+            reference_position = None
+            # At ~200 Hz the newest attitude is under 5 ms stale, which is well
+            # inside the accuracy this correction needs.
+            reference_attitude = self.state.attitude
 
-        z = np.asarray(uwb, dtype=float)
-        self.last_uwb = z.copy()
-
-        # Time interpolation: innovation against state at UWB timestamp (Step 4).
-        ts_uwb = ev.get('ts_hw', ts)
-        self._last_uwb_fix_ts = ts_uwb   # record for stroke-start snap age check
-        interp = self._interpolate_at(ts_uwb)
-        if interp is not None:
-            p_ref, _, q_ref = interp
-        else:
-            p_ref = None
-            q_ref = self.q  # latest nominal quaternion — ≤5 ms stale at 200 Hz
-
-        # Step 6: Lever-arm correction — UWB measures the tag (back of pen),
-        # not the tip. Subtract the rotated body-frame offset to get tip position.
-        # At perpendicular hold the correction is ~0; at 30° tilt it is ~10 cm.
-        r_board_offset, lever_r_world = self._uwb_lever_arm_board(q_ref)
-        z_tip = z - r_board_offset
-        self._last_lever_arm_m   = float(np.linalg.norm(r_board_offset))
-        self._last_lever_r_world = lever_r_world
-        self._last_z_uwb_raw     = z.copy()
-        self._last_z_uwb_tip     = z_tip.copy()
-        self._vel_pseudo_applied = False
-        self._vel_pseudo_dx_pos[:] = 0.0
-        self._vel_pseudo_dx_vel[:] = 0.0
-
-        # Step 5: NLOS-adaptive R — consume trilateration residual.
-        solve_error = float(ev.get('solve_error', 0.0))
-
-        # UWB jump gate: reject when UWB-implied tip speed far exceeds physical pen
-        # limits AND IMU velocity doesn't confirm the fast move.
-        # Ceiling is mode-dependent: drawing allows faster legitimate strokes.
-        ecfg_j   = cfg.fusion_eskf
-        mode_j   = self._mode_params()
-        if (self._last_z_tip is not None and self._last_z_tip_ts is not None):
-            dt_uwb_j  = max((ts_uwb - self._last_z_tip_ts) / 1_000_000.0, 1e-6)
-            uwb_speed = float(np.linalg.norm(z_tip - self._last_z_tip)) / dt_uwb_j
-            imu_speed = float(np.linalg.norm(self.v))
-            if uwb_speed > mode_j.jump_speed_max and imu_speed < ecfg_j.uwb_jump_imu_speed_min:
-                self._uwb_jump_rejected += 1
-                self._uwb_rejected += 1
-                return self._emit(ts, 'POSITION', 'UWB_JUMP_REJECT', 0, False)
-
-        # In air, low-confidence UWB (warning band) provides almost no useful
-        # correction while K_air is already near zero. Rejecting it prevents
-        # the alpha-beta tail from nudging the state toward a bad measurement.
-        quality = ev.get('uwb_quality', {})
-        stroke_active = self._prev_stroke_active  # UWB events do not carry contact state reliably
-        if quality.get('low_confidence') and not stroke_active:
-            self._uwb_rejected += 1
-            return self._emit(ts, 'POSITION', 'UWB_LOW_CONF_REJECT', 0, False)
-
-        # Board-margin gate: reject positions that are physically outside the board
-        # with a small tolerance. Catches bad trilateration solves that slip past
-        # the residual threshold after lever-arm correction.
-        _margin = 0.03
-        if (z_tip[0] < -_margin or z_tip[0] > self._board_w + _margin or
-                z_tip[1] < -_margin or z_tip[1] > self._board_h + _margin):
-            self._uwb_rejected += 1
-            return self._emit(ts, 'POSITION', 'UWB_BOARD_MARGIN_REJECT', 0, False)
-
-        if not self._have_imu_attitude:
-            self._uwb_rejected += 1
-            return self._emit(ts, 'POSITION', 'UWB_WAIT_IMU_INIT', 0, False)
-
-        # First valid UWB lock: snap ESKF position to UWB before normal innovation gating.
-        if self._uwb_accepted == 0:
-            if solve_error <= cfg.uwb.trilat_max_residual:
-                self.p[:] = z_tip
-                self.v[:] = 0.0
-                self._last_innovation_norm = 0.0
-                self._last_K_pos = 1.0
-                self._last_uwb_reset_ts = ts_uwb
-                self._last_z_tip = z_tip.copy()
-                self._last_z_tip_ts = ts_uwb
-                self.last_uwb_tip = z_tip.copy()
-                self._uwb_accepted += 1
-                self._clamp_to_board()
-                return self._emit(ts, 'POSITION', 'UWB_BOOTSTRAP', 0, False)
-
-        accepted = self._uwb_update(z_tip, p_ref, solve_error, ev.get('uwb_quality'))
-        if not accepted:
-            self._uwb_rejected += 1
-            return self._emit(ts, 'POSITION', 'UWB_NLOS_REJECT', 0, False)
-        self._uwb_accepted += 1
-        # Any accepted UWB position fix keeps the sliding-window clock alive,
-        # even when geometry isn't clean enough for a velocity pseudo-update.
-        self._last_uwb_reset_ts = ts_uwb
-        self._last_z_tip = z_tip.copy()
-        self._last_z_tip_ts = ts_uwb
-        self.last_uwb_tip = z_tip.copy()
-
-        # K statistics — accumulated here (UWB-event-driven) so panel averages
-        # reflect actual gain at update time, not stale IMU carry-overs.
-        if self._prev_stroke_active:
-            if self._in_fast_mode:
-                self._k_fast_sum += self._last_K_pos
-                self._k_fast_uwb += 1
-            else:
-                self._k_contact_sum += self._last_K_pos
-                self._k_contact_uwb += 1
-        else:
-            self._k_air_sum += self._last_K_pos
-            self._k_air_uwb += 1
-
-        # Phase 4 — in-stroke position bias (EMA tracker).
-        # During CONTACT_DRAWING or DRAWING_FAST, nudge b_p toward the UWB-vs-
-        # visible-position residual.  This shifts the output (p + b_p) toward UWB
-        # without touching p, so the relative IMU stroke shape is preserved.
-        # During AIR / IDLE, b_p is frozen; p is corrected directly by the main filter.
-        if self._prev_stroke_active:
-            ecfg_bp = cfg.fusion_eskf
-            visible = self.p + self.b_p
-            y_bp    = z_tip - visible
-            self.b_p += ecfg_bp.bias_uwb_alpha * y_bp
-            cap = ecfg_bp.bias_max_m
-            self.b_p[0] = float(np.clip(self.b_p[0], -cap, cap))
-            self.b_p[1] = float(np.clip(self.b_p[1], -cap, cap))
-
-        # Phase 3b: UWB-velocity pseudo-measurement (Rule 2 — UWB Sync).
-        # Always push to buffer (solve_error stored so bad samples are detectable).
-        self._uwb_vel_buf.append((ts_uwb, z_tip.copy(), solve_error))
-        # Skip velocity anchor during DRAWING_FAST — anchoring v to UWB geometry
-        # would cancel the IMU shape authority the mode is designed to grant.
-        # Optional A/B gate: also skip during any active stroke to prevent UWB
-        # velocity from fighting IMU curved motion (uwb_vel_stroke_gate=True).
-        ecfg_gate = cfg.fusion_eskf
-        if not self._in_fast_mode and not (ecfg_gate.uwb_vel_stroke_gate and self._prev_stroke_active):
-            ecfg_v = cfg.fusion_eskf
-            if len(self._uwb_vel_buf) >= 3:
-                (t0, p0, e0), (t1, p1, e1), (t2, p2, e2) = (
-                    self._uwb_vel_buf[-3], self._uwb_vel_buf[-2], self._uwb_vel_buf[-1]
-                )
-                # All three samples must have clean geometry.
-                if max(e0, e1, e2) < ecfg_v.sigma_trilat:
-                    dt_vel = (t2 - t0) / 1_000_000.0          # span of central difference
-                    if 0.02 < dt_vel < 0.5:                   # guard stale / duplicate ts
-                        v_uwb = (p2 - p0) / dt_vel            # central difference at t1
-                        if float(np.linalg.norm(v_uwb)) < 2.0:
-                            # Deviation gate: skip if UWB-derived velocity disagrees too
-                            # much with the current filter velocity.  Noisy UWB positions
-                            # (5 cm over 50 ms → 1 m/s) with P_vel floor kept the Kalman
-                            # gain ~0.9, injecting large spurious velocities that caused
-                            # the position to integrate 40+ cm in the wrong direction.
-                            vel_dev = float(np.linalg.norm(v_uwb - self.v))
-                            if vel_dev <= ecfg_v.uwb_vel_dev_max:
-                                # Adaptive sigma: tighter when geometry is cleaner.
-                                e_avg   = (e0 + e1 + e2) / 3.0
-                                ratio   = e_avg / ecfg_v.sigma_trilat  # 0 → pristine, 1 → threshold
-                                sigma_v = ecfg_v.sigma_uwb_vel * max(ecfg_v.sigma_uwb_vel_min_scale, ratio)
-                                self._last_sigma_v_eff = sigma_v
-                                self._velocity_pseudo_update(v_uwb, sigma_v)
-                                self._last_uwb_reset_ts = ts_uwb
-
-        self._clamp_to_board()
-
-        return self._emit(
-            ts       = ts,
-            source   = 'POSITION',
-            state    = 'UWB_CORRECTION',
-            sid      = 0,
-            active   = False,
+        tip_measurement, lever_offset, lever_world = self._correct_for_lever_arm(
+            measurement, reference_attitude
         )
 
-    def _uwb_update(self,
-                    z:           np.ndarray,
-                    p_ref:       np.ndarray | None = None,
-                    solve_error: float = 0.0,
-                    uwb_quality: dict | None = None) -> bool:
-        """Kalman update with H = [I 0 0].
+        self.telemetry.lever_arm_m = float(np.linalg.norm(lever_offset))
+        self.telemetry.lever_arm_world = lever_world
+        self.telemetry.uwb_measurement_raw = measurement.copy()
+        self.telemetry.uwb_measurement_tip = tip_measurement.copy()
+        self.telemetry.velocity_pseudo_applied = False
+        self.telemetry.velocity_pseudo_position_delta[:] = 0.0
+        self.telemetry.velocity_pseudo_velocity_delta[:] = 0.0
 
-        p_ref        — time-interpolated tip position at UWB ts (Step 4).
-        solve_error  — trilateration RMS residual; drives adaptive R (Step 5).
+        solve_error = float(event.get('solve_error', 0.0))
+        uwb_quality = event.get('uwb_quality', {}) or {}
 
-        Returns True if update was applied, False if hard-rejected (NLOS).
+        rejection = self._screen_measurement(tip_measurement, ts_uwb, solve_error, uwb_quality)
+        if rejection is not None:
+            return self._emit(ts, 'POSITION', rejection, 0, False)
+
+        bootstrap = self._bootstrap_if_first_fix(tip_measurement, ts, ts_uwb, solve_error)
+        if bootstrap is not None:
+            return bootstrap
+
+        accepted = self._correct_with_uwb(
+            tip_measurement, reference_position, solve_error, uwb_quality
+        )
+        if not accepted:
+            self.telemetry.uwb_rejected += 1
+            return self._emit(ts, 'POSITION', gates.REJECT_NLOS, 0, False)
+
+        self.telemetry.uwb_accepted += 1
+        # Any accepted fix keeps the staleness clock alive, even when its
+        # geometry was not clean enough to also drive a velocity pseudo-update.
+        self._record_accepted_fix(tip_measurement, ts_uwb)
+        self.telemetry.record_accepted_gain(self._stroke_active_prev, self.modes.in_fast_mode)
+
+        self._track_position_bias(tip_measurement)
+        self._maybe_anchor_velocity(tip_measurement, ts_uwb, solve_error)
+
+        self.state.clamp_to_board()
+
+        return self._emit(ts, 'POSITION', STATE_UWB_CORRECTION, 0, False)
+
+    @staticmethod
+    def _read_uwb_measurement(event: dict) -> np.ndarray | None:
         """
-        ecfg = cfg.fusion_eskf
+        Extract the board-plane UWB position from a position-filter event.
 
-        # Hard reject: trilateration residual far exceeds nominal (NLOS).
-        hard_thresh = ecfg.hard_reject_mult * cfg.uwb.trilat_max_residual
-        if solve_error > hard_thresh:
-            self._last_innovation_norm = 0.0
-            self._last_r_scale = ecfg.r_scale_max
-            return False
-
-        # Adaptive R — scale measurement noise by NLOS severity.
-        if ecfg.k_nlos > 0.0 and ecfg.sigma_trilat > 0.0:
-            ratio   = solve_error / ecfg.sigma_trilat
-            r_scale = 1.0 + ecfg.k_nlos * ratio * ratio
-            r_scale = max(1.0, min(ecfg.r_scale_max, r_scale))
-        else:
-            r_scale = 1.0
-        self._last_r_scale = r_scale
-
-        H = np.zeros((2, 6))
-        H[0, 0] = 1.0
-        H[1, 1] = 1.0
-
-        mode_p = self._mode_params()
-
-        quality = uwb_quality or {}
-        uwb_quality_mult = 1.0
-        if quality.get('was_clamped'):
-            uwb_quality_mult *= 4.0
-        if quality.get('low_confidence'):
-            uwb_quality_mult *= 3.0
-
-        sigma = ecfg.sigma_uwb * mode_p.sigma_scale * uwb_quality_mult
-
-        # Innovation  y = z − p_ref  (time-aligned) — computed early so direction
-        # check can use it before building R.
-        p_nom = p_ref if p_ref is not None else self.p
-        y = z - p_nom
-        self._last_innovation_norm = float(np.linalg.norm(y))
-        self._last_uwb_residual_rms = solve_error
-
-        # Hard reject on large UWB↔IMU position disagreement before it can
-        # destabilise K or P (a clean trilateration can still disagree with
-        # the integrated IMU state after long dead-reckoning).
-        if self._last_innovation_norm > ecfg.innov_hard_reject_m:
-            self._innov_reject_streak += 1
-            # Recovery: if the streak is long enough AND UWB geometry is clean AND
-            # the reading is high-confidence, the filter is the one that is lost —
-            # not the UWB.  Snap back to the UWB position to break the deadlock.
-            if (self._innov_reject_streak >= ecfg.innov_recovery_n
-                    and solve_error <= cfg.uwb.trilat_max_residual
-                    and not quality.get('low_confidence', False)):
-                self._snap_to_uwb(z)
-                self._innov_reject_streak = 0
-                self._uwb_snap_count += 1
-                return True
-            self._uwb_rejected += 1
-            return False
-        self._innov_reject_streak = 0
-
-        # --- ADAPTIVE TRUST LOGIC ---
-        current_speed = float(np.linalg.norm(self.v))
-        is_bad_uwb    = r_scale > 1.05
-        is_fast_move  = current_speed > 0.08
-
-        if not is_bad_uwb:
-            adaptive_multiplier = 1.0
-        elif is_fast_move:
-            adaptive_multiplier = 4.0
-        else:
-            adaptive_multiplier = 1.8
-
-        # Direction-disagreement gate — penalty comes from mode table.
-        # Relaxed during drawing (handwriting has legitimate backward curves).
-        v_norm = current_speed
-        y_norm = self._last_innovation_norm
-        dir_factor = 1.0
-        if v_norm > ecfg.dir_check_v_min and y_norm > ecfg.dir_check_y_min:
-            cosang = float(np.dot(self.v, y) / (v_norm * y_norm))
-            if cosang < ecfg.dir_check_cos_thresh:
-                dir_factor = mode_p.dir_penalty
-        adaptive_multiplier *= dir_factor
-        self._last_dir_factor = dir_factor
-        if dir_factor > 1.0:
-            self._dir_penalty_count += 1
-
-        R = ((sigma * adaptive_multiplier) ** 2) * r_scale * np.eye(2)
-        # ----------------------------
-
-        S = H @ self.P @ H.T + R                  # 2×2
-        K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
-
-        # Phase 4c: per-mode position-gain cap — with stroke-age drift guard.
-        # During strokes (CONTACT_DRAWING / DRAWING_FAST) the base cap is kept
-        # very small so UWB provides only a tiny stabilising nudge — enough to
-        # prevent IMU runaway but not enough to sculpt the letter shape.
-        # The stroke-age multiplier linearly relaxes the cap for long strokes
-        # (> age_ramp_start_s) so geometric shapes get stronger UWB pull while
-        # short handwriting letters keep full IMU shape authority.
-        # During air/idle the mode cap is 1.0 (disabled) so UWB re-anchors freely.
-        cap = min(mode_p.pos_gain_cap * self._stroke_age_cap_mult(self.last_uwb_ts or 0), 1.0)
-        if cap < 1.0:
-            K[0:2, :] = np.clip(K[0:2, :], -cap, cap)
-
-        self._last_K_pos = float(K[0, 0])
-
-        dx = K @ y
-        if not np.all(np.isfinite(dx)):
-            return False
-        
-        if self._prev_stroke_active:
-            # UWB can gently pull ink back to the board reference, but every
-            # accepted correction is limited so it cannot create a visible fold.
-            dx[0:2] = _clip_vec_norm(dx[0:2], 0.018)
-            dx[2:4] = _clip_vec_norm(dx[2:4], 0.025)
-        else:
-            dx[0:2] = _clip_vec_norm(dx[0:2], 0.10)
-            dx[2:4] = _clip_vec_norm(dx[2:4], 0.50)
-        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
-        
-        self.p   += dx[0:2]
-        self.v   += dx[2:4]
-        self.b_a += dx[4:6]
-
-        I = np.eye(6)
-        IKH = I - K @ H
-        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        self._sanitize_covariance()
-        self._apply_covariance_floor()
-        self._sanitize_state()
-
-        return True
-
-    def _interpolate_at(self, ts_uwb: int):
-        """Bracket-and-lerp lookup in the IMU ring buffer.
-
-        Returns (p, v, q) interpolated at ts_uwb, or None when the buffer
-        has fewer than 2 entries or ts_uwb is newer than all buffered states.
+        mapped_position carries the clamped-only signal the filter wants, since
+        the ESKF already models UWB noise and upstream smoothing would only add
+        lag to the correction.
         """
-        if len(self._state_buf) < 2:
+
+        mapped = event.get('mapped_position')
+        if mapped:
+            return np.asarray(
+                (mapped['board_width_x'], mapped['board_height_y']), dtype=float
+            )
+
+        fallback = event.get('pos_clean') or event.get('pos_raw')
+        if fallback is None:
             return None
+        return np.asarray(fallback, dtype=float)
 
-        buf = list(self._state_buf)   # oldest → newest
+    def _correct_for_lever_arm(
+        self, measurement: np.ndarray, attitude: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """
+        Shift a UWB tag fix to the pen tip.
 
-        # UWB timestamp predates the oldest buffered IMU state — use oldest.
-        if ts_uwb <= buf[0][0]:
-            _, p0, v0, q0 = buf[0]
-            return p0.copy(), v0.copy(), q0.copy()
+        The tag sits at the back of the marker, so with the pen held
+        perpendicular the board-plane offset is near zero, but at a 30 degree
+        tilt it reaches roughly 10 cm - far more than the accuracy budget.
+        """
 
-        # Find the bracketing pair.
-        for i in range(len(buf) - 1):
-            t1, p1, v1, q1 = buf[i]
-            t2, p2, v2, q2 = buf[i + 1]
-            if t1 <= ts_uwb <= t2:
-                alpha = (ts_uwb - t1) / (t2 - t1) if t2 != t1 else 0.0
-                return (
-                    (1.0 - alpha) * p1 + alpha * p2,
-                    (1.0 - alpha) * v1 + alpha * v2,
-                    _slerp(q1, q2, alpha),
-                )
+        tag_offset_body = np.asarray(cfg.marker.r_uwb_body_m, dtype=float)
+        rotation = quaternion_to_rotation_matrix(attitude)
+        offset_world = rotation @ tag_offset_body
 
-        # ts_uwb is newer than all buffered states — caller uses current p.
+        first_axis, second_axis = board_axis_indices()
+        board_offset = np.array(
+            [offset_world[first_axis], offset_world[second_axis]], dtype=float
+        )
+        return measurement - board_offset, board_offset, offset_world
+
+    def _screen_measurement(
+        self,
+        tip_measurement: np.ndarray,
+        ts_uwb: int,
+        solve_error: float,
+        uwb_quality: dict,
+    ) -> str | None:
+        """Run the admission gates, returning a rejection label or None to accept."""
+
+        mode_parameters = self.modes.current_parameters()
+
+        if gates.exceeds_jump_limit(
+            tip_measurement,
+            ts_uwb,
+            self._last_accepted_tip,
+            self._last_accepted_tip_ts,
+            self.state.speed,
+            mode_parameters.jump_speed_max,
+        ):
+            self.telemetry.uwb_jump_rejected += 1
+            self.telemetry.uwb_rejected += 1
+            return gates.REJECT_JUMP
+
+        if gates.is_unusable_low_confidence(uwb_quality, self._stroke_active_prev):
+            self.telemetry.uwb_rejected += 1
+            return gates.REJECT_LOW_CONFIDENCE
+
+        if gates.is_outside_board(
+            tip_measurement, self.state.board_width, self.state.board_height
+        ):
+            self.telemetry.uwb_rejected += 1
+            return gates.REJECT_BOARD_MARGIN
+
+        # Lever-arm correction needs a real attitude; before the first IMU frame
+        # the identity quaternion would place the tip at an arbitrary offset.
+        if not self._have_imu_attitude:
+            self.telemetry.uwb_rejected += 1
+            return gates.REJECT_AWAITING_IMU
+
         return None
 
-    def _snap_to_uwb(self, z: np.ndarray):
-        """Soft re-localization after innovation-gate deadlock.
-
-        Sets position to z, zeros velocity, and resets the position/velocity
-        covariance blocks to their initial widths.  Bias estimate is preserved
-        so convergence from prior good epochs is not discarded.
-        Called only when innov_reject_streak >= innov_recovery_n with clean UWB.
+    def _bootstrap_if_first_fix(
+        self, tip_measurement: np.ndarray, ts: int, ts_uwb: int, solve_error: float
+    ) -> dict | None:
         """
-        ecfg = cfg.fusion_eskf
-        self.p[:] = z
-        self.v[:] = 0.0
-        self.P[0, 0] = self.P[1, 1] = ecfg.p0_pos ** 2
-        self.P[2, 2] = self.P[3, 3] = ecfg.p0_vel ** 2
-        self.P[0:4, 4:6] = 0.0
-        self.P[4:6, 0:4] = 0.0
-        self._apply_covariance_floor()
+        Hard-snap onto the first good fix instead of gating against a default state.
 
-    def _apply_covariance_floor(self):
-        ecfg  = cfg.fusion_eskf
-        mode_p = self._mode_params()
-        pos_floor = mode_p.pos_floor ** 2
-        pos_cap   = (mode_p.pos_floor * ecfg.pos_cap_mult) ** 2
-        vel_floor = ecfg.vel_floor ** 2
-        self._last_pos_floor_used = pos_floor
-        self._last_pos_cap_used   = pos_cap
-
-        for i in [0, 1]:
-            self.P[i, i] = min(max(self.P[i, i], pos_floor), pos_cap)
-
-        for i in [2, 3]:
-            self.P[i, i] = max(self.P[i, i], vel_floor)
-
-        # Hard numerical cap on the entire covariance matrix to prevent the
-        # off-diagonal cross-terms (position-velocity coupling from F·P·Fᵀ)
-        # from growing large enough to overflow the Joseph-form matmul.
-        # 1e6 is far above any physically meaningful covariance for a 1.25×1.20 m board.
-        np.clip(self.P, -1e6, 1e6, out=self.P)
-
-    def _reset_covariance(self):
-        ecfg = cfg.fusion_eskf
-        diag = np.array([
-            ecfg.p0_pos,  ecfg.p0_pos,
-            ecfg.p0_vel,  ecfg.p0_vel,
-            ecfg.p0_bias, ecfg.p0_bias,
-        ]) ** 2
-        self.P = np.diag(diag)
-        # Snap position to last known UWB tip to prevent a finite-but-wrong p
-        # from being emitted as a teleport line on the next frame.
-        if self.last_uwb_tip is not None and np.all(np.isfinite(self.last_uwb_tip)):
-            self.p[:] = self.last_uwb_tip
-        else:
-            self.p[:] = np.array([self._board_w * 0.5, self._board_h * 0.5])
-        self.v[:] = 0.0
-        self.b_a[:] = 0.0
-        self.b_p[:] = 0.0
-        self._cov_reset_suppress = True  # suppress the very next emit to avoid a teleport segment
-        self._cov_resets += 1
-        print(f"[ESKF] P became non-finite — covariance reset (total: {self._cov_resets})")
-
-    def _sanitize_covariance(self):
-        if not np.all(np.isfinite(self.P)):
-            self._reset_covariance()
-            return
-        # Force symmetry to counteract float accumulation drift
-        self.P = 0.5 * (self.P + self.P.T)
-        # Clamp bias-block diagonal — nothing else constrains it when sigma_b_a is tiny
-        for i in [4, 5]:
-            self.P[i, i] = max(1e-10, min(self.P[i, i], 0.25))
-
-    def _sanitize_state(self):
-        if not np.all(np.isfinite(self.b_a)):
-            self.b_a[:] = 0.0
-        if not np.all(np.isfinite(self.v)):
-            self.v[:] = 0.0
-        if not np.all(np.isfinite(self.p)):
-            self.p[:] = np.array([self._board_w * 0.5, self._board_h * 0.5])
-        if not np.all(np.isfinite(self.b_p)):
-            self.b_p[:] = 0.0
-
-    # ────────────────────────────────────────────────────────────────────────
-    # Filter math
-    # ────────────────────────────────────────────────────────────────────────
-    def _build_F(self, dt: float) -> np.ndarray:
-        """Error-state transition. Blocks (δp, δv, δb_a) of 2 each.
-
-        Since  a_true = acc_board − b_a,  p̈ = a_true,  v̇ = a_true:
-            ∂δp/∂δv   =  dt · I
-            ∂δp/∂δb_a = −0.5·dt² · I
-            ∂δv/∂δb_a = −dt · I
+        The filter starts at board centre, which is almost certainly wrong, so
+        the first clean measurement is treated as truth rather than an outlier.
         """
-        F = np.eye(6)
-        I2 = np.eye(2)
-        F[0:2, 2:4] = dt * I2
-        F[0:2, 4:6] = -0.5 * dt * dt * I2
-        F[2:4, 4:6] = -dt * I2
-        return F
 
-    def _build_Q(self, dt: float) -> np.ndarray:
-        """Discrete-time process noise.
-
-        Accel white-noise (σ_a) enters via the kinematic chain — it couples
-        δp and δv with cross-covariance. Bias random walk (σ_b_a) drives
-        only the δb_a block. σ_a is inflated during sharp-stroke windows
-        (turn_flag=True) so UWB can correct shape aggressively at corners.
-        """
-        ecfg = cfg.fusion_eskf
-        sa_eff = ecfg.sigma_a * (ecfg.turn_k_q if self._turn_flag_last else 1.0)
-        sa2 = sa_eff * sa_eff
-        sb2 = ecfg.sigma_b_a * ecfg.sigma_b_a
-
-        I2 = np.eye(2)
-        Q = np.zeros((6, 6))
-        # δp–δp
-        Q[0:2, 0:2] = 0.25 * sa2 * dt ** 4 * I2
-        # δp–δv (cross, both signs)
-        Q[0:2, 2:4] = 0.50 * sa2 * dt ** 3 * I2
-        Q[2:4, 0:2] = 0.50 * sa2 * dt ** 3 * I2
-        # δv–δv
-        Q[2:4, 2:4] = sa2 * dt * dt * I2
-        # δb_a–δb_a
-        Q[4:6, 4:6] = sb2 * dt * I2
-        return Q
-
-    def _zupt_update(self):
-        """Kalman update for the zero-velocity pseudo-measurement (z = 0)."""
-        self._zupt_fires += 1
-        self._zupt_soft_update(sigma=cfg.fusion_eskf.sigma_zupt)
-
-    def _zupt_soft_update(self, sigma: float):
-        """Zero-velocity pseudo-measurement with caller-supplied noise sigma."""
-        H = np.zeros((2, 6))
-        H[0, 2] = 1.0
-        H[1, 3] = 1.0
-
-        R = (sigma ** 2) * np.eye(2)
-
-        # Innovation y = z − H·x_nom  with z = 0  →  y = −v_nom
-        y = -self.v.copy()
-
-        S = H @ self.P @ H.T + R                  # 2×2
-        K = self.P @ H.T @ np.linalg.inv(S)       # 6×2
-
-        dx = K @ y                                # 6-vec
-        if not np.all(np.isfinite(dx)):
-            return
-        dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
-        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
-        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
-        self.p   += dx[0:2]
-        self.v   += dx[2:4]
-        self.b_a += dx[4:6]
-
-        # Joseph-form covariance update (numerically stable).
-        I  = np.eye(6)
-        IKH = I - K @ H
-        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        self._sanitize_covariance()
-        self._apply_covariance_floor()
-        self._sanitize_state()
-
-    def _stroke_start_uwb_snap(self, ts: int):
-        """Soft UWB position pseudo-measurement on pen-down rising edge.
-
-        Pulls the filter's position toward the last known UWB fix so each
-        stroke starts at the correct board location.  Only fires when a fresh
-        UWB fix is available (age < stroke_start_uwb_max_age_s).
-        """
-        ecfg = cfg.fusion_eskf
-        # Use the last ACCEPTED lever-arm-corrected UWB tip target, not the raw
-        # UWB tag position. Snapping to the raw tag can inject a tip/tag offset
-        # at pen-down and starts the stroke with a hidden placement error.
-        if self._last_z_tip is None or self._last_z_tip_ts is None:
-            return
-        age_s = (ts - self._last_z_tip_ts) / 1_000_000.0
-        if age_s > ecfg.stroke_start_uwb_max_age_s:
-            return
-        target = self._last_z_tip.copy()
-
-        H = np.zeros((2, 6))
-        H[0, 0] = 1.0
-        H[1, 1] = 1.0
-
-        sigma = ecfg.sigma_uwb * ecfg.stroke_start_sigma_scale
-        R = (sigma ** 2) * np.eye(2)
-
-        y = target - self.p
-        S = H @ self.P @ H.T + R
-        K = self.P @ H.T @ np.linalg.inv(S)
-
-        dx = K @ y
-        if not np.all(np.isfinite(dx)):
-            return
-        dx[0:2] = np.clip(dx[0:2], -0.15, 0.15)
-        dx[2:4] = np.clip(dx[2:4], -0.50, 0.50)
-        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
-        self.p   += dx[0:2]
-        self.v   += dx[2:4]
-        self.b_a += dx[4:6]
-
-        I = np.eye(6)
-        IKH = I - K @ H
-        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        self._sanitize_covariance()
-        self._apply_covariance_floor()
-        self._sanitize_state()
-        self._stroke_start_snaps += 1
-
-    def _velocity_pseudo_update(self, v_meas: np.ndarray, sigma: float):
-        """Kalman update for a UWB-derived velocity pseudo-measurement.
-
-        H = [0 I 0]  (velocity block at columns 2–3).
-        Innovation y = v_meas − v_nom.
-        Uses the same Joseph-form update as ZUPT for numerical stability.
-        """
-        H = np.zeros((2, 6))
-        H[0, 2] = 1.0
-        H[1, 3] = 1.0
-
-        R = (sigma ** 2) * np.eye(2)
-        y = v_meas - self.v
-
-        S   = H @ self.P @ H.T + R
-        K   = self.P @ H.T @ np.linalg.inv(S)
-
-        dx = K @ y
-        if not np.all(np.isfinite(dx)):
-            return
-        if self._prev_stroke_active:
-            # Safety: a UWB-derived velocity update must never teleport active ink.
-            # With uwb_vel_stroke_gate=True this branch should normally not run,
-            # but keeping it here prevents future config changes from reintroducing
-            # the 8-11 cm in-stroke fold observed in the visualizer.
-            dx[0:2] = 0.0
-            dx[2:4] = np.clip(dx[2:4], -0.15, 0.15)
-        else:
-            dx[0:2] = np.clip(dx[0:2], -0.08, 0.08)
-            dx[2:4] = np.clip(dx[2:4], -1.50, 1.50)
-        dx[4:6] = np.clip(dx[4:6], -0.03, 0.03)
-        self._vel_pseudo_applied = True
-        self._vel_pseudo_dx_pos = dx[0:2].copy()
-        self._vel_pseudo_dx_vel = dx[2:4].copy()
-        self.p   += dx[0:2]
-        self.v   += dx[2:4]
-        self.b_a += dx[4:6]
-
-        I   = np.eye(6)
-        IKH = I - K @ H
-        self.P = IKH @ self.P @ IKH.T + K @ R @ K.T
-        self._sanitize_covariance()
-        self._apply_covariance_floor()
-        self._sanitize_state()
-
-    # ────────────────────────────────────────────────────────────────────────
-    # Helpers
-    # ────────────────────────────────────────────────────────────────────────
-    def _update_omega_and_turn(self, q_new: np.ndarray, dt_s: float,
-                               current_jerk: float = 0.0,
-                               omega_world_ev=None):
-        """Derive in-plane angular velocity; update turn flag.
-
-        omega_world_ev — precomputed world-frame ω (3-tuple) from the IMU
-        preprocessor's rigid-body block.  When supplied, the quaternion-diff
-        derivation is skipped (single source of truth, no duplicate math).
-        Falls back to Δquat when the field is absent (e.g. older recordings).
-
-        ω ≈ 2·(q_k ⊗ q_{k-1}⁻¹).xyz / dt  (small-angle, fallback only).
-        If ω_in_plane exceeds threshold AND jerk is high, inflate Q for
-        turn_n_post frames (corner detection).
-        """
-        ecfg = cfg.fusion_eskf
-
-        if omega_world_ev is not None:
-            # Fast path — use precomputed ω from imu.py (avoids duplicate quat diff).
-            omega_world = np.asarray(omega_world_ev, dtype=float)
-            axis_map = {'x': 0, 'y': 1, 'z': 2}
-            ax0 = axis_map[cfg.imu.board_axes[0]]
-            ax1 = axis_map[cfg.imu.board_axes[1]]
-            ω_ip = math.sqrt(float(omega_world[ax0])**2 + float(omega_world[ax1])**2)
-            self._omega_in_plane_last = ω_ip
-        elif self._prev_quat is not None and dt_s > 1e-6:
-            # Fallback path — derive ω from consecutive quaternions.
-            q_delta = _quat_multiply(q_new, _quat_conjugate(self._prev_quat))
-            if q_delta[3] < 0:           # choose shorter arc
-                q_delta = -q_delta
-            omega_body  = 2.0 * q_delta[0:3] / dt_s
-            omega_world = _q_to_rotation(q_new) @ omega_body
-
-            axis_map = {'x': 0, 'y': 1, 'z': 2}
-            ax0 = axis_map[cfg.imu.board_axes[0]]
-            ax1 = axis_map[cfg.imu.board_axes[1]]
-            ω_ip = math.sqrt(omega_world[ax0]**2 + omega_world[ax1]**2)
-            self._omega_in_plane_last = ω_ip
-        else:
-            self._omega_in_plane_last = 0.0
-
-        # Turn detection: corner only when turning fast AND jerk is high,
-        # sustained for turn_arm_n consecutive samples.  The arm counter
-        # de-noises single-sample vibration spikes that plagued fast writing
-        # (median jerk 600–760 m/s³ was tripping the old hardcoded 800 threshold).
-        is_turning = self._omega_in_plane_last > ecfg.turn_omega_threshold
-        is_jerky   = current_jerk > ecfg.turn_jerk_threshold
-        if is_turning and is_jerky:
-            self._turn_arm_count += 1
-            if self._turn_arm_count >= ecfg.turn_arm_n:
-                self._turn_cooldown = ecfg.turn_n_post
-        else:
-            self._turn_arm_count = max(0, self._turn_arm_count - 1)
-
-        if self._turn_cooldown > 0:
-            self._turn_flag_last = True
-            self._turn_cooldown -= 1
-        else:
-            self._turn_flag_last = False
-
-        self._prev_quat = q_new.copy()
-
-    def _uwb_lever_arm_board(self, q: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-        """Return (2D board-plane offset, full 3-vector r_world) from tip to UWB tag.
-
-        r_UWB_body is rotated to world frame via q, then projected onto the board
-        plane defined by cfg.imu.board_axes.  For a perpendicular pen the 2D offset
-        is ~0; for a tilted pen it is real.  The full r_world is returned for
-        diagnostics (log lever_r_world to verify perpendicular-hold assumption).
-        """
-        r_body  = np.asarray(cfg.marker.r_uwb_body_m, dtype=float)
-        R       = _q_to_rotation(q)
-        r_world = R @ r_body
-
-        axis_map = {'x': 0, 'y': 1, 'z': 2}
-        ax0 = axis_map[cfg.imu.board_axes[0]]
-        ax1 = axis_map[cfg.imu.board_axes[1]]
-        return np.array([r_world[ax0], r_world[ax1]], dtype=float), r_world
-
-    def _advance_imu_clock(self, ts: int) -> float:
-        """Returns dt (s) since the previous IMU event; handles gaps and init."""
-        dt_nom = 1.0 / cfg.imu.sample_rate_hz
-        if self.last_ts is None:
-            self.last_ts = ts
-            return dt_nom
-
-        dt_s = (ts - self.last_ts) / 1_000_000.0
-        self.last_ts = ts
-        if dt_s <= 0.0 or dt_s > 0.5:
-            # Monotonicity / long-gap guard: treat as nominal step.
-            return dt_nom
-        # Soft cap: IMU timestamps can spike 8–10× nominal (hardware jitter).
-        # Clamping prevents 0.5·a·dt² from blowing up on those frames.
-        dt_max = cfg.fusion_eskf.imu_dt_max_mult * dt_nom
-        if dt_s > dt_max:
-            self._dt_clamps += 1
-            return dt_max
-        return dt_s
-
-    def _clamp_to_board(self):
-        self.p[0] = max(0.0, min(self._board_w, self.p[0]))
-        self.p[1] = max(0.0, min(self._board_h, self.p[1]))
-
-    def _fresh_uwb_age_s(self, ts: int) -> float | None:
-        """Age of the last accepted tip-corrected UWB fix, or None if absent."""
-        if self._last_z_tip_ts is None:
+        if self.telemetry.uwb_accepted != 0:
             return None
-        return max(0.0, (ts - self._last_z_tip_ts) / 1_000_000.0)
+        if solve_error > cfg.uwb.trilat_max_residual:
+            return None
 
-    def _contact_static_candidate(self, ev: dict, acc: np.ndarray, stroke_state: str) -> bool:
-        """Return True when the physical tip should be treated as planted.
+        self.state.position[:] = tip_measurement
+        self.state.velocity[:] = 0.0
+        self.telemetry.innovation_norm = 0.0
+        self.telemetry.position_gain = 1.0
+        self._last_uwb_anchor_ts = ts_uwb
+        self._record_accepted_fix(tip_measurement, ts_uwb)
+        self.telemetry.uwb_accepted += 1
+        self.state.clamp_to_board()
+        return self._emit(ts, 'POSITION', STATE_UWB_BOOTSTRAP, 0, False)
 
-        CONTACT_STATIC from contact.py is the primary signal.  The threshold path
-        is a compatibility fallback for logs where the substate is not populated
-        or where a debounced transition is lagging by a frame or two.
+    def _correct_with_uwb(
+        self,
+        tip_measurement: np.ndarray,
+        reference_position: np.ndarray | None,
+        solve_error: float,
+        uwb_quality: dict,
+    ) -> bool:
         """
-        ecfg = cfg.fusion_eskf
-        if not ecfg.contact_static_lock_enabled:
+        Apply the Kalman position correction for an admitted UWB fix.
+
+        Returns False when the fix was rejected inside the update, either by the
+        NLOS residual gate or the innovation gate.
+        """
+
+        eskf_cfg = cfg.fusion_eskf
+
+        if gates.exceeds_nlos_residual(solve_error):
+            self.telemetry.innovation_norm = 0.0
+            self.telemetry.nlos_scale = eskf_cfg.r_scale_max
             return False
 
-        if stroke_state == 'CONTACT_STATIC':
+        nlos_scale = gates.nlos_noise_scale(solve_error)
+        self.telemetry.nlos_scale = nlos_scale
+
+        mode_parameters = self.modes.current_parameters()
+        base_sigma = (
+            eskf_cfg.sigma_uwb
+            * mode_parameters.sigma_scale
+            * gates.quality_noise_multiplier(uwb_quality)
+        )
+
+        nominal_position = reference_position if reference_position is not None else self.state.position
+        innovation = tip_measurement - nominal_position
+        innovation_norm = float(np.linalg.norm(innovation))
+        self.telemetry.innovation_norm = innovation_norm
+        self.telemetry.uwb_residual_rms = solve_error
+
+        innovation_verdict = self._screen_innovation(
+            innovation_norm, tip_measurement, solve_error, uwb_quality
+        )
+        if innovation_verdict is not None:
+            return innovation_verdict
+        self.telemetry.innovation_reject_streak = 0
+
+        trust_multiplier = gates.adaptive_trust_multiplier(nlos_scale, self.state.speed)
+
+        direction_factor = gates.direction_disagreement_penalty(
+            self.state.velocity,
+            innovation,
+            self.state.speed,
+            innovation_norm,
+            mode_parameters.dir_penalty,
+        )
+        trust_multiplier *= direction_factor
+        self.telemetry.direction_factor = direction_factor
+        if direction_factor > 1.0:
+            self.telemetry.direction_penalty_count += 1
+
+        measurement_noise = ((base_sigma * trust_multiplier) ** 2) * nlos_scale * np.eye(2)
+
+        gain_cap = min(
+            mode_parameters.pos_gain_cap
+            * self.modes.stroke_age_gain_multiplier(self._last_uwb_ts or 0),
+            1.0,
+        )
+
+        limits = (
+            ErrorStateClipLimits(
+                position_m=_ACTIVE_POSITION_CLIP_M,
+                velocity_ms=_ACTIVE_VELOCITY_CLIP_MS,
+                clip_position_by_norm=True,
+                clip_velocity_by_norm=True,
+            )
+            if self._stroke_active_prev
+            else ErrorStateClipLimits(
+                position_m=_AIR_POSITION_CLIP_M,
+                velocity_ms=_AIR_VELOCITY_CLIP_MS,
+                clip_position_by_norm=True,
+                clip_velocity_by_norm=True,
+            )
+        )
+
+        applied, _, position_gain = apply_measurement_update(
+            state=self.state,
+            observation_matrix=position_observation_matrix(),
+            innovation=innovation,
+            measurement_noise=measurement_noise,
+            limits=limits,
+            gain_cap=gain_cap,
+        )
+        self.telemetry.position_gain = position_gain
+        return applied
+
+    def _screen_innovation(
+        self,
+        innovation_norm: float,
+        tip_measurement: np.ndarray,
+        solve_error: float,
+        uwb_quality: dict,
+    ) -> bool | None:
+        """
+        Decide the fate of a fix that disagrees wildly with the integrated state.
+
+        A UWB-versus-IMU gap this large is non-physical for board writing, and
+        letting it through would destabilise the gain and covariance. But a long
+        rejection streak against consistently clean geometry means the filter is
+        the one that is lost, so it re-localizes instead of rejecting forever.
+
+        Returns None when the fix is within tolerance and the caller should
+        continue the normal update, True when a re-localization already handled
+        it, and False when the fix was rejected outright.
+        """
+
+        eskf_cfg = cfg.fusion_eskf
+
+        if innovation_norm <= eskf_cfg.innov_hard_reject_m:
+            return None
+
+        self.telemetry.innovation_reject_streak += 1
+
+        deadlocked = (
+            self.telemetry.innovation_reject_streak >= eskf_cfg.innov_recovery_n
+            and solve_error <= cfg.uwb.trilat_max_residual
+            and not uwb_quality.get('low_confidence', False)
+        )
+        if deadlocked:
+            self.state.snap_to_uwb(tip_measurement)
+            self.telemetry.innovation_reject_streak = 0
+            self.telemetry.uwb_snap_count += 1
             return True
 
-        # Fallback: raw/contact + stillness + low predicted speed + low angular
-        # motion.  This avoids false locking during actual drawing corners.
-        contact_like = bool(ev.get('contact', False)) or stroke_state in ('CONTACT_DRAWING', 'CONTACT_STATIC')
-        if not contact_like or not bool(ev.get('is_static', False)):
-            return False
+        self.telemetry.uwb_rejected += 1
+        return False
 
-        speed = float(np.linalg.norm(self.v))
-        amag = float(np.linalg.norm(acc))
-        omega = abs(float(self._omega_in_plane_last))
-        return (
-            speed <= ecfg.contact_static_lock_speed_thresh_ms and
-            amag <= ecfg.contact_static_lock_acc_thresh_ms2 and
-            omega <= ecfg.contact_static_lock_omega_thresh_rads
+    def _record_accepted_fix(self, tip_measurement: np.ndarray, ts_uwb: int) -> None:
+        """Remember an accepted fix as the reference for later gates and guards."""
+
+        self._last_accepted_tip = tip_measurement.copy()
+        self._last_accepted_tip_ts = ts_uwb
+        self.state.last_uwb_tip = tip_measurement.copy()
+        self._last_uwb_anchor_ts = ts_uwb
+
+    def _track_position_bias(self, tip_measurement: np.ndarray) -> None:
+        """
+        Nudge the global placement bias toward UWB during active ink.
+
+        Corrections land in position_bias rather than position, so the visible
+        output drifts toward UWB while the relative IMU stroke shape held in
+        position is left untouched. Frozen outside strokes, where the main
+        filter corrects position directly.
+        """
+
+        if not self._stroke_active_prev:
+            return
+
+        eskf_cfg = cfg.fusion_eskf
+        placement_error = tip_measurement - self.state.visible_position
+        self.state.position_bias += eskf_cfg.bias_uwb_alpha * placement_error
+
+        cap = eskf_cfg.bias_max_m
+        self.state.position_bias[0] = float(np.clip(self.state.position_bias[0], -cap, cap))
+        self.state.position_bias[1] = float(np.clip(self.state.position_bias[1], -cap, cap))
+
+    def _maybe_anchor_velocity(
+        self, tip_measurement: np.ndarray, ts_uwb: int, solve_error: float
+    ) -> None:
+        """
+        Derive a velocity measurement from consecutive UWB fixes and apply it.
+
+        Skipped during fast mode and, by default, during any active stroke:
+        anchoring velocity to UWB geometry cancels exactly the IMU shape
+        authority those modes exist to grant.
+        """
+
+        eskf_cfg = cfg.fusion_eskf
+        self._uwb_velocity_history.append((ts_uwb, tip_measurement.copy(), solve_error))
+
+        if self.modes.in_fast_mode:
+            return
+        if eskf_cfg.uwb_vel_stroke_gate and self._stroke_active_prev:
+            return
+        if len(self._uwb_velocity_history) < 3:
+            return
+
+        (oldest_ts, oldest_pos, oldest_err), (_, _, middle_err), (newest_ts, newest_pos, newest_err) = (
+            self._uwb_velocity_history[-3],
+            self._uwb_velocity_history[-2],
+            self._uwb_velocity_history[-1],
         )
 
-    def _make_contact_lock_anchor(self, ts: int, pen_down_phase: bool) -> tuple[np.ndarray, float]:
-        """Visible-position anchor for stationary contact.
+        # A central difference is only meaningful if every sample it spans has
+        # clean geometry; one bad fix would dominate the derivative.
+        if max(oldest_err, middle_err, newest_err) >= eskf_cfg.sigma_trilat:
+            return
 
-        Before the logical stroke opens, UWB is allowed to dominate because no ink
-        should be committed yet.  During an active stroke, the anchor is mostly the
-        current visible fused point so micro-pauses do not snap the drawn letter.
+        span_s = (newest_ts - oldest_ts) / 1_000_000.0
+        if not (_UWB_VELOCITY_MIN_SPAN_S < span_s < _UWB_VELOCITY_MAX_SPAN_S):
+            return
+
+        uwb_velocity = (newest_pos - oldest_pos) / span_s
+        if float(np.linalg.norm(uwb_velocity)) >= _UWB_VELOCITY_MAX_PLAUSIBLE_MS:
+            return
+
+        # Roughly 5 cm of UWB noise over 50 ms reads as 1 m/s. Without this gate
+        # that spurious velocity integrated into 40+ cm position excursions.
+        deviation = float(np.linalg.norm(uwb_velocity - self.state.velocity))
+        if deviation > eskf_cfg.uwb_vel_dev_max:
+            return
+
+        average_error = (oldest_err + middle_err + newest_err) / 3.0
+        geometry_ratio = average_error / eskf_cfg.sigma_trilat
+        sigma = eskf_cfg.sigma_uwb_vel * max(eskf_cfg.sigma_uwb_vel_min_scale, geometry_ratio)
+        self.telemetry.velocity_sigma_effective = sigma
+
+        self._apply_velocity_pseudo_measurement(uwb_velocity, sigma)
+        self._last_uwb_anchor_ts = ts_uwb
+
+    def _apply_velocity_pseudo_measurement(self, measured_velocity: np.ndarray, sigma: float) -> None:
+        """Correct velocity from a UWB-derived estimate without moving active ink."""
+
+        # Position is frozen during a stroke as a hard safety property: with the
+        # stroke gate enabled this path should not run at all, but freezing it
+        # here means a future config change cannot reintroduce the 8-11 cm
+        # in-stroke fold this once produced.
+        limits = (
+            ErrorStateClipLimits(position_m=0.0, velocity_ms=0.15, freeze_position=True)
+            if self._stroke_active_prev
+            else ErrorStateClipLimits(position_m=0.08, velocity_ms=1.50)
+        )
+
+        applied, error_state, _ = apply_measurement_update(
+            state=self.state,
+            observation_matrix=velocity_observation_matrix(),
+            innovation=measured_velocity - self.state.velocity,
+            measurement_noise=(sigma ** 2) * np.eye(2),
+            limits=limits,
+        )
+        if not applied:
+            return
+
+        self.telemetry.velocity_pseudo_applied = True
+        self.telemetry.velocity_pseudo_position_delta = error_state[0:2].copy()
+        self.telemetry.velocity_pseudo_velocity_delta = error_state[2:4].copy()
+
+    # -------------------------------------------------------------------------
+    # Timing and attitude
+    # -------------------------------------------------------------------------
+
+    def _advance_imu_clock(self, ts: int) -> float:
+        """Return seconds since the previous IMU event, guarding against jitter."""
+
+        nominal_dt = 1.0 / cfg.imu.sample_rate_hz
+
+        if self._last_imu_ts is None:
+            self._last_imu_ts = ts
+            return nominal_dt
+
+        dt_s = (ts - self._last_imu_ts) / 1_000_000.0
+        self._last_imu_ts = ts
+
+        if dt_s <= 0.0 or dt_s > 0.5:
+            return nominal_dt
+
+        # Hardware timestamps occasionally spike to 8-10x nominal; unclamped,
+        # the 0.5 * a * dt^2 term on those frames blows up the position.
+        max_dt = cfg.fusion_eskf.imu_dt_max_mult * nominal_dt
+        if dt_s > max_dt:
+            self.telemetry.dt_clamps += 1
+            return max_dt
+
+        return dt_s
+
+    def _uwb_staleness_factor(self, ts: int) -> float:
         """
-        ecfg = cfg.fusion_eskf
-        visible = self.p + self.b_p
-        blend = 0.0
-        age_s = self._fresh_uwb_age_s(ts)
-        if age_s is not None and age_s <= ecfg.contact_static_lock_uwb_max_age_s:
-            blend = (
-                ecfg.contact_static_lock_pen_down_uwb_blend
-                if pen_down_phase else
-                ecfg.contact_static_lock_micro_pause_uwb_blend
-            )
-            blend = float(np.clip(blend, 0.0, 1.0))
-        anchor = (1.0 - blend) * visible + blend * self.last_uwb_tip
-        return anchor.astype(float), blend
+        Growth factor applied to process noise and drag when UWB has gone quiet.
 
-    def _release_contact_static_lock(self):
-        self._tip_lock_candidate = False
-        self._tip_lock_active = False
-        self._tip_lock_count = 0
-        self._tip_lock_anchor_visible = None
-        self._tip_lock_correction = 0.0
-        self._tip_lock_uwb_blend = 0.0
-        self._tip_lock_reason = 'OFF'
+        Without a recent absolute anchor, unaided IMU integration error grows
+        unbounded, so uncertainty is inflated to reflect that.
+        """
 
-    def _apply_contact_static_lock(
+        eskf_cfg = cfg.fusion_eskf
+
+        stale_s = 0.0
+        if self._last_uwb_anchor_ts is not None:
+            stale_s = max(0.0, (ts - self._last_uwb_anchor_ts) / 1_000_000.0)
+
+        stale_factor = 1.0
+        if stale_s > eskf_cfg.uwb_window_s:
+            overrun = (stale_s - eskf_cfg.uwb_window_s) / eskf_cfg.uwb_window_s
+            stale_factor = 1.0 + min(eskf_cfg.uwb_stale_max_k, overrun * eskf_cfg.uwb_stale_k)
+
+        self.telemetry.uwb_stale_s = stale_s
+        self.telemetry.stale_factor = stale_factor
+        return stale_factor
+
+    def _update_attitude_and_turn(self, event: dict, dt_s: float) -> None:
+        """Adopt the new attitude and update in-plane angular velocity plus turn state."""
+
+        raw_quaternion = event.get('quat')
+        new_attitude = (
+            np.asarray(raw_quaternion, dtype=float)
+            if raw_quaternion is not None
+            else self.state.attitude.copy()
+        )
+
+        self._update_turn_detection(
+            new_attitude,
+            dt_s,
+            event.get('jerk', 0.0),
+            event.get('omega_world'),
+        )
+
+        self.state.attitude = new_attitude
+        self._have_imu_attitude = True
+
+    def _update_turn_detection(
         self,
-        ts: int,
-        candidate: bool,
-        stroke_active_now: bool,
-        stroke_active_prev: bool,
-        stroke_state: str,
-    ):
-        """Pin the visible tip during contact-stationary periods.
-
-        Covers three cases:
-          1. pen-down stabilization before stroke_active opens,
-          2. CONTACT_STATIC micro-pauses while stroke_active remains true,
-          3. end-hold stabilization before the pen-up edge closes the stroke.
+        new_attitude: np.ndarray,
+        dt_s: float,
+        jerk: float,
+        omega_world_event,
+    ) -> None:
         """
-        ecfg = cfg.fusion_eskf
-        if not ecfg.contact_static_lock_enabled or not candidate:
-            self._release_contact_static_lock()
-            return
+        Track in-plane angular velocity and flag sustained sharp corners.
 
-        self._tip_lock_candidate = True
-        self._tip_lock_count += 1
+        A corner requires both fast rotation and high jerk, sustained across
+        several samples: normal handwriting vibration alone routinely trips
+        either signal on its own, so a single-sample test fires constantly.
+        """
 
-        # If the logical stroke is not open yet, this is a pen-down/start hold.
-        # It should be clamped immediately and strongly UWB-anchored.
-        pen_down_phase = (not stroke_active_now) or (stroke_active_now and not stroke_active_prev)
-        min_frames = 1 if pen_down_phase else max(1, int(ecfg.contact_static_lock_min_frames))
+        eskf_cfg = cfg.fusion_eskf
 
-        if self._tip_lock_anchor_visible is None or pen_down_phase:
-            self._tip_lock_anchor_visible, self._tip_lock_uwb_blend = self._make_contact_lock_anchor(
-                ts, pen_down_phase=pen_down_phase
+        if omega_world_event is not None:
+            # Preferred: imu.py already derived this from the hardware gyro
+            # through its filtering chain, so there is one source of truth.
+            omega_world = np.asarray(omega_world_event, dtype=float)
+            first_axis, second_axis = board_axis_indices()
+            self.telemetry.omega_in_plane = math.sqrt(
+                float(omega_world[first_axis]) ** 2 + float(omega_world[second_axis]) ** 2
             )
-        elif self._tip_lock_active:
-            # During a held micro-pause, optionally let a fresh UWB fix very slowly
-            # trim the anchor without creating a visible snap.
-            anchor_new, blend = self._make_contact_lock_anchor(ts, pen_down_phase=False)
-            self._tip_lock_anchor_visible = (1.0 - blend) * self._tip_lock_anchor_visible + blend * anchor_new
-            self._tip_lock_uwb_blend = blend
+        elif self._previous_attitude is not None and dt_s > 1e-6:
+            # Fallback for recordings that predate the omega_world field.
+            attitude_delta = quaternion_multiply(
+                new_attitude, quaternion_conjugate(self._previous_attitude)
+            )
+            if attitude_delta[3] < 0:
+                attitude_delta = -attitude_delta
 
-        self._tip_lock_reason = 'PENDOWN' if pen_down_phase else ('MICROPAUSE' if stroke_active_now else stroke_state)
+            omega_body = 2.0 * attitude_delta[0:3] / dt_s
+            omega_world = quaternion_to_rotation_matrix(new_attitude) @ omega_body
 
-        # Always kill velocity while the candidate persists; only freeze position
-        # after min_frames for active micro-pauses so actual sharp corners are not
-        # over-clamped by a single borderline static frame.
-        self.v *= float(np.clip(ecfg.contact_static_lock_vel_decay, 0.0, 1.0))
-        if float(np.linalg.norm(self.v)) < ecfg.contact_static_lock_vel_zero_thresh_ms:
-            self.v[:] = 0.0
+            first_axis, second_axis = board_axis_indices()
+            self.telemetry.omega_in_plane = math.sqrt(
+                omega_world[first_axis] ** 2 + omega_world[second_axis] ** 2
+            )
+        else:
+            self.telemetry.omega_in_plane = 0.0
 
-        if self._tip_lock_count < min_frames:
-            self._tip_lock_active = False
-            self._tip_lock_correction = 0.0
-            return
+        is_turning = self.telemetry.omega_in_plane > eskf_cfg.turn_omega_threshold
+        is_jerky = jerk > eskf_cfg.turn_jerk_threshold
 
-        self._tip_lock_active = True
-        visible = self.p + self.b_p
-        correction = (self._tip_lock_anchor_visible - visible) * float(
-            np.clip(ecfg.contact_static_lock_pos_alpha, 0.0, 1.0)
-        )
-        self.p += correction
-        self._tip_lock_correction = float(np.linalg.norm(correction))
+        if is_turning and is_jerky:
+            self.telemetry.turn_arm_count += 1
+            if self.telemetry.turn_arm_count >= eskf_cfg.turn_arm_n:
+                self._turn_cooldown = eskf_cfg.turn_n_post
+        else:
+            self.telemetry.turn_arm_count = max(0, self.telemetry.turn_arm_count - 1)
 
-        # Shrink covariance in the dimensions the physical board constraint just
-        # observed: velocity should be near zero, position should not be wandering.
-        self.P[2, 2] *= float(np.clip(ecfg.contact_static_lock_cov_vel_scale, 0.0, 1.0))
-        self.P[3, 3] *= float(np.clip(ecfg.contact_static_lock_cov_vel_scale, 0.0, 1.0))
-        self.P[0, 0] *= float(np.clip(ecfg.contact_static_lock_cov_pos_scale, 0.0, 1.0))
-        self.P[1, 1] *= float(np.clip(ecfg.contact_static_lock_cov_pos_scale, 0.0, 1.0))
-        self._apply_covariance_floor()
+        if self._turn_cooldown > 0:
+            self.telemetry.turn_detected = True
+            self._turn_cooldown -= 1
+        else:
+            self.telemetry.turn_detected = False
 
-    def _apply_active_uwb_boundary_guard(self, ts: int, active: bool):
-        """Bound active ink around the last accepted tip-corrected UWB point.
+        self._previous_attitude = new_attitude.copy()
 
-        The IMU is still allowed to make the local shape. This guard only fires
-        when the visible state has expanded unrealistically far from the UWB
-        neighbourhood, which is the failure pattern seen in abc/cat tests.
+    def _interpolate_state_at(self, ts_uwb: int):
         """
-        ecfg = cfg.fusion_eskf
-        if self._tip_lock_active:
-            # The stationary-contact clamp is a stronger physical constraint than
-            # the UWB boundary guard: while the tip is planted, hold the lock anchor.
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
-        if not active or not ecfg.active_uwb_guard_enabled:
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
-        if self._last_z_tip_ts is None:
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
-        age_s = max(0.0, (ts - self._last_z_tip_ts) / 1_000_000.0)
-        if age_s > ecfg.active_uwb_guard_max_age_s:
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
+        Look up the nominal state at a UWB timestamp from the IMU history buffer.
 
-        visible = self.p + self.b_p
-        delta = visible - self.last_uwb_tip
-        dist = float(np.linalg.norm(delta))
-        radius = float(ecfg.active_uwb_guard_radius_m)
-        if not np.isfinite(dist) or dist < 1e-9:
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
+        Returns (position, velocity, attitude), or None when the buffer is too
+        short or the timestamp is newer than every stored sample.
+        """
 
-        # Tethered visual-test logic: if the fused state is already drifting
-        # away from the UWB neighbourhood, remove the outward velocity component
-        # before it integrates into an oversized loop. Tangential velocity is
-        # preserved, so corners/curves can still be IMU-shaped.
-        unit = delta / dist
-        soft_radius = max(0.020, 0.60 * radius)
-        if dist > soft_radius:
-            outward_v = float(np.dot(self.v, unit))
-            if outward_v > 0.0:
-                damp = float(np.clip(ecfg.active_uwb_outward_velocity_damping, 0.0, 1.0))
-                self.v -= unit * outward_v * damp
+        if len(self._state_history) < 2:
+            return None
 
-        if dist <= radius:
-            self._active_uwb_guard_fired = False
-            self._active_uwb_guard_correction = 0.0
-            return
+        history = list(self._state_history)
 
-        target_visible = self.last_uwb_tip + delta * (radius / dist)
-        correction = (target_visible - visible) * float(ecfg.active_uwb_guard_alpha)
-        self.p += correction
-        # If the guard fired, residual velocity is probably the cause; damp it.
-        self.v *= 0.55
-        self._active_uwb_guard_fired = True
-        self._active_uwb_guard_correction = float(np.linalg.norm(correction))
+        if ts_uwb <= history[0][0]:
+            _, position, velocity, attitude = history[0]
+            return position.copy(), velocity.copy(), attitude.copy()
 
-    def _emit(self, ts: int, source: str, state: str, sid: int, active: bool) -> dict:
-        self._apply_active_uwb_boundary_guard(ts, active)
-        # After a covariance reset the position was just re-anchored to UWB; suppress
-        # stroke_active for this one frame so the visualizer breaks the polyline rather
-        # than connecting the last good ink point to the snapped reset position.
-        if self._cov_reset_suppress:
-            self._cov_reset_suppress = False
-            active = False
-        # Visible output = p + b_p.  During drawing b_p provides a slow global
-        # offset correction; during air b_p is frozen near zero (decayed on pen-up).
-        p_out_x = float(np.clip(self.p[0] + self.b_p[0], 0.0, self._board_w))
-        p_out_y = float(np.clip(self.p[1] + self.b_p[1], 0.0, self._board_h))
+        for index in range(len(history) - 1):
+            earlier_ts, earlier_p, earlier_v, earlier_q = history[index]
+            later_ts, later_p, later_v, later_q = history[index + 1]
+            if earlier_ts <= ts_uwb <= later_ts:
+                fraction = (
+                    (ts_uwb - earlier_ts) / (later_ts - earlier_ts)
+                    if later_ts != earlier_ts
+                    else 0.0
+                )
+                return (
+                    (1.0 - fraction) * earlier_p + fraction * later_p,
+                    (1.0 - fraction) * earlier_v + fraction * later_v,
+                    slerp(earlier_q, later_q, fraction),
+                )
+
+        return None
+
+    def _accepted_tip_age_s(self, ts: int) -> float | None:
+        """Age of the last accepted tip-corrected UWB fix, or None if there is none."""
+
+        if self._last_accepted_tip_ts is None:
+            return None
+        return max(0.0, (ts - self._last_accepted_tip_ts) / 1_000_000.0)
+
+    # -------------------------------------------------------------------------
+    # Output
+    # -------------------------------------------------------------------------
+
+    def _emit(
+        self, ts: int, source: str, state_label: str, stroke_id: int, stroke_active: bool
+    ) -> dict:
+        """Build the fused output event for the current filter state."""
+
+        self.boundary_guard.apply(
+            state=self.state,
+            ts=ts,
+            stroke_active=stroke_active,
+            tip_locked=self.tip_lock.active,
+            last_tip_ts=self._last_accepted_tip_ts,
+        )
+
+        # After a covariance reset the position was just re-anchored, so the
+        # stroke is broken for one frame rather than drawing a line from the
+        # last good ink point to the snapped position.
+        if self.state.suppress_next_emit:
+            self.state.suppress_next_emit = False
+            stroke_active = False
+
+        visible = self.state.visible_position
+        output_x = float(np.clip(visible[0], 0.0, self.state.board_width))
+        output_y = float(np.clip(visible[1], 0.0, self.state.board_height))
+
         return {
             'ts_hw': ts,
             'source': source,
-            'fused_x': p_out_x,
-            'fused_y': p_out_y,
-            'uwb_x': float(self.last_uwb[0]),
-            'uwb_y': float(self.last_uwb[1]),
-            'state': state,
-            'fusion_mode': self._mode_name(),
-            'stroke_id': sid,
-            'stroke_active': active,
-            'eskf': {
-                'P_pos_trace':       float(np.sqrt(self.P[0, 0] + self.P[1, 1])),
-                'innovation_norm':   self._last_innovation_norm,
-                'r_scale':           self._last_r_scale,
-                'K_pos_diag':        self._last_K_pos,
-                'b_a_norm':          float(np.linalg.norm(self.b_a)),
-                'uwb_residual_rms':  self._last_uwb_residual_rms,
-                'omega_in_plane':    self._omega_in_plane_last,
-                'turn_flag':         self._turn_flag_last,
-                'drawing_fast':      self._in_fast_mode,
-                'fast_arm_count':    self._fast_arm_count,
-                'fast_burst_count':  self._fast_burst_count,
-                'b_a':               (float(self.b_a[0]), float(self.b_a[1])),
-                'uwb_accepted':      self._uwb_accepted,
-                'uwb_rejected':      self._uwb_rejected,
-                # Lever-arm diagnostics (updated on every UWB frame; 0/zeros on IMU frames)
-                'lever_arm_m':       self._last_lever_arm_m,
-                'lever_r_world':     tuple(float(v) for v in self._last_lever_r_world),
-                'z_uwb_raw':         tuple(float(v) for v in self._last_z_uwb_raw),
-                'z_uwb_tip':         tuple(float(v) for v in self._last_z_uwb_tip),
-                'last_uwb_tip':      tuple(float(v) for v in self.last_uwb_tip),
-                # Sliding-window diagnostics
-                'uwb_stale_s':       round(self._last_stale_s, 4),
-                'stale_factor':      round(self._last_stale_factor, 4),
-                'sigma_v_eff':       round(self._last_sigma_v_eff, 5),
-                # Adaptive trust diagnostics
-                'uwb_jump_rejected': self._uwb_jump_rejected,
-                'dir_factor':        round(self._last_dir_factor, 3),
-                'dir_penalty_count': self._dir_penalty_count,
-                'pos_floor_used':    round(self._last_pos_floor_used, 6),
-                # New diagnostics (abc4/5/6 regression fixes)
-                'dt_clamps':         self._dt_clamps,
-                'turn_arm_count':    self._turn_arm_count,
-                'pos_cap_used':      round(self._last_pos_cap_used, 6),
-                'zupt_fires':        self._zupt_fires,
-                'cov_resets':        self._cov_resets,
-                # Innovation-deadlock recovery diagnostics
-                'innov_reject_streak': self._innov_reject_streak,
-                'uwb_snap_count':      self._uwb_snap_count,
-                # Stroke-start soft snap diagnostics
-                'stroke_start_snaps':  self._stroke_start_snaps,
-                # Stroke-age drift guard diagnostics
-                'stroke_age_s':  round((ts - self._stroke_start_ts) * 1e-6, 3) if self._stroke_start_ts else 0.0,
-                'age_cap_mult':  round(self._stroke_age_cap_mult(ts), 3),
-                # Phase 4 — position bias diagnostics
-                'p_nominal': (float(self.p[0]), float(self.p[1])),
-                'vel_pseudo_applied': bool(self._vel_pseudo_applied),
-                'vel_pseudo_dx_pos': tuple(float(v) for v in self._vel_pseudo_dx_pos),
-                'vel_pseudo_dx_vel': tuple(float(v) for v in self._vel_pseudo_dx_vel),
-                'b_p':     (float(self.b_p[0]), float(self.b_p[1])),
-                'b_p_mag': float(np.linalg.norm(self.b_p)),
-                'active_uwb_guard_fired': bool(self._active_uwb_guard_fired),
-                'active_uwb_guard_correction': float(self._active_uwb_guard_correction),
-                # Stationary-contact tip lock diagnostics
-                'tip_lock_active': bool(self._tip_lock_active),
-                'tip_lock_candidate': bool(self._tip_lock_candidate),
-                'tip_lock_count': int(self._tip_lock_count),
-                'tip_lock_correction': float(self._tip_lock_correction),
-                'tip_lock_uwb_blend': float(self._tip_lock_uwb_blend),
-                'tip_lock_reason': self._tip_lock_reason,
-                'tip_lock_anchor': tuple(float(v) for v in (self._tip_lock_anchor_visible if self._tip_lock_anchor_visible is not None else (self.p + self.b_p))),
-                # Mode statistics — counters for per-regime tuning
-                'frames_contact':    self._frames_contact,
-                'frames_fast':       self._frames_fast,
-                'frames_air':        self._frames_air,
-                'frames_static':     self._frames_static,
-                'avg_K_contact':     round(
-                    self._k_contact_sum / self._k_contact_uwb
-                    if self._k_contact_uwb > 0 else 0.0, 5),
-                'avg_K_fast':        round(
-                    self._k_fast_sum / self._k_fast_uwb
-                    if self._k_fast_uwb > 0 else 0.0, 5),
-                'avg_K_air':         round(
-                    self._k_air_sum / self._k_air_uwb
-                    if self._k_air_uwb > 0 else 0.0, 5),
-            },
-            'dead_reckoning': self._dead_reckoner.diagnostics(),
+            'fused_x': output_x,
+            'fused_y': output_y,
+            'uwb_x': float(self.last_uwb_measurement[0]),
+            'uwb_y': float(self.last_uwb_measurement[1]),
+            'state': state_label,
+            'fusion_mode': self.modes.current_name(self.tip_lock.active),
+            'stroke_id': stroke_id,
+            'stroke_active': stroke_active,
+            'eskf': build_eskf_diagnostics(
+                state=self.state,
+                telemetry=self.telemetry,
+                modes=self.modes,
+                tip_lock=self.tip_lock,
+                boundary_guard=self.boundary_guard,
+                ts=ts,
+            ),
+            'dead_reckoning': self.dead_reckoner.diagnostics(),
         }
 
 
-# ==============================================================================
-# LIVE HARDWARE SELF-TEST
-#   SerialStreamer → Normalizer → TimeAlign → (IMU | UWB) → ESKF
-#   Prints a dashboard; Ctrl+C stops and exports a CSV.
-# ==============================================================================
+# -----------------------------------------------------------------------------
+# Self-test: live hardware dashboard
+# -----------------------------------------------------------------------------
+#
+# Reading the output:
+#   - lever_arm_m is near 0 with the pen perpendicular, ~0.10 m at 30 degrees tilt
+#   - acc_board_tip_mag below acc_board_mag during circular strokes (60-90% drop)
+#   - omega_world_mag 0-20 rad/s is normal; above 100 indicates a timestamp glitch
+#   - alpha_world_mag up to a few hundred rad/s^2 is normal after EMA
+#   - jerk above 7000 m/s^3 is a wrist-whip event and should arm turn detection
+
 if __name__ == '__main__':
-    import time
-    import os
     import csv
+    import os
+    import time
 
     os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
-    from background.pipelines.cleaner.unpacker       import SerialStreamer
-    from background.pipelines.cleaner.normalizer     import StreamNormalizer
+    from background.pipelines.cleaner.normalizer import StreamNormalizer
     from background.pipelines.cleaner.time_alignment import TimeAlignLayer
-    from background.pipelines.preprocess.imu         import IMUPreprocessor
-    from background.pipelines.preprocess.contact     import ContactStateDetector
-    from background.pipelines.preprocess.uwb.range         import UWBRangePreprocessor
+    from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.module_output import ModuleRunOutput
+    from background.pipelines.preprocess.contact import ContactStateDetector
+    from background.pipelines.preprocess.imu import IMUPreprocessor
+    from background.pipelines.preprocess.uwb.position import UWBPositionFilter
+    from background.pipelines.preprocess.uwb.range import UWBRangePreprocessor
     from background.pipelines.preprocess.uwb.trilateration import UWBSolver
-    from background.pipelines.preprocess.uwb.position      import UWBPositionFilter
 
-    SERIAL_PORT  = getattr(cfg.serial, 'port', 'COM20')
-    BAUD_RATE    = getattr(cfg.serial, 'baud', 115200)
-    DISPLAY_RATE = 0.1
+    DISPLAY_RATE_S = 0.1
+    REPORT_NAME = 'eskf_session'
 
-    streamer   = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm       = StreamNormalizer()
-    aligner    = TimeAlignLayer(buffer_size=500)
+    # Ordered identity -> position -> lever-arm -> rigid-body -> angular ->
+    # filter health -> contact. Legacy column names are preserved so old
+    # exports diff cleanly.
+    CSV_COLUMNS = [
+        'ts_hw', 'source', 'state',
+        'fused_x', 'fused_y',
+        'uwb_x', 'uwb_y',
+        'lever_arm_m',
+        'acc_board_x', 'acc_board_z',
+        'acc_board_tip_x', 'acc_board_tip_z',
+        'acc_board_mag', 'acc_board_tip_mag',
+        'acc_sensor_mag',
+        'jerk',
+        'omega_world_x', 'omega_world_y', 'omega_world_z', 'omega_world_mag',
+        'omega_body_x', 'omega_body_y', 'omega_body_z',
+        'alpha_world_x', 'alpha_world_y', 'alpha_world_z', 'alpha_world_mag',
+        'P_pos_trace', 'innovation_norm', 'r_scale',
+        'K_pos_diag', 'b_a_x', 'b_a_y', 'b_a_norm',
+        'omega_in_plane', 'turn_flag',
+        'uwb_residual_rms', 'uwb_accepted', 'uwb_rejected',
+        'stroke_id', 'stroke_active', 'is_static', 'contact',
+    ]
 
-    imu_prep   = IMUPreprocessor()
-    contact    = ContactStateDetector()
+    def _magnitude(vector) -> float:
+        return math.sqrt(sum(component * component for component in vector))
 
-    uwb_offs   = getattr(cfg.uwb, 'range_offsets_m', (0.0, 0.0, 0.0, 0.0))
-    range_prep = UWBRangePreprocessor(offsets=uwb_offs)
-    trilat     = UWBSolver()
-    pos_filter = UWBPositionFilter()
+    def render_dashboard(fused: dict, imu_event: dict | None, imu_count: int, uwb_count: int) -> None:
+        """Print one refreshed frame of the live console view."""
+
+        diagnostics = fused['eskf']
+
+        if imu_event is not None:
+            acc_board = imu_event.get('acc_board', (0.0, 0.0))
+            acc_board_tip = imu_event.get('acc_board_tip', (0.0, 0.0))
+            omega_world = imu_event.get('omega_world', (0.0, 0.0, 0.0))
+            alpha_world = imu_event.get('alpha_world', (0.0, 0.0, 0.0))
+            jerk = imu_event.get('jerk', 0.0)
+            acc_sensor_mag = _magnitude(imu_event.get('acc_sensor', (0.0, 0.0, 0.0)))
+        else:
+            acc_board = acc_board_tip = (0.0, 0.0)
+            omega_world = alpha_world = (0.0, 0.0, 0.0)
+            jerk = acc_sensor_mag = 0.0
+
+        acc_board_mag = _magnitude(acc_board)
+        acc_board_tip_mag = _magnitude(acc_board_tip)
+        turn_label = 'TURN' if diagnostics['turn_flag'] else '----'
+
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print(f"============= LIVE ESKF  ({DISPLAY_RATE_S}s refresh) =============")
+        print(f"  State      : {fused['state']:<20}  Source: {fused['source']}")
+        print(f"  Stroke     : ID={fused['stroke_id']}  Active={fused['stroke_active']}")
+        print("-" * 64)
+        print("  [POSITION]")
+        print(f"    Fused tip  : X={fused['fused_x']:7.4f} m   Y={fused['fused_y']:7.4f} m")
+        print(f"    UWB tag    : X={fused['uwb_x']:7.4f} m   Y={fused['uwb_y']:7.4f} m")
+        print(f"    Lever-arm  : {diagnostics.get('lever_arm_m', 0.0) * 100:5.1f} cm  (tag->tip, board plane)")
+        print("-" * 64)
+        print(f"  [RIGID-BODY TIP CORRECTION]  (rigid_body_enabled={cfg.imu.rigid_body_enabled})")
+        print(f"    |acc_board|         : {acc_board_mag:7.4f} m/s^2  (sensor-point, legacy)")
+        print(f"    |acc_board_tip|     : {acc_board_tip_mag:7.4f} m/s^2  (tip-corrected, ESKF input)")
+        print(f"    reduction           : {max(0.0, acc_board_mag - acc_board_tip_mag):+6.4f} m/s^2")
+        print(f"    |acc_sensor| 3D     : {acc_sensor_mag:7.4f} m/s^2")
+        print(f"    jerk (body)         : {jerk:9.1f} m/s^3")
+        print("-" * 64)
+        print("  [ANGULAR KINEMATICS]")
+        print(f"    |omega_world|       : {_magnitude(omega_world):7.3f} rad/s")
+        print(f"    omega in-plane      : {diagnostics['omega_in_plane']:7.3f} rad/s  [{turn_label}]")
+        print(f"    |alpha_world| (EMA) : {_magnitude(alpha_world):7.1f} rad/s^2")
+        print("-" * 64)
+        print("  [FILTER HEALTH]")
+        print(f"    P_pos_trace : {diagnostics['P_pos_trace']:.4f} m     Innovation |y|: {diagnostics['innovation_norm']:.4f} m")
+        print(f"    R scale     : {diagnostics['r_scale']:.2f}  (1.0=clean, >3=NLOS)")
+        print(f"    K_pos_diag  : {diagnostics['K_pos_diag']:.4f}         UWB resid: {diagnostics['uwb_residual_rms']:.4f} m")
+        print(f"    Bias b_a    : ({diagnostics['b_a'][0]:+.4f}, {diagnostics['b_a'][1]:+.4f}) m/s^2")
+        print(f"    IMU / UWB   : {imu_count} / {uwb_count}  "
+              f"(accepted={diagnostics['uwb_accepted']}  rejected={diagnostics['uwb_rejected']})")
+        print("=" * 64)
+
+    SERIAL_PORT = getattr(cfg.serial, 'port', 'COM20')
+    BAUD_RATE = getattr(cfg.serial, 'baud', 115200)
+
+    streamer = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
+    normalizer = StreamNormalizer()
+    aligner = TimeAlignLayer(buffer_size=500)
+
+    imu_prep = IMUPreprocessor()
+    contact = ContactStateDetector()
+
+    uwb_offsets = getattr(cfg.uwb, 'range_offsets_m', (0.0, 0.0, 0.0, 0.0))
+    range_prep = UWBRangePreprocessor(offsets=uwb_offsets)
+    trilateration = UWBSolver()
+    position_filter = UWBPositionFilter()
 
     eskf = ESKF()
 
     print("=" * 64)
-    print(f"  [TEST] ESKF LIVE — lever-arm correction active — {SERIAL_PORT}")
+    print(f"  [TEST] ESKF LIVE - lever-arm correction active - {SERIAL_PORT}")
     print("  Draw strokes. Ctrl+C to stop and export CSV.")
     print("=" * 64)
 
-    last_print_time = 0.0
-    latest      = None
-    latest_imu  = None   # most-recent pre-fusion IMU event
-    imu_count   = 0
-    uwb_count   = 0
-    event_log   = []     # every fused event → CSV on exit
+    last_render = 0.0
+    latest_fused = None
+    latest_imu_event = None
+    imu_count = 0
+    uwb_count = 0
+    event_log: list[dict] = []
 
     try:
         while True:
-            raw = streamer.read_new_packets()
-            if raw:
-                evs = norm.normalize(raw)
-                aligner.add_events(evs)
-                sorted_evs = aligner.get_all_sorted()
+            raw_packets = streamer.read_new_packets()
+            if raw_packets:
+                aligner.add_events(normalizer.normalize(raw_packets))
+                sorted_events = aligner.get_all_sorted()
                 aligner.clear()
 
-                for ev in sorted_evs:
-                    if ev['sensor'] == 'IMU':
-                        p = imu_prep.process_one(ev)
-                        if p:
-                            s = contact.process_one(p)
-                            fused = eskf.process_event(s)
-                            if fused:
-                                imu_count += 1
-                                latest     = fused
-                                latest_imu = s
-                                fused['_imu_ev'] = s   # keep IMU event for CSV columns
-                                event_log.append(fused)
-                    elif ev['sensor'] == 'UWB':
-                        for r in range_prep.feed([ev]):
-                            raw_pos = trilat.process_one(r)
-                            if raw_pos:
-                                clean = pos_filter.process_one(raw_pos)
-                                if clean:
-                                    fused = eskf.process_event(clean)
-                                    if fused:
-                                        uwb_count += 1
-                                        latest    = fused
-                                        fused['_imu_ev'] = None
-                                        event_log.append(fused)
+                for event in sorted_events:
+                    if event['sensor'] == 'IMU':
+                        preprocessed = imu_prep.process_one(event)
+                        if not preprocessed:
+                            continue
+                        with_contact = contact.process_one(preprocessed)
+                        fused = eskf.process_event(with_contact)
+                        if not fused:
+                            continue
+                        imu_count += 1
+                        latest_fused = fused
+                        latest_imu_event = with_contact
+                        # Carried alongside the fused event so the CSV export can
+                        # join IMU-side diagnostics that the filter does not emit.
+                        fused['_imu_ev'] = with_contact
+                        event_log.append(fused)
+
+                    elif event['sensor'] == 'UWB':
+                        for ranged in range_prep.feed([event]):
+                            solved = trilateration.process_one(ranged)
+                            if not solved:
+                                continue
+                            positioned = position_filter.process_one(solved)
+                            if not positioned:
+                                continue
+                            fused = eskf.process_event(positioned)
+                            if not fused:
+                                continue
+                            uwb_count += 1
+                            latest_fused = fused
+                            fused['_imu_ev'] = None
+                            event_log.append(fused)
 
             now = time.time()
-            if latest and (now - last_print_time) >= DISPLAY_RATE:
-                os.system('cls' if os.name == 'nt' else 'clear')
-                e   = latest['eskf']
-                imu = latest_imu  # may be None briefly on startup
-
-                # ── Rigid-body / lever-arm diagnostics from the IMU event ──
-                if imu is not None:
-                    ab      = imu.get('acc_board',     (0.0, 0.0))
-                    ab_tip  = imu.get('acc_board_tip', (0.0, 0.0))
-                    ow      = imu.get('omega_world',   (0.0, 0.0, 0.0))
-                    aw      = imu.get('alpha_world',   (0.0, 0.0, 0.0))
-                    jerk    = imu.get('jerk', 0.0)
-                    acc_sensor_mag = math.sqrt(sum(x*x for x in imu.get('acc_sensor', (0,0,0))))
-                else:
-                    ab = ab_tip = (0.0, 0.0)
-                    ow = aw = (0.0, 0.0, 0.0)
-                    jerk = acc_sensor_mag = 0.0
-
-                acc_board_mag     = math.sqrt(ab[0]**2     + ab[1]**2)
-                acc_board_tip_mag = math.sqrt(ab_tip[0]**2 + ab_tip[1]**2)
-                omega_world_mag   = math.sqrt(ow[0]**2 + ow[1]**2 + ow[2]**2)
-                alpha_world_mag   = math.sqrt(aw[0]**2 + aw[1]**2 + aw[2]**2)
-
-                lever_arm_m = e.get('lever_arm_m', 0.0)
-                turn_str    = "TURN" if e['turn_flag'] else "----"
-
-                print(f"============= LIVE ESKF  ({DISPLAY_RATE}s refresh) =============")
-                print(f"  State      : {latest['state']:<20}  Source: {latest['source']}")
-                print(f"  Stroke     : ID={latest['stroke_id']}  Active={latest['stroke_active']}")
-                print("─" * 64)
-                print(f"  [POSITION]")
-                print(f"    Fused tip  : X={latest['fused_x']:7.4f} m   Y={latest['fused_y']:7.4f} m")
-                print(f"    UWB tag    : X={latest['uwb_x']:7.4f} m   Y={latest['uwb_y']:7.4f} m")
-                print(f"    Lever-arm  : {lever_arm_m*100:5.1f} cm  (UWB tag→tip offset in board plane)")
-                print("─" * 64)
-                print(f"  [RIGID-BODY TIP CORRECTION]  (rigid_body_enabled={cfg.imu.rigid_body_enabled})")
-                print(f"    |acc_board|         : {acc_board_mag:7.4f} m/s²  (sensor-point, legacy)")
-                print(f"    |acc_board_tip|     : {acc_board_tip_mag:7.4f} m/s²  (tip-corrected ← ESKF uses this)")
-                print(f"    reduction           : {max(0.0, acc_board_mag - acc_board_tip_mag):+6.4f} m/s²")
-                print(f"    |acc_sensor| 3D     : {acc_sensor_mag:7.4f} m/s²")
-                print(f"    jerk (body)         : {jerk:9.1f} m/s³  (raw wrist whip)")
-                print("─" * 64)
-                print(f"  [ANGULAR KINEMATICS]")
-                print(f"    |ω_world|           : {omega_world_mag:7.3f} rad/s  (expect 0–20 during writing)")
-                print(f"    ω in-plane (board)  : {e['omega_in_plane']:7.3f} rad/s  [{turn_str}]")
-                print(f"    |α_world| (EMA)     : {alpha_world_mag:7.1f} rad/s²")
-                print("─" * 64)
-                print(f"  [FILTER HEALTH]")
-                print(f"    P_pos_trace : {e['P_pos_trace']:.4f} m     Innovation |y|: {e['innovation_norm']:.4f} m")
-                print(f"    R scale     : {e['r_scale']:.2f}  (1.0=clean, >3=NLOS)")
-                print(f"    K_pos_diag  : {e['K_pos_diag']:.4f}         UWB resid: {e['uwb_residual_rms']:.4f} m")
-                print(f"    Bias b_a    : ({e['b_a'][0]:+.4f}, {e['b_a'][1]:+.4f}) m/s²")
-                print(f"    IMU / UWB   : {imu_count} / {uwb_count}  (accepted={e['uwb_accepted']}  rejected={e['uwb_rejected']})")
-                print("=" * 64)
-                last_print_time = now
+            if latest_fused and (now - last_render) >= DISPLAY_RATE_S:
+                render_dashboard(latest_fused, latest_imu_event, imu_count, uwb_count)
+                last_render = now
 
             time.sleep(0.005)
 
@@ -1715,132 +1286,73 @@ if __name__ == '__main__':
         print("\n\n[STOP] Halting ESKF.")
         streamer.close()
 
-        # ── Session summary ──────────────────────────────────────────────────
         print("-" * 64)
         print(f"  IMU events processed : {imu_count}")
         print(f"  UWB events processed : {uwb_count}")
-        if latest:
-            e = latest['eskf']
-            print(f"  Final fused position : ({latest['fused_x']:.3f}, {latest['fused_y']:.3f}) m")
-            print(f"  Final P_pos_trace    : {e['P_pos_trace']:.4f} m")
-            print(f"  UWB accepted/rejected: {e['uwb_accepted']} / {e['uwb_rejected']}")
-            print(f"  Last lever-arm offset: {e.get('lever_arm_m', 0.0)*100:.1f} cm")
+        if latest_fused:
+            diagnostics = latest_fused['eskf']
+            print(f"  Final fused position : ({latest_fused['fused_x']:.3f}, {latest_fused['fused_y']:.3f}) m")
+            print(f"  Final P_pos_trace    : {diagnostics['P_pos_trace']:.4f} m")
+            print(f"  UWB accepted/rejected: {diagnostics['uwb_accepted']} / {diagnostics['uwb_rejected']}")
+            print(f"  Last lever-arm offset: {diagnostics.get('lever_arm_m', 0.0) * 100:.1f} cm")
         print("=" * 64)
 
         if not event_log:
             print("No events logged. Exiting.")
-            exit()
+            raise SystemExit(0)
 
-        # ── CSV export ───────────────────────────────────────────────────────
-        # Columns are ordered: identity → position → lever-arm → rigid-body
-        # → angular kinematics → filter health → contact/stroke.
-        # Legacy columns keep the same names so old CSVs diff cleanly.
-        csv_filename = "eskf_session.csv"
-        _CSV_COLS = [
-            # Identity
-            'ts_hw', 'source', 'state',
-            # Fused tip position (lever-arm corrected)
-            'fused_x', 'fused_y',
-            # Raw UWB tag position (not tip-corrected — for comparison)
-            'uwb_x', 'uwb_y',
-            # Lever-arm
-            'lever_arm_m',
-            # Rigid-body tip correction diagnostics (from IMU event)
-            'acc_board_x', 'acc_board_z',          # sensor-point (legacy)
-            'acc_board_tip_x', 'acc_board_tip_z',  # tip-corrected (canonical)
-            'acc_board_mag', 'acc_board_tip_mag',  # magnitudes for quick diff
-            'acc_sensor_mag',                       # raw 3D sensor magnitude
-            'jerk',                                 # body-frame wrist-whip indicator
-            # Angular kinematics (from IMU event)
-            'omega_world_x', 'omega_world_y', 'omega_world_z', 'omega_world_mag',
-            'omega_body_x',  'omega_body_y',  'omega_body_z',
-            'alpha_world_x', 'alpha_world_y', 'alpha_world_z', 'alpha_world_mag',
-            # Filter health (from eskf sub-dict)
-            'P_pos_trace', 'innovation_norm', 'r_scale',
-            'K_pos_diag', 'b_a_x', 'b_a_y', 'b_a_norm',
-            'omega_in_plane', 'turn_flag',
-            'uwb_residual_rms', 'uwb_accepted', 'uwb_rejected',
-            # Contact / stroke
-            'stroke_id', 'stroke_active', 'is_static', 'contact',
-        ]
-        print(f"[EXPORT] Writing {len(event_log)} rows → {csv_filename} ...")
-        with open(csv_filename, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(_CSV_COLS)
-            for ev in event_log:
-                e   = ev.get('eskf', {})
-                imu = ev.get('_imu_ev')   # attached in the event loop above
-                ba  = e.get('b_a', (0.0, 0.0))
+        output = ModuleRunOutput('fusion/eskf')
+        rows = []
+        for fused in event_log:
+            diagnostics = fused.get('eskf', {})
+            imu_event = fused.get('_imu_ev')
+            accel_bias = diagnostics.get('b_a', (0.0, 0.0))
 
-                # IMU-side fields (zero-fill on UWB rows)
-                ab     = imu.get('acc_board',     (0.0, 0.0)) if imu else (0.0, 0.0)
-                ab_tip = imu.get('acc_board_tip', (0.0, 0.0)) if imu else (0.0, 0.0)
-                ow     = imu.get('omega_world',   (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
-                ob     = imu.get('omega_body',    (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
-                aw     = imu.get('alpha_world',   (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
-                asens  = imu.get('acc_sensor',    (0.0, 0.0, 0.0)) if imu else (0.0, 0.0, 0.0)
-                jerk   = imu.get('jerk', 0.0)  if imu else 0.0
-                is_static = bool(imu.get('is_static', False)) if imu else False
-                contact   = bool(imu.get('contact',   False)) if imu else False
+            acc_board = imu_event.get('acc_board', (0.0, 0.0)) if imu_event else (0.0, 0.0)
+            acc_board_tip = imu_event.get('acc_board_tip', (0.0, 0.0)) if imu_event else (0.0, 0.0)
+            omega_world = imu_event.get('omega_world', (0.0, 0.0, 0.0)) if imu_event else (0.0, 0.0, 0.0)
+            omega_body = imu_event.get('omega_body', (0.0, 0.0, 0.0)) if imu_event else (0.0, 0.0, 0.0)
+            alpha_world = imu_event.get('alpha_world', (0.0, 0.0, 0.0)) if imu_event else (0.0, 0.0, 0.0)
+            acc_sensor = imu_event.get('acc_sensor', (0.0, 0.0, 0.0)) if imu_event else (0.0, 0.0, 0.0)
+            jerk = imu_event.get('jerk', 0.0) if imu_event else 0.0
+            is_static = bool(imu_event.get('is_static', False)) if imu_event else False
+            contact_flag = bool(imu_event.get('contact', False)) if imu_event else False
 
-                ab_mag     = math.sqrt(ab[0]**2     + ab[1]**2)
-                ab_tip_mag = math.sqrt(ab_tip[0]**2 + ab_tip[1]**2)
-                asens_mag  = math.sqrt(sum(x*x for x in asens))
-                ow_mag     = math.sqrt(ow[0]**2 + ow[1]**2 + ow[2]**2)
-                aw_mag     = math.sqrt(aw[0]**2 + aw[1]**2 + aw[2]**2)
+            rows.append([
+                fused.get('ts_hw'),
+                fused.get('source'),
+                fused.get('state', ''),
+                round(fused.get('fused_x', 0.0), 6),
+                round(fused.get('fused_y', 0.0), 6),
+                round(fused.get('uwb_x', 0.0), 6),
+                round(fused.get('uwb_y', 0.0), 6),
+                round(diagnostics.get('lever_arm_m', 0.0), 5),
+                round(acc_board[0], 6), round(acc_board[1], 6),
+                round(acc_board_tip[0], 6), round(acc_board_tip[1], 6),
+                round(_magnitude(acc_board), 6), round(_magnitude(acc_board_tip), 6),
+                round(_magnitude(acc_sensor), 6),
+                round(jerk, 3),
+                round(omega_world[0], 5), round(omega_world[1], 5),
+                round(omega_world[2], 5), round(_magnitude(omega_world), 5),
+                round(omega_body[0], 5), round(omega_body[1], 5), round(omega_body[2], 5),
+                round(alpha_world[0], 3), round(alpha_world[1], 3),
+                round(alpha_world[2], 3), round(_magnitude(alpha_world), 3),
+                round(diagnostics.get('P_pos_trace', 0.0), 6),
+                round(diagnostics.get('innovation_norm', 0.0), 6),
+                round(diagnostics.get('r_scale', 1.0), 4),
+                round(diagnostics.get('K_pos_diag', 0.0), 6),
+                round(accel_bias[0], 6), round(accel_bias[1], 6),
+                round(diagnostics.get('b_a_norm', 0.0), 6),
+                round(diagnostics.get('omega_in_plane', 0.0), 4),
+                int(diagnostics.get('turn_flag', False)),
+                round(diagnostics.get('uwb_residual_rms', 0.0), 6),
+                diagnostics.get('uwb_accepted', 0),
+                diagnostics.get('uwb_rejected', 0),
+                fused.get('stroke_id', 0),
+                int(fused.get('stroke_active', False)),
+                int(is_static),
+                int(contact_flag),
+            ])
 
-                writer.writerow([
-                    # Identity
-                    ev.get('ts_hw'),
-                    ev.get('source'),
-                    ev.get('state', ''),
-                    # Fused position
-                    round(ev.get('fused_x', 0.0), 6),
-                    round(ev.get('fused_y', 0.0), 6),
-                    # UWB tag position
-                    round(ev.get('uwb_x', 0.0), 6),
-                    round(ev.get('uwb_y', 0.0), 6),
-                    # Lever-arm
-                    round(e.get('lever_arm_m', 0.0), 5),
-                    # Rigid-body diagnostics
-                    round(ab[0], 6),
-                    round(ab[1], 6),
-                    round(ab_tip[0], 6),
-                    round(ab_tip[1], 6),
-                    round(ab_mag, 6),
-                    round(ab_tip_mag, 6),
-                    round(asens_mag, 6),
-                    round(jerk, 3),
-                    # Angular kinematics
-                    round(ow[0], 5), round(ow[1], 5), round(ow[2], 5), round(ow_mag, 5),
-                    round(ob[0], 5), round(ob[1], 5), round(ob[2], 5),
-                    round(aw[0], 3), round(aw[1], 3), round(aw[2], 3), round(aw_mag, 3),
-                    # Filter health
-                    round(e.get('P_pos_trace', 0.0), 6),
-                    round(e.get('innovation_norm', 0.0), 6),
-                    round(e.get('r_scale', 1.0), 4),
-                    round(e.get('K_pos_diag', 0.0), 6),
-                    round(ba[0], 6),
-                    round(ba[1], 6),
-                    round(e.get('b_a_norm', 0.0), 6),
-                    round(e.get('omega_in_plane', 0.0), 4),
-                    int(e.get('turn_flag', False)),
-                    round(e.get('uwb_residual_rms', 0.0), 6),
-                    e.get('uwb_accepted', 0),
-                    e.get('uwb_rejected', 0),
-                    # Contact / stroke
-                    ev.get('stroke_id', 0),
-                    int(ev.get('stroke_active', False)),
-                    int(is_static),
-                    int(contact),
-                ])
-        print(f"[EXPORT] Saved → {csv_filename}")
-        print()
-        print("  Verification tips:")
-        print("  - lever_arm_m ≈ 0 when pen perpendicular; ~0.10 m at 30° tilt")
-        print("  - acc_board_tip_mag < acc_board_mag during circular strokes (60–90% drop)")
-        print("  - omega_world_mag: 0–20 rad/s normal; >100 = timestamp glitch")
-        print("  - alpha_world_mag: up to a few hundred rad/s² normal after EMA")
-        print("  - jerk > 7000 m/s³ = wrist whip event (expected, turn detection arms)")
-        print("  Rename before next session: e.g. eskf_with_leverarm.csv")
-        print("=" * 64)
+        output.save_csv(f"{REPORT_NAME}.csv", rows, header=CSV_COLUMNS)
+        output.finish()

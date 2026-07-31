@@ -1,4 +1,4 @@
-# Pipelines
+# ESKF Pipelines
 
 Converts raw marker prototype sensor data (IMU + UWB + force) arriving over serial 
 from the ESP32 WROOM bridge into finished stroke polylines (capturedf notes) ready 
@@ -12,6 +12,12 @@ cleaner(fetcher)/  ->  preprocess/  ->  fusion/  ->  reconstruct.py  ->  postpro
 **Note:** `visualizer.py` is a standalone debug dashboard that wires the same stages
 together for live viewing; it is not part of the served pipeline but for testing.
 
+## Important: Development-Friendly and Production-Ready
+
+The `fusion/eskf.py` module (`ESKF`) implements the fusion pipeline documented below. It can be developed, tested, and validated independently using `reconstruct.py --live` and `visualizer.py`, making it suitable for standalone verification before integration.
+
+**For production use,** `background/pipelines/tracker.py` (`StrokeTracker`) serves as the integration layer between the serial communication thread and the application. It imports and uses `ESKF` directly and is, in turn, imported by `background/_prototype_thread.py`.
+
 ## Stage map
 
 | Stage | Folder / file | Job |
@@ -24,6 +30,7 @@ together for live viewing; it is not part of the served pipeline but for testing
 | - | `config.py` | Single source of truth for every tuning value used above |
 | - | `visualizer.py` | Live PyQtGraph dashboard driving the same stages for debugging |
 | - | `module_output.py` | Shared helper routing every module's testing output to `test/module_runs/` |
+| - | `tracker.py` | Live-server bridge for application layer |
 
 Every stage-owning file can be run directly for a self-test:
 
@@ -131,6 +138,7 @@ default** in `config.py`:
 | `cfg.stroke_cleaner.enabled = False` | `StrokeFinalizationIMUCleaner` in `reconstruct.py` |
 | `cfg.postprocess.enabled = False` | the whole `postprocess/` package |
 
-When disabled, both short-circuit cleanly to a pass-through, **so the web server currently 
-receives the raw ESKF-fused polyline with no post-stroke correction applied**. Flip either 
-flag on to activate that stage; no code changes are needed.
+When disabled, both short-circuit cleanly to a pass-through, so this
+pipeline currently emits the raw ESKF-fused polyline with no post-stroke
+correction applied. Flip either flag on to activate that stage; no code
+changes are needed.

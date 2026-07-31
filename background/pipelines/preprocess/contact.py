@@ -1,124 +1,167 @@
 """
-contact.py
-====================
-Module 6 — Contact / Stroke State Detector
+Module 6 - Contact / Stroke State Detector
 
-Transforms processed IMU events into one of four explicit stroke states,
-then derives a logical stroke session from the physical pen-down lifecycle.
+Decides when the marker is actually drawing, turning force and motion into the
+stroke session that the fusion and reconstruction stages gate on.
 
-Input  (from imu.py — processed IMU events):
-    {
-        'sensor':     'IMU',
-        'ts_hw':      int,            ← hardware timestamp, microseconds
-        'acc_world':  (ax, ay, az),   ← world-frame linear acceleration, m/s²
-        'jerk':       float,          ← |Δacc_world| / dt, m/s³
-        'is_static':  bool,           ← ZUPT decision from preprocessor
-        'contact':    bool,           ← force >= force_contact_threshold
-        'force':      float,          ← raw force pass-through
-        ...
-    }
+Three layers, each answering a different question:
 
-Output (same dict, three fields added):
-    {
-        ...everything from input...,
-        'stroke_state':  str,    ← diagnostic kinematic substate:
-                                    'IDLE' | 'AIR_MOVE' | 'CONTACT_STATIC' | 'CONTACT_DRAWING'
-        'stroke_active': bool,   ← True for the entire confirmed pen-down session,
-                                    including CONTACT_STATIC micro-pauses within a stroke.
-                                    Drops to False only on confirmed pen-up.
-        'stroke_id':     int     ← Stable within a session. Increments once per confirmed
-                                    stroke (after min_draw_ms of cumulative drawing time).
-                                    Emits last completed id between sessions; 0 before
-                                    the first session ever opens.
-    }
+    Layer 1 - Physical contact latch
+        Is the tip touching the board right now?
+        The pen only goes down when enough pressure is applied consistently, and only lifts
+        when the pressure stays low. This filters out accidental bumps and shaky micro-movements.
 
-Three-layer design
-------------------
-Layer 1 — Physical contact latch:
-    Symmetric hysteresis + time debounce on both pen-down and pen-up.
-    Pen-down latches only after force >= force_enter for pen_down_debounce_ms → rejects bumps.
-    Pen-up releases only after force <  force_exit  for pen_up_debounce_ms   → rejects tremors.
+    Layer 2 - Kinematic substate (diagnostic)
+        What kind of contact is it? IDLE, AIR_MOVE, CONTACT_STATIC, or
+        CONTACT_DRAWING, debounced over consecutive samples.
 
-Layer 2 — Kinematic substate (diagnostic):
-    Four-state map (IDLE/AIR_MOVE/CONTACT_STATIC/CONTACT_DRAWING) debounced over
-    state_debounce_n consecutive samples. Emitted as stroke_state. Downstream logic
-    does NOT gate on this — it is for logging and plots only.
+    Layer 3 - Logical stroke session
+        Is this one continuous stroke?
+        Opens once enough cumulative drawing time accrues within a single contact
+        latch, and stays open across CONTACT_STATIC micro-pauses. 
 
-Layer 3 — Logical stroke session:
-    A session opens when cumulative CONTACT_DRAWING time within one contact latch cycle
-    reaches min_draw_ms. stroke_active stays True across CONTACT_STATIC micro-pauses
-    (e.g. peaks of the letter "M"). Session closes on pen-up. stroke_id is stable for
-    the full session and persists (not zeroed) between sessions.
+Input:  processed IMU motion events from "imu" module
+Output: the same event with 'stroke_state', 'stroke_active', and 'stroke_id' added
+
+Usage (import as a stage, or run directly for a live dashboard):
+    python -m background.pipelines.preprocess.contact
 """
 
 from collections import deque
+
 from background.pipelines.config import cfg
 
-# ── State constants ────────────────────────────────────────────────────────────
-IDLE             = 'IDLE'
-AIR_MOVE         = 'AIR_MOVE'
-CONTACT_STATIC   = 'CONTACT_STATIC'
-CONTACT_DRAWING  = 'CONTACT_DRAWING'
+MICROSECONDS_PER_MILLISECOND = 1000
+
+IDLE = 'IDLE'
+AIR_MOVE = 'AIR_MOVE'
+CONTACT_STATIC = 'CONTACT_STATIC'
+CONTACT_DRAWING = 'CONTACT_DRAWING'
 
 _ALL_STATES = (IDLE, AIR_MOVE, CONTACT_STATIC, CONTACT_DRAWING)
 
+_STATE_HISTORY_SAMPLES = 200
 
-# ── State detector ─────────────────────────────────────────────────────────────
+
 class ContactStateDetector:
+    """Derives physical contact, kinematic substate, and stroke sessions."""
+
     def __init__(self):
-        c   = cfg.contact
-        imu = cfg.imu
+        contact_cfg = cfg.contact
+        imu_cfg = cfg.imu
 
-        self._force_enter          = imu.force_contact_threshold
-        self._force_exit           = imu.force_contact_threshold * c.force_exit_ratio
-        self._pen_down_debounce_us = c.pen_down_debounce_ms * 1000.0
-        self._pen_up_debounce_us   = c.pen_up_debounce_ms   * 1000.0
-        self._min_draw_us          = c.min_draw_ms           * 1000.0
-        self._debounce_n           = max(1, c.state_debounce_n)
+        self._force_enter = imu_cfg.force_contact_threshold
+        # Releasing below the entry threshold gives the hysteresis band that
+        # stops a force hovering at the threshold from chattering the latch.
+        self._force_exit = imu_cfg.force_contact_threshold * contact_cfg.force_exit_ratio
 
-        # Layer 1 — physical contact latch
-        self._contact_active  = False
-        self._pen_down_ts: int | None = None  # ts of first sample >= force_enter (while not active)
-        self._pen_up_ts:   int | None = None  # ts of first sample <  force_exit  (while active)
+        self._pen_down_debounce_us = contact_cfg.pen_down_debounce_ms * MICROSECONDS_PER_MILLISECOND
+        self._pen_up_debounce_us = contact_cfg.pen_up_debounce_ms * MICROSECONDS_PER_MILLISECOND
+        self._min_draw_us = contact_cfg.min_draw_ms * MICROSECONDS_PER_MILLISECOND
+        self._debounce_samples = max(1, contact_cfg.state_debounce_n)
 
-        # Layer 2 — kinematic substate (diagnostic)
-        self._state           = IDLE
-        self._candidate       = IDLE
+        # Layer 1
+        self._contact_active = False
+        self._pen_down_ts: int | None = None
+        self._pen_up_ts: int | None = None
+
+        # Layer 2
+        self._state = IDLE
+        self._candidate = IDLE
         self._candidate_count = 0
 
-        # Layer 3 — logical stroke session
-        self._stroke_live        = False
-        self._stroke_id          = 0
-        self._cumulative_draw_us = 0.0   # CONTACT_DRAWING time within current contact session
+        # Layer 3
+        self._stroke_live = False
+        self._stroke_id = 0
+        self._cumulative_draw_us = 0.0
         self._last_ts: int | None = None
 
-        # Diagnostics
-        self._state_history: deque[str] = deque(maxlen=200)
-        self._transitions: list[tuple]  = []
+        self._state_history: deque[str] = deque(maxlen=_STATE_HISTORY_SAMPLES)
+        self._transitions: list[tuple] = []
 
-    # ──────────────────────────────────────────────────────────────────────────
+    # -------------------------------------------------------------------------
+    # Public API
+    # -------------------------------------------------------------------------
+
     def feed(self, events: list[dict]) -> list[dict]:
-        out = []
-        for ev in events:
-            if ev.get('sensor') != 'IMU':
-                ev['stroke_state']  = None
-                ev['stroke_active'] = False
-                ev['stroke_id']     = self._stroke_id
-                out.append(ev)
+        """Annotate a batch, passing non-IMU events through with neutral state."""
+
+        annotated = []
+        for event in events:
+            if event.get('sensor') != 'IMU':
+                event['stroke_state'] = None
+                event['stroke_active'] = False
+                event['stroke_id'] = self._stroke_id
+                annotated.append(event)
                 continue
-            out.append(self.process_one(ev))
-        return out
+            annotated.append(self.process_one(event))
+        return annotated
 
-    def process_one(self, ev: dict) -> dict:
-        force     = ev.get('force', 0.0)
-        is_static = ev.get('is_static', True)
-        ts        = ev.get('ts_hw', 0)
+    def process_one(self, event: dict) -> dict:
+        """Annotate one IMU event with contact substate and stroke session fields."""
 
-        dt_us = (ts - self._last_ts) if (self._last_ts is not None and ts > self._last_ts) else 0.0
+        force = event.get('force', 0.0)
+        is_static = event.get('is_static', True)
+        ts = event.get('ts_hw', 0)
+
+        elapsed_us = (
+            ts - self._last_ts
+            if self._last_ts is not None and ts > self._last_ts
+            else 0.0
+        )
         self._last_ts = ts
 
-        # ── Layer 1: Physical contact latch ───────────────────────────────────
-        prev_contact = self._contact_active
+        was_in_contact = self._contact_active
+        self._update_contact_latch(force, ts)
+        self._update_kinematic_substate(is_static, ts)
+        self._update_stroke_session(was_in_contact, elapsed_us)
+
+        self._state_history.append(self._state)
+        event['stroke_state'] = self._state
+        event['stroke_active'] = self._stroke_live
+        # Holds the last completed id between sessions, and 0 before the first.
+        event['stroke_id'] = self._stroke_id
+        return event
+
+    @property
+    def state(self) -> str:
+        return self._state
+
+    def reset(self):
+        """Clear all latch, substate, and session state."""
+
+        self.__init__()
+
+    def state_summary(self) -> dict:
+        """Counts and percentages of each substate across the retained history."""
+
+        counts = {state: 0 for state in _ALL_STATES}
+        for state in self._state_history:
+            if state in counts:
+                counts[state] += 1
+
+        total = len(self._state_history)
+        percentages = {
+            state: round(counts[state] / total * 100, 1) if total else 0.0
+            for state in _ALL_STATES
+        }
+        return {'counts': counts, 'pcts': percentages, 'total': total}
+
+    def transition_log(self) -> list[tuple]:
+        return list(self._transitions)
+
+    # -------------------------------------------------------------------------
+    # Layer 1 - Physical contact latch
+    # -------------------------------------------------------------------------
+
+    def _update_contact_latch(self, force: float, ts: int):
+        """
+        Latch physical contact using hysteresis plus a time debounce on both edges.
+
+        Each edge requires its threshold to hold continuously for the debounce
+        window; a force excursion that recovers within the window cancels the
+        pending transition rather than committing it.
+        """
 
         if not self._contact_active:
             if force >= self._force_enter:
@@ -128,155 +171,148 @@ class ContactStateDetector:
                     self._contact_active = True
                     self._pen_up_ts = None
             else:
-                self._pen_down_ts = None  # force dropped out, restart the pen-down timer
+                self._pen_down_ts = None
+            return
+
+        if force < self._force_exit:
+            if self._pen_up_ts is None:
+                self._pen_up_ts = ts
+            if (ts - self._pen_up_ts) >= self._pen_up_debounce_us:
+                self._contact_active = False
+                self._pen_down_ts = None
         else:
-            if force < self._force_exit:
-                if self._pen_up_ts is None:
-                    self._pen_up_ts = ts
-                if (ts - self._pen_up_ts) >= self._pen_up_debounce_us:
-                    self._contact_active = False
-                    self._pen_down_ts = None
-            else:
-                self._pen_up_ts = None  # force recovered — was just a tremor, cancel pen-up
+            # Force recovered inside the window, so this was a tremor.
+            self._pen_up_ts = None
 
-        # ── Layer 2: Kinematic substate (debounced, diagnostic only) ──────────
-        in_contact = self._contact_active
-        moving     = not is_static
+    # -------------------------------------------------------------------------
+    # Layer 2 - Kinematic substate
+    # -------------------------------------------------------------------------
 
-        if in_contact and moving:
-            raw = CONTACT_DRAWING
-        elif in_contact and not moving:
-            raw = CONTACT_STATIC
-        elif not in_contact and moving:
-            raw = AIR_MOVE
+    def _update_kinematic_substate(self, is_static: bool, ts: int):
+        """
+        Classify contact and motion into a substate, debounced over N samples.
+
+        Diagnostic only: downstream stages gate on stroke_active, not on this.
+        """
+
+        moving = not is_static
+
+        if self._contact_active:
+            observed = CONTACT_DRAWING if moving else CONTACT_STATIC
         else:
-            raw = IDLE
+            observed = AIR_MOVE if moving else IDLE
 
-        if raw == self._candidate:
+        if observed == self._candidate:
             self._candidate_count += 1
         else:
-            self._candidate       = raw
+            self._candidate = observed
             self._candidate_count = 1
 
-        if self._candidate_count >= self._debounce_n:
+        if self._candidate_count >= self._debounce_samples:
             if self._state != self._candidate:
-                self._on_transition(self._state, self._candidate, ts)
+                self._transitions.append((self._state, self._candidate, ts))
             self._state = self._candidate
 
-        # ── Layer 3: Logical stroke session ───────────────────────────────────
-        # Pen just lifted off — close any open session
-        if prev_contact and not self._contact_active:
-            self._stroke_live        = False
+    # -------------------------------------------------------------------------
+    # Layer 3 - Logical stroke session
+    # -------------------------------------------------------------------------
+
+    def _update_stroke_session(self, was_in_contact: bool, elapsed_us: float):
+        """
+        Open and close the logical stroke that downstream stages treat as ink.
+
+        A session needs a minimum of accumulated drawing time before it opens, so
+        a brief graze that never becomes a stroke does not claim a stroke id.
+        Once open it survives CONTACT_STATIC pauses and closes only on pen-up.
+        """
+
+        if was_in_contact and not self._contact_active:
+            self._stroke_live = False
             self._cumulative_draw_us = 0.0
 
-        # Within a contact session: accumulate drawing time, then open once threshold met
-        if self._contact_active:
-            if self._state == CONTACT_DRAWING:
-                self._cumulative_draw_us += dt_us
+        if not self._contact_active:
+            return
 
-            if not self._stroke_live and self._cumulative_draw_us >= self._min_draw_us:
-                self._stroke_live = True
-                self._stroke_id  += 1
+        if self._state == CONTACT_DRAWING:
+            self._cumulative_draw_us += elapsed_us
 
-        # ── Annotate ──────────────────────────────────────────────────────────
-        self._state_history.append(self._state)
-        ev['stroke_state']  = self._state
-        ev['stroke_active'] = self._stroke_live
-        ev['stroke_id']     = self._stroke_id  # 0 until first session; last id between sessions
-        return ev
-
-    # ── Public API ────────────────────────────────────────────────────────────
-    @property
-    def state(self) -> str:
-        return self._state
-
-    def reset(self):
-        self._contact_active     = False
-        self._pen_down_ts        = None
-        self._pen_up_ts          = None
-        self._state              = IDLE
-        self._candidate          = IDLE
-        self._candidate_count    = 0
-        self._stroke_live        = False
-        self._stroke_id          = 0
-        self._cumulative_draw_us = 0.0
-        self._last_ts            = None
-        self._state_history.clear()
-        self._transitions.clear()
-
-    def state_summary(self) -> dict:
-        counts = {s: 0 for s in _ALL_STATES}
-        for s in self._state_history:
-            if s in counts:
-                counts[s] += 1
-        total = len(self._state_history)
-        pcts  = {s: round(counts[s] / total * 100, 1) if total else 0.0 for s in _ALL_STATES}
-        return {'counts': counts, 'pcts': pcts, 'total': total}
-
-    def transition_log(self) -> list[tuple]:
-        return list(self._transitions)
-
-    def _on_transition(self, from_state: str, to_state: str, ts: int):
-        self._transitions.append((from_state, to_state, ts))
+        if not self._stroke_live and self._cumulative_draw_us >= self._min_draw_us:
+            self._stroke_live = True
+            self._stroke_id += 1
 
 
-# ==============================================================================
-# HARDWARE DATA LOGGING & REPORTING (Module 6: State Machine Validator)
-# ==============================================================================
+# =============================================================================
+# MODULE TESTING
+#   Live state-machine validator: prints the force reading, stillness flag, and
+#   resulting substate/session as you draw. Exports a CSV and a timeline plot on
+#   Ctrl+C, with the active stroke session shaded green.
+#
+#   Draw a few strokes, hover between them, and hold still to see all four
+#   substates and confirm micro-pauses do not fragment a stroke.
+#
+#   Run:  python -m background.pipelines.preprocess.contact
+# =============================================================================
 if __name__ == '__main__':
-    import time
-    import os
     import csv
-    import matplotlib.pyplot as plt
+    import os
+    import time
 
     os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 
-    from background.pipelines.cleaner.unpacker import SerialStreamer
+    import matplotlib.pyplot as plt
+
     from background.pipelines.cleaner.normalizer import StreamNormalizer
+    from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.module_output import ModuleRunOutput
     from background.pipelines.preprocess.imu import IMUPreprocessor
-    from background.pipelines.config import cfg
 
-    SERIAL_PORT  = getattr(cfg.serial, 'port', 'COM20')
-    BAUD_RATE    = getattr(cfg.serial, 'baud', 115200)
-    DISPLAY_RATE = 0.1
+    DISPLAY_RATE_S = 0.1
+    CSV_FILENAME = 'state_detector_report.csv'
+    PLOT_FILENAME = 'state_detector_report.png'
 
-    streamer       = SerialStreamer(port=SERIAL_PORT, baud=BAUD_RATE)
-    norm           = StreamNormalizer()
-    imu_prep       = IMUPreprocessor()
-    state_detector = ContactStateDetector()
+    streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
+    normalizer = StreamNormalizer()
+    imu_preprocessor = IMUPreprocessor()
+    detector = ContactStateDetector()
 
     print("=" * 60)
-    print(f"  [TEST] MODULE 6: State Machine Validator: {SERIAL_PORT}")
+    print(f"  [TEST] MODULE 6: State Machine Validator: {cfg.serial.port}")
     print("  Draw a few strokes, hover, and hold still. Press Ctrl+C to stop.")
     print("=" * 60)
 
-    event_log      = []
-    last_print_time = 0
+    event_log = []
+    last_print_time = 0.0
 
     try:
         while True:
             raw_packets = streamer.read_new_packets()
-            if raw_packets:
-                events = norm.normalize(raw_packets)
-                for ev in events:
-                    if ev['sensor'] == 'IMU':
-                        prep_imu = imu_prep.process_one(ev)
-                        if prep_imu:
-                            state_event = state_detector.process_one(prep_imu)
-                            if state_event:
-                                event_log.append(state_event)
-                                current_time = time.time()
-                                if current_time - last_print_time >= DISPLAY_RATE:
-                                    os.system('cls' if os.name == 'nt' else 'clear')
-                                    print(f"========= STATE DETECTOR ({DISPLAY_RATE}s) =========")
-                                    print(f"  Force     : {state_event['force']:6.1f} (Contact: {state_event['contact']})")
-                                    print(f"  Jerk      : {state_event['jerk']:6.1f} (Static : {state_event['is_static']})")
-                                    print("-" * 52)
-                                    print(f"  STATE     : [{state_event['stroke_state']}]")
-                                    print(f"  ACTIVE    : {state_event['stroke_active']}")
-                                    print(f"  STROKE ID : {state_event['stroke_id'] if state_event['stroke_id'] > 0 else '---'}")
-                                    print("====================================================")
-                                    last_print_time = current_time
+            for event in normalizer.normalize(raw_packets):
+                if event['sensor'] != 'IMU':
+                    continue
+
+                motion = imu_preprocessor.process_one(event)
+                if not motion:
+                    continue
+
+                annotated = detector.process_one(motion)
+                event_log.append(annotated)
+
+                now = time.time()
+                if now - last_print_time >= DISPLAY_RATE_S:
+                    os.system('cls' if os.name == 'nt' else 'clear')
+                    print(f"========= STATE DETECTOR ({DISPLAY_RATE_S}s) =========")
+                    print(f"  Force     : {annotated['force']:6.1f} "
+                          f"(Contact: {annotated['contact']})")
+                    print(f"  Jerk      : {annotated['jerk']:6.1f} "
+                          f"(Static : {annotated['is_static']})")
+                    print("-" * 52)
+                    print(f"  STATE     : [{annotated['stroke_state']}]")
+                    print(f"  ACTIVE    : {annotated['stroke_active']}")
+                    stroke_label = annotated['stroke_id'] if annotated['stroke_id'] > 0 else '---'
+                    print(f"  STROKE ID : {stroke_label}")
+                    print("====================================================")
+                    last_print_time = now
+
             time.sleep(0.005)
 
     except KeyboardInterrupt:
@@ -285,66 +321,73 @@ if __name__ == '__main__':
 
         if not event_log:
             print("No data collected. Exiting.")
-            exit()
+            raise SystemExit(0)
 
-        csv_filename = "state_detector_report.csv"
-        with open(csv_filename, mode='w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['ts_hw', 'force', 'jerk', 'is_static', 'contact',
-                             'stroke_state', 'stroke_active', 'stroke_id'])
-            for ev in event_log:
-                writer.writerow([
-                    ev['ts_hw'], ev['force'], ev['jerk'],
-                    int(ev['is_static']), int(ev['contact']),
-                    ev['stroke_state'], int(ev['stroke_active']), ev['stroke_id'],
-                ])
-        print(f"[EXPORT] Saved to {csv_filename}")
+        output = ModuleRunOutput('preprocess/contact')
+        output.save_csv(
+            CSV_FILENAME,
+            [[row['ts_hw'], row['force'], row['jerk'],
+              int(row['is_static']), int(row['contact']),
+              row['stroke_state'], int(row['stroke_active']), row['stroke_id']]
+             for row in event_log],
+            header=['ts_hw', 'force', 'jerk', 'is_static', 'contact',
+                    'stroke_state', 'stroke_active', 'stroke_id'],
+        )
 
         print("[PLOT] Rendering State Timeline...")
         try:
-            t_sec  = [(ev['ts_hw'] - event_log[0]['ts_hw']) / 1_000_000.0 for ev in event_log]
-            forces = [ev['force'] for ev in event_log]
+            start_ts = event_log[0]['ts_hw']
+            seconds = [(row['ts_hw'] - start_ts) / 1_000_000.0 for row in event_log]
+            forces = [row['force'] for row in event_log]
 
-            state_map  = {IDLE: 0, AIR_MOVE: 1, CONTACT_STATIC: 2, CONTACT_DRAWING: 3}
-            states_num = [state_map[ev['stroke_state']] for ev in event_log]
-            active     = [ev['stroke_active'] for ev in event_log]
+            state_index = {IDLE: 0, AIR_MOVE: 1, CONTACT_STATIC: 2, CONTACT_DRAWING: 3}
+            states = [state_index[row['stroke_state']] for row in event_log]
+            active_flags = [row['stroke_active'] for row in event_log]
 
-            fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(14, 8), sharex=True)
-            fig.suptitle('Module 6: Handwriting State Machine Timeline', fontsize=16, fontweight='bold')
+            figure, (axis_force, axis_state) = plt.subplots(
+                2, 1, figsize=(14, 8), sharex=True
+            )
+            figure.suptitle('Module 6: Handwriting State Machine Timeline',
+                            fontsize=16, fontweight='bold')
 
-            contact_threshold = cfg.imu.force_contact_threshold
-            ax1.plot(t_sec, forces, label='Raw Force Value', color='blue', linewidth=1.5)
-            ax1.axhline(y=contact_threshold, color='red', linestyle='--', label='Contact Threshold')
-            ax1.fill_between(t_sec, forces, contact_threshold,
-                             where=[f >= contact_threshold for f in forces],
-                             color='red', alpha=0.2, label='Surface Contact Detected')
-            ax1.set_ylabel('Force Output')
-            ax1.set_title('Physical Force Sensor')
-            ax1.grid(True, linestyle=':', alpha=0.7)
-            ax1.legend(loc='upper right')
+            threshold = cfg.imu.force_contact_threshold
+            axis_force.plot(seconds, forces, label='Raw Force Value',
+                            color='blue', linewidth=1.5)
+            axis_force.axhline(y=threshold, color='red', linestyle='--',
+                               label='Contact Threshold')
+            axis_force.fill_between(
+                seconds, forces, threshold,
+                where=[value >= threshold for value in forces],
+                color='red', alpha=0.2, label='Surface Contact Detected',
+            )
+            axis_force.set_ylabel('Force Output')
+            axis_force.set_title('Physical Force Sensor')
+            axis_force.grid(True, linestyle=':', alpha=0.7)
+            axis_force.legend(loc='upper right')
 
-            ax2.step(t_sec, states_num, where='post', color='purple', linewidth=2.5)
-            ax2.set_yticks([0, 1, 2, 3])
-            ax2.set_yticklabels(['IDLE', 'AIR_MOVE', 'CONTACT_STATIC', 'CONTACT_DRAWING'])
+            axis_state.step(seconds, states, where='post', color='purple', linewidth=2.5)
+            axis_state.set_yticks([0, 1, 2, 3])
+            axis_state.set_yticklabels(list(state_index))
 
-            # Highlight the full logical stroke session (not just CONTACT_DRAWING moments)
-            for i in range(1, len(t_sec)):
-                if active[i]:
-                    ax2.axvspan(t_sec[i - 1], t_sec[i], color='green', alpha=0.2)
+            # Shade the whole session, not just CONTACT_DRAWING samples, so
+            # micro-pauses inside a stroke are visibly part of it.
+            for index in range(1, len(seconds)):
+                if active_flags[index]:
+                    axis_state.axvspan(seconds[index - 1], seconds[index],
+                                       color='green', alpha=0.2)
 
-            ax2.set_ylabel('Logical State')
-            ax2.set_xlabel('Time (Seconds)')
-            ax2.set_title('Computed Stroke State (Green = Active Stroke Session)')
-            ax2.grid(True, axis='x', linestyle=':', alpha=0.7)
+            axis_state.set_ylabel('Logical State')
+            axis_state.set_xlabel('Time (Seconds)')
+            axis_state.set_title('Computed Stroke State (Green = Active Stroke Session)')
+            axis_state.grid(True, axis='x', linestyle=':', alpha=0.7)
 
             plt.tight_layout()
-
-            plot_filename = "state_detector_report.png"
-            plt.savefig(plot_filename, dpi=300)
-            print(f"[EXPORT] Plot saved successfully to {plot_filename}")
+            plt.savefig(output.path(PLOT_FILENAME), dpi=300)
+            output.record(PLOT_FILENAME)
+            output.finish()
             plt.show(block=True)
 
         except KeyboardInterrupt:
             print("\n[INFO] Matplotlib UI interrupted. Image was saved to disk.")
-        except Exception as e:
-            print(f"\n[ERROR] Plotting failed: {e}")
+        except Exception as error:
+            print(f"\n[ERROR] Plotting failed: {error}")

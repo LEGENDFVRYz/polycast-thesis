@@ -19,6 +19,11 @@
             "savePath": "/src/assets/css"
         }
     ],
-    "python-envs.defaultEnvManager": "ms-python.python:conda",
-    "python-envs.defaultPackageManager": "ms-python.python:conda"
+    "python-envs.pythonProjects": [
+        {
+            "path": "test/batch_testing/run.py",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ]
 }

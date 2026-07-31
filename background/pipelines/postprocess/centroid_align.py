@@ -1,6 +1,4 @@
 """
-centroid_align.py
-=================
 Post-stroke rigid/similarity alignment.
 
 After pen-up, the finished fused/IMU polyline is corrected as one global
@@ -10,180 +8,230 @@ object using the UWB point cloud buffered during the same stroke:
     2. optional uniform scale correction
     3. optional bounded 2D Procrustes rotation
 
-The important property is that no pointwise rubber-band correction is applied.
-The relative stroke topology is preserved; only one global transform is applied.
+The important property is that no pointwise rubber-band correction is
+applied. The relative stroke topology is preserved; only one global
+transform is applied.
+
+Usage (Import as helper or run directly to test rotation and scale recover):
+    python -m background.pipelines.postprocess.centroid_align
 """
 
 import math
+
 import numpy as np
 
 
-def _bbox_radius(pts: np.ndarray, percentile: float) -> float:
+# -----------------------------------------------------------------------------
+# Geometry helpers
+# -----------------------------------------------------------------------------
+
+def _bbox_radius(points_xy: np.ndarray, percentile: float) -> float:
     """Robust radius around the centroid, used for mild uniform scale."""
-    if len(pts) < 2:
+
+    if len(points_xy) < 2:
         return 0.0
-    centre = pts.mean(axis=0)
-    d = np.linalg.norm(pts - centre, axis=1)
-    return float(np.percentile(d, max(0.0, min(1.0, percentile)) * 100.0))
+    
+    centre = points_xy.mean(axis=0)
+    distances = np.linalg.norm(points_xy - centre, axis=1)
+    return float(np.percentile(distances, max(0.0, min(1.0, percentile)) * 100.0))
 
 
-def _pca_direction(pts: np.ndarray) -> tuple:
-    """First principal component of *pts* and its eigenvalue ratio.
+def _pca_direction(points_xy: np.ndarray) -> tuple:
+    """
+    First principal component of points_xy and its eigenvalue ratio.
 
-    Returns (unit_vec, ratio) where ratio = λ_max / λ_min.
+    Returns (unit_vector, ratio) where ratio = lambda_max / lambda_min.
     Returns (None, 0.0) for degenerate inputs.
     """
-    if len(pts) < 2:
+
+    if len(points_xy) < 2:
         return None, 0.0
-    c = pts.mean(axis=0)
-    centered = pts - c
+    
+    centre = points_xy.mean(axis=0)
+    centered = points_xy - centre
+    
     if np.allclose(centered, 0.0):
         return None, 0.0
-    cov = np.cov(centered.T)
-    vals, vecs = np.linalg.eigh(cov)   # ascending order
-    ratio = float(vals[-1]) / (float(vals[0]) + 1e-9)
-    return vecs[:, -1], ratio
+    
+    covariance = np.cov(centered.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(covariance)  # ascending order
+    ratio = float(eigenvalues[-1]) / (float(eigenvalues[0]) + 1e-9)
+    return eigenvectors[:, -1], ratio
 
 
 def _rotation_2d(theta_rad: float) -> np.ndarray:
-    """2×2 counter-clockwise rotation matrix for column-vector convention."""
-    c, s = math.cos(theta_rad), math.sin(theta_rad)
-    return np.array([[c, -s], [s, c]], dtype=float)
+    """2x2 counter-clockwise rotation matrix for column-vector convention."""
+
+    cos_theta, sin_theta = math.cos(theta_rad), math.sin(theta_rad)
+    return np.array([[cos_theta, -sin_theta], [sin_theta, cos_theta]], dtype=float)
 
 
-def _rotation_angle_deg(R: np.ndarray) -> float:
-    """Return CCW angle in degrees for a 2D rotation matrix."""
-    return math.degrees(math.atan2(float(R[1, 0]), float(R[0, 0])))
+def _rotation_angle_deg(rotation: np.ndarray) -> float:
+    """Return the CCW angle in degrees for a 2D rotation matrix."""
+
+    return math.degrees(math.atan2(float(rotation[1, 0]), float(rotation[0, 0])))
 
 
 def _trim_uwb_cloud(uwb_xy: np.ndarray, trim_quantile: float) -> np.ndarray:
-    """Drop farthest UWB points before centroid/transform calculation."""
+    """Drop the farthest UWB points before centroid/transform calculation."""
+
     if len(uwb_xy) < 4:
         return uwb_xy
     centre = np.median(uwb_xy, axis=0)
-    d = np.linalg.norm(uwb_xy - centre, axis=1)
-    q = float(np.quantile(d, max(0.05, min(1.0, trim_quantile))))
-    keep = d <= q
+    distances = np.linalg.norm(uwb_xy - centre, axis=1)
+    quantile = float(np.quantile(distances, max(0.05, min(1.0, trim_quantile))))
+    keep = distances <= quantile
     return uwb_xy[keep] if int(np.sum(keep)) >= 3 else uwb_xy
 
 
-def _trim_endpoints(pts: np.ndarray, frac: float) -> np.ndarray:
+def _trim_endpoints(points_xy: np.ndarray, fraction: float) -> np.ndarray:
     """Trim a small chronological fraction at each end for transform fitting."""
-    if len(pts) < 6 or frac <= 0.0:
-        return pts
-    n_trim = int(round(len(pts) * max(0.0, min(0.20, frac))))
-    if n_trim <= 0 or (2 * n_trim) >= len(pts) - 2:
-        return pts
-    return pts[n_trim:-n_trim]
+
+    if len(points_xy) < 6 or fraction <= 0.0:
+        return points_xy
+    trim_count = int(round(len(points_xy) * max(0.0, min(0.20, fraction))))
+    if trim_count <= 0 or (2 * trim_count) >= len(points_xy) - 2:
+        return points_xy
+    return points_xy[trim_count:-trim_count]
 
 
-def _resample_polyline(pts: np.ndarray, n: int) -> np.ndarray:
-    """Arc-length resample a 2D polyline to exactly n points."""
-    pts = np.asarray(pts, dtype=float)
-    if len(pts) == 0:
+def _resample_polyline(points_xy: np.ndarray, count: int) -> np.ndarray:
+    """Arc-length resample a 2D polyline to exactly `count` points."""
+
+    points_xy = np.asarray(points_xy, dtype=float)
+    if len(points_xy) == 0:
         return np.empty((0, 2), dtype=float)
-    if len(pts) == 1 or n <= 1:
-        return np.repeat(pts[:1], max(1, n), axis=0)
+    if len(points_xy) == 1 or count <= 1:
+        return np.repeat(points_xy[:1], max(1, count), axis=0)
 
-    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-    keep = np.concatenate([[True], seg > 1e-9])
-    pts = pts[keep]
-    if len(pts) == 1:
-        return np.repeat(pts[:1], n, axis=0)
+    segment_lengths = np.linalg.norm(np.diff(points_xy, axis=0), axis=1)
+    keep = np.concatenate([[True], segment_lengths > 1e-9])
+    points_xy = points_xy[keep]
+    if len(points_xy) == 1:
+        return np.repeat(points_xy[:1], count, axis=0)
 
-    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
-    s = np.concatenate([[0.0], np.cumsum(seg)])
-    total = float(s[-1])
-    if total < 1e-9:
-        return np.repeat(pts[:1], n, axis=0)
+    segment_lengths = np.linalg.norm(np.diff(points_xy, axis=0), axis=1)
+    arc_length = np.concatenate([[0.0], np.cumsum(segment_lengths)])
+    total_length = float(arc_length[-1])
+    if total_length < 1e-9:
+        return np.repeat(points_xy[:1], count, axis=0)
 
-    targets = np.linspace(0.0, total, int(n))
-    out = np.empty((int(n), 2), dtype=float)
-    out[:, 0] = np.interp(targets, s, pts[:, 0])
-    out[:, 1] = np.interp(targets, s, pts[:, 1])
-    return out
+    targets = np.linspace(0.0, total_length, int(count))
+    resampled = np.empty((int(count), 2), dtype=float)
+    resampled[:, 0] = np.interp(targets, arc_length, points_xy[:, 0])
+    resampled[:, 1] = np.interp(targets, arc_length, points_xy[:, 1])
+    return resampled
 
 
-def _similarity_procrustes(src: np.ndarray, dst: np.ndarray, *, scale_enabled: bool,
-                           max_rotation_deg: float, scale_min: float,
-                           scale_max: float) -> tuple[np.ndarray, float, float, dict]:
-    """Best bounded similarity transform from src to dst.
+# -----------------------------------------------------------------------------
+# Transform estimation
+# -----------------------------------------------------------------------------
 
-    Uses paired, resampled correspondences.  Returns (R, scale, rot_deg, meta),
-    where transformed row-vector points are:  dst_c + scale * (src_c @ R.T).
+def _similarity_procrustes(
+    source: np.ndarray,
+    destination: np.ndarray,
+    *,
+    scale_enabled: bool,
+    max_rotation_deg: float,
+    scale_min: float,
+    scale_max: float,
+) -> tuple[np.ndarray, float, float, dict]:
     """
-    if len(src) < 3 or len(dst) < 3 or len(src) != len(dst):
+    Best bounded similarity transform from source to destination.
+
+    Uses paired, resampled correspondences. Returns (rotation, scale,
+    rotation_deg, meta), where transformed row-vector points are:
+    dest_centre + scale * (source_centered @ rotation.T).
+    """
+
+    if len(source) < 3 or len(destination) < 3 or len(source) != len(destination):
         return np.eye(2), 1.0, 0.0, {'applied': False, 'reason': 'bad_correspondence'}
 
-    cs = src.mean(axis=0)
-    cd = dst.mean(axis=0)
-    X = src - cs
-    Y = dst - cd
-    denom = float(np.sum(X * X))
-    if denom < 1e-12:
+    source_centre = source.mean(axis=0)
+    dest_centre = destination.mean(axis=0)
+    source_centered = source - source_centre
+    dest_centered = destination - dest_centre
+    denominator = float(np.sum(source_centered * source_centered))
+    
+    if denominator < 1e-12:
         return np.eye(2), 1.0, 0.0, {'applied': False, 'reason': 'degenerate_src'}
 
-    H = X.T @ Y
-    U, S, Vt = np.linalg.svd(H)
-    R = Vt.T @ U.T
-    if np.linalg.det(R) < 0:
-        Vt[-1, :] *= -1.0
-        R = Vt.T @ U.T
+    cross_covariance = source_centered.T @ dest_centered
+    u, singular_values, vt = np.linalg.svd(cross_covariance)
+    rotation = vt.T @ u.T
+    if np.linalg.det(rotation) < 0:
+        vt[-1, :] *= -1.0
+        rotation = vt.T @ u.T
 
-    raw_rot_deg = _rotation_angle_deg(R)
-    rot_deg = max(-float(max_rotation_deg), min(float(max_rotation_deg), raw_rot_deg))
-    if abs(rot_deg - raw_rot_deg) > 1e-6:
-        R = _rotation_2d(math.radians(rot_deg))
+    raw_rotation_deg = _rotation_angle_deg(rotation)
+    rotation_deg = max(-float(max_rotation_deg), min(float(max_rotation_deg), raw_rotation_deg))
+    if abs(rotation_deg - raw_rotation_deg) > 1e-6:
+        rotation = _rotation_2d(math.radians(rotation_deg))
 
-    raw_scale = float(np.sum(S) / denom) if scale_enabled else 1.0
+    raw_scale = float(np.sum(singular_values) / denominator) if scale_enabled else 1.0
     scale = max(float(scale_min), min(float(scale_max), raw_scale)) if scale_enabled else 1.0
 
-    before = float(np.sqrt(np.mean(np.sum((X - Y) ** 2, axis=1))))
-    mapped = scale * (X @ R.T)
-    after = float(np.sqrt(np.mean(np.sum((mapped - Y) ** 2, axis=1))))
-    return R, scale, rot_deg, {
+    rmse_before = float(np.sqrt(np.mean(np.sum((source_centered - dest_centered) ** 2, axis=1))))
+    mapped = scale * (source_centered @ rotation.T)
+    rmse_after = float(np.sqrt(np.mean(np.sum((mapped - dest_centered) ** 2, axis=1))))
+    return rotation, scale, rotation_deg, {
         'applied': True,
-        'raw_rotation_deg': round(raw_rot_deg, 2),
-        'rotation_clamped': bool(abs(rot_deg - raw_rot_deg) > 1e-6),
+        'raw_rotation_deg': round(raw_rotation_deg, 2),
+        'rotation_clamped': bool(abs(rotation_deg - raw_rotation_deg) > 1e-6),
         'raw_scale': round(raw_scale, 4),
-        'rmse_before_m': round(before, 4),
-        'rmse_after_m': round(after, 4),
+        'rmse_before_m': round(rmse_before, 4),
+        'rmse_after_m': round(rmse_after, 4),
     }
 
 
 def _pca_rotation(points_xy: np.ndarray, uwb_xy: np.ndarray, cfg) -> tuple[np.ndarray, float, dict]:
     """Fallback rotation based on principal axes."""
-    v_imu, ratio_imu = _pca_direction(points_xy)
-    v_uwb, ratio_uwb = _pca_direction(uwb_xy)
+
+    imu_direction, imu_ratio = _pca_direction(points_xy)
+    uwb_direction, uwb_ratio = _pca_direction(uwb_xy)
     min_ratio = float(getattr(cfg, 'pca_min_eigenratio', 2.0))
-    if not (v_imu is not None and v_uwb is not None and ratio_imu >= min_ratio and ratio_uwb >= min_ratio):
+    
+    if not (
+        imu_direction is not None
+        and uwb_direction is not None
+        and imu_ratio >= min_ratio
+        and uwb_ratio >= min_ratio
+    ):
         return np.eye(2), 0.0, {
             'applied': False,
             'reason': 'weak_pca_axis',
-            'ratio_imu': round(float(ratio_imu), 2),
-            'ratio_uwb': round(float(ratio_uwb), 2),
+            'ratio_imu': round(float(imu_ratio), 2),
+            'ratio_uwb': round(float(uwb_ratio), 2),
         }
 
-    if float(np.dot(v_imu, v_uwb)) < 0:
-        v_uwb = -v_uwb
-    cross = float(v_imu[0] * v_uwb[1] - v_imu[1] * v_uwb[0])
-    dot = float(np.dot(v_imu, v_uwb))
+    if float(np.dot(imu_direction, uwb_direction)) < 0:
+        uwb_direction = -uwb_direction
+    
+    cross = float(imu_direction[0] * uwb_direction[1] - imu_direction[1] * uwb_direction[0])
+    dot = float(np.dot(imu_direction, uwb_direction))
     theta = math.atan2(cross, dot)
-    max_rad = math.radians(float(getattr(cfg, 'rotation_max_deg', 20.0)))
-    theta = max(-max_rad, min(max_rad, theta))
+    max_rotation_rad = math.radians(float(getattr(cfg, 'rotation_max_deg', 20.0)))
+    theta = max(-max_rotation_rad, min(max_rotation_rad, theta))
+    
     return _rotation_2d(theta), math.degrees(theta), {
         'applied': True,
-        'ratio_imu': round(float(ratio_imu), 2),
-        'ratio_uwb': round(float(ratio_uwb), 2),
+        'ratio_imu': round(float(imu_ratio), 2),
+        'ratio_uwb': round(float(uwb_ratio), 2),
     }
 
 
-def align_centroid(points_xy: np.ndarray, uwb_xy: np.ndarray, cfg) -> tuple[np.ndarray, dict]:
-    """Translate, scale, and optionally rotate *points_xy* to match UWB.
+# -----------------------------------------------------------------------------
+# Public API
+# -----------------------------------------------------------------------------
 
-    This performs one global similarity transform only.  It does not pull
+def align_centroid(points_xy: np.ndarray, uwb_xy: np.ndarray, cfg) -> tuple[np.ndarray, dict]:
+    """
+    Translate, scale, and optionally rotate points_xy to match UWB.
+
+    Performs one global similarity transform only. It does not pull
     individual stroke samples toward individual UWB samples.
     """
+
     points_xy = np.asarray(points_xy, dtype=float)
     uwb_xy = np.asarray(uwb_xy, dtype=float)
 
@@ -197,99 +245,113 @@ def align_centroid(points_xy: np.ndarray, uwb_xy: np.ndarray, cfg) -> tuple[np.n
             'uwb_count': int(len(uwb_xy)),
         }
 
-    uwb_trim = _trim_uwb_cloud(uwb_xy, getattr(cfg, 'trim_quantile', 1.0))
+    uwb_trimmed = _trim_uwb_cloud(uwb_xy, getattr(cfg, 'trim_quantile', 1.0))
 
-    fit_src = _trim_endpoints(points_xy, float(getattr(cfg, 'procrustes_endpoint_trim', 0.0)))
-    fit_dst = _trim_endpoints(uwb_trim, float(getattr(cfg, 'procrustes_endpoint_trim', 0.0)))
-    if len(fit_src) < 3:
-        fit_src = points_xy
-    if len(fit_dst) < 3:
-        fit_dst = uwb_trim
+    endpoint_trim = float(getattr(cfg, 'procrustes_endpoint_trim', 0.0))
+    fit_points = _trim_endpoints(points_xy, endpoint_trim)
+    fit_uwb = _trim_endpoints(uwb_trimmed, endpoint_trim)
+    
+    if len(fit_points) < 3:
+        fit_points = points_xy
+    if len(fit_uwb) < 3:
+        fit_uwb = uwb_trimmed
 
-    c_imu = fit_src.mean(axis=0)
-    c_uwb = fit_dst.mean(axis=0)
-    delta = c_uwb - c_imu
-    delta_norm = float(np.linalg.norm(delta))
+    points_centre = fit_points.mean(axis=0)
+    uwb_centre = fit_uwb.mean(axis=0)
+    translation = uwb_centre - points_centre
+    translation_norm = float(np.linalg.norm(translation))
 
-    if delta_norm > cfg.max_translation_m:
+    if translation_norm > cfg.max_translation_m:
         return points_xy, {
             'applied': False,
             'reason': 'translation_too_large',
-            'delta_m': round(delta_norm, 4),
+            'delta_m': round(translation_norm, 4),
             'uwb_count': int(len(uwb_xy)),
-            'uwb_used': int(len(uwb_trim)),
+            'uwb_used': int(len(uwb_trimmed)),
         }
 
     # Radius ratio remains the default scale estimate for round/weak shapes.
     scale = 1.0
-    r_imu = 0.0
-    r_uwb = 0.0
+    points_radius = 0.0
+    uwb_radius = 0.0
+    
     if getattr(cfg, 'scale_enabled', False):
-        pct = getattr(cfg, 'scale_percentile', 0.80)
-        r_imu = _bbox_radius(fit_src, pct)
-        r_uwb = _bbox_radius(fit_dst, pct)
-        if r_imu > 1e-6 and r_uwb > 1e-6:
-            raw_scale = r_uwb / r_imu
+        percentile = getattr(cfg, 'scale_percentile', 0.80)
+        points_radius = _bbox_radius(fit_points, percentile)
+        uwb_radius = _bbox_radius(fit_uwb, percentile)
+        
+        if points_radius > 1e-6 and uwb_radius > 1e-6:
+            raw_scale = uwb_radius / points_radius
             scale = max(float(cfg.scale_min), min(float(cfg.scale_max), float(raw_scale)))
 
     rotation_deg = 0.0
-    R = np.eye(2)
+    rotation = np.eye(2)
     rotation_meta = {'applied': False, 'method': 'none'}
 
     if getattr(cfg, 'rotation_enabled', False):
-        if getattr(cfg, 'procrustes_enabled', True) and len(fit_src) >= 3 and len(fit_dst) >= 3:
-            n = int(max(8, min(int(getattr(cfg, 'procrustes_samples', 48)), len(fit_src), len(fit_dst))))
-            src_rs = _resample_polyline(fit_src, n)
-            dst_rs = _resample_polyline(fit_dst, n)
-            R_p, sc_p, rot_p, meta_p = _similarity_procrustes(
-                src_rs, dst_rs,
-                scale_enabled=bool(getattr(cfg, 'scale_enabled', False)),
-                max_rotation_deg=float(getattr(cfg, 'rotation_max_deg', 20.0)),
-                scale_min=float(getattr(cfg, 'scale_min', 0.70)),
-                scale_max=float(getattr(cfg, 'scale_max', 1.10)),
+        if getattr(cfg, 'procrustes_enabled', True) and len(fit_points) >= 3 and len(fit_uwb) >= 3:
+            sample_count = int(max(
+                8, min(int(getattr(cfg, 'procrustes_samples', 48)), len(fit_points), len(fit_uwb))
+            ))
+            
+            resampled_points = _resample_polyline(fit_points, sample_count)
+            resampled_uwb = _resample_polyline(fit_uwb, sample_count)
+            procrustes_rotation, procrustes_scale, procrustes_rotation_deg, procrustes_meta = (
+                _similarity_procrustes(
+                    resampled_points, resampled_uwb,
+                    scale_enabled=bool(getattr(cfg, 'scale_enabled', False)),
+                    max_rotation_deg=float(getattr(cfg, 'rotation_max_deg', 20.0)),
+                    scale_min=float(getattr(cfg, 'scale_min', 0.70)),
+                    scale_max=float(getattr(cfg, 'scale_max', 1.10)),
+                )
             )
-            if meta_p.get('applied'):
-                R = R_p
-                rotation_deg = rot_p
+            
+            if procrustes_meta.get('applied'):
+                rotation = procrustes_rotation
+                rotation_deg = procrustes_rotation_deg
                 # Prefer Procrustes scale when correspondences are available.
                 if getattr(cfg, 'scale_enabled', False):
-                    scale = sc_p
-                rotation_meta = {'applied': True, 'method': 'procrustes', 'samples': n, **meta_p}
+                    scale = procrustes_scale
+                rotation_meta = {
+                    'applied': True, 'method': 'procrustes', 'samples': sample_count, **procrustes_meta
+                }
             else:
-                rotation_meta = {'applied': False, 'method': 'procrustes', **meta_p}
+                rotation_meta = {'applied': False, 'method': 'procrustes', **procrustes_meta}
 
         if not rotation_meta.get('applied'):
-            R_pca, rot_pca, meta_pca = _pca_rotation(fit_src, fit_dst, cfg)
-            if meta_pca.get('applied'):
-                R = R_pca
-                rotation_deg = rot_pca
-                rotation_meta = {'method': 'pca', **meta_pca}
+            pca_rotation, pca_rotation_deg, pca_meta = _pca_rotation(fit_points, fit_uwb, cfg)
+            if pca_meta.get('applied'):
+                rotation = pca_rotation
+                rotation_deg = pca_rotation_deg
+                rotation_meta = {'method': 'pca', **pca_meta}
             else:
-                rotation_meta = {'method': 'pca', **meta_pca}
+                rotation_meta = {'method': 'pca', **pca_meta}
 
-    centered = points_xy - c_imu
-    corrected = c_uwb + scale * (centered @ R.T)
+    centered = points_xy - points_centre
+    corrected = uwb_centre + scale * (centered @ rotation.T)
+    
     return corrected, {
         'applied': True,
-        'delta': [round(float(delta[0]), 4), round(float(delta[1]), 4)],
-        'delta_m': round(delta_norm, 4),
+        'delta': [round(float(translation[0]), 4), round(float(translation[1]), 4)],
+        'delta_m': round(translation_norm, 4),
         'scale': round(float(scale), 4),
         'rotation_deg': round(rotation_deg, 2),
         'rotation': rotation_meta,
-        'r_imu_m': round(float(r_imu), 4),
-        'r_uwb_m': round(float(r_uwb), 4),
-        'centroid_imu': [round(float(c_imu[0]), 4), round(float(c_imu[1]), 4)],
-        'centroid_uwb': [round(float(c_uwb[0]), 4), round(float(c_uwb[1]), 4)],
+        'r_imu_m': round(float(points_radius), 4),
+        'r_uwb_m': round(float(uwb_radius), 4),
+        'centroid_imu': [round(float(points_centre[0]), 4), round(float(points_centre[1]), 4)],
+        'centroid_uwb': [round(float(uwb_centre[0]), 4), round(float(uwb_centre[1]), 4)],
         'uwb_count': int(len(uwb_xy)),
-        'uwb_used': int(len(uwb_trim)),
-        'fit_points': int(len(fit_src)),
-        'fit_uwb': int(len(fit_dst)),
+        'uwb_used': int(len(uwb_trimmed)),
+        'fit_points': int(len(fit_points)),
+        'fit_uwb': int(len(fit_uwb)),
     }
 
 
-# ---------------------------------------------------------------------------
-# Self-test
-# ---------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Module Testing
+# -----------------------------------------------------------------------------
+
 if __name__ == '__main__':
     import sys
 
@@ -298,14 +360,14 @@ if __name__ == '__main__':
     TOLERANCE_M = 0.001  # 1 mm
     TRUE_DELTA = np.array([0.05, 0.03])
     centre = np.array([0.3, 0.4])
-    half = 0.08
-    imu_pts = np.array([
-        centre + [-half, -half],
-        centre + [ half, -half],
-        centre + [ half,  half],
-        centre + [-half,  half],
+    half_width = 0.08
+    imu_points = np.array([
+        centre + [-half_width, -half_width],
+        centre + [ half_width, -half_width],
+        centre + [ half_width,  half_width],
+        centre + [-half_width,  half_width],
     ])
-    uwb_pts = np.array([
+    uwb_points = np.array([
         centre + TRUE_DELTA + np.array([-0.01,  0.01]),
         centre + TRUE_DELTA + np.array([ 0.01,  0.01]),
         centre + TRUE_DELTA + np.array([ 0.01, -0.01]),
@@ -313,7 +375,7 @@ if __name__ == '__main__':
         centre + TRUE_DELTA + np.array([ 0.00,  0.00]),
     ])
 
-    class _CfgNoRot:
+    class _ConfigNoRotation:
         min_uwb_points = 3
         max_translation_m = 0.20
         trim_quantile = 1.0
@@ -321,28 +383,30 @@ if __name__ == '__main__':
         rotation_enabled = False
         procrustes_endpoint_trim = 0.0
 
-    corrected, meta = align_centroid(imu_pts, uwb_pts, _CfgNoRot())
+    corrected, meta = align_centroid(imu_points, uwb_points, _ConfigNoRotation())
     if not meta['applied']:
-        print(f'T1 FAIL: not applied — {meta}'); ok = False
+        print(f'T1 FAIL: not applied - {meta}'); ok = False
     else:
-        err = float(np.linalg.norm(np.array(meta['delta']) - TRUE_DELTA))
-        if err > TOLERANCE_M:
-            print(f'T1 FAIL: delta err {err*1000:.2f} mm'); ok = False
+        error_m = float(np.linalg.norm(np.array(meta['delta']) - TRUE_DELTA))
+        if error_m > TOLERANCE_M:
+            print(f'T1 FAIL: delta err {error_m*1000:.2f} mm'); ok = False
         else:
-            print(f'T1 PASS  delta={meta["delta"]}  err={err*1000:.2f} mm')
+            print(f'T1 PASS  delta={meta["delta"]}  err={error_m*1000:.2f} mm')
 
     # Procrustes rotation recovery on a line segment.
-    TRUE_ROT_DEG = -15.0
-    TRUE_ROT_RAD = math.radians(TRUE_ROT_DEG)
-    n_seg = 30
-    imu_line = np.column_stack([np.linspace(-0.10, 0.10, n_seg), np.zeros(n_seg)])
+    TRUE_ROTATION_DEG = -15.0
+    TRUE_ROTATION_RAD = math.radians(TRUE_ROTATION_DEG)
+    points_per_segment = 30
+    imu_line = np.column_stack([
+        np.linspace(-0.10, 0.10, points_per_segment), np.zeros(points_per_segment)
+    ])
     imu_line += centre
-    R_true = _rotation_2d(TRUE_ROT_RAD)
-    uwb_line = (R_true @ (imu_line - centre).T).T + centre + TRUE_DELTA
+    true_rotation = _rotation_2d(TRUE_ROTATION_RAD)
+    uwb_line = (true_rotation @ (imu_line - centre).T).T + centre + TRUE_DELTA
     rng = np.random.default_rng(7)
     uwb_line += rng.normal(0, 0.0015, uwb_line.shape)
 
-    class _CfgRot:
+    class _ConfigRotation:
         min_uwb_points = 3
         max_translation_m = 0.20
         trim_quantile = 1.0
@@ -354,33 +418,39 @@ if __name__ == '__main__':
         procrustes_endpoint_trim = 0.0
         pca_min_eigenratio = 2.0
 
-    _, meta2 = align_centroid(imu_line, uwb_line, _CfgRot())
-    if not meta2['applied']:
-        print(f'T2 FAIL: not applied — {meta2}'); ok = False
+    _, meta_rotation = align_centroid(imu_line, uwb_line, _ConfigRotation())
+    if not meta_rotation['applied']:
+        print(f'T2 FAIL: not applied - {meta_rotation}'); ok = False
     else:
-        rot_err = abs(meta2['rotation_deg'] - TRUE_ROT_DEG)
-        if rot_err > 3.0:
-            print(f'T2 FAIL: rot err {rot_err:.2f}° (got {meta2["rotation_deg"]}°, expected {TRUE_ROT_DEG}°)')
+        rotation_error_deg = abs(meta_rotation['rotation_deg'] - TRUE_ROTATION_DEG)
+        if rotation_error_deg > 3.0:
+            print(
+                f'T2 FAIL: rot err {rotation_error_deg:.2f} deg '
+                f'(got {meta_rotation["rotation_deg"]} deg, expected {TRUE_ROTATION_DEG} deg)'
+            )
             ok = False
         else:
-            print(f'T2 PASS  rot={meta2["rotation_deg"]}°  err={rot_err:.2f}°  method={meta2["rotation"].get("method")}')
+            print(
+                f'T2 PASS  rot={meta_rotation["rotation_deg"]} deg  '
+                f'err={rotation_error_deg:.2f} deg  method={meta_rotation["rotation"].get("method")}'
+            )
 
     # Procrustes scale recovery.
     TRUE_SCALE = 0.80
-    uwb_scaled = TRUE_SCALE * (R_true @ (imu_line - centre).T).T + centre + TRUE_DELTA
+    uwb_scaled = TRUE_SCALE * (true_rotation @ (imu_line - centre).T).T + centre + TRUE_DELTA
 
-    class _CfgScale(_CfgRot):
+    class _ConfigScale(_ConfigRotation):
         scale_enabled = True
         scale_min = 0.70
         scale_max = 1.10
         scale_percentile = 0.80
 
-    _, meta3 = align_centroid(imu_line, uwb_scaled, _CfgScale())
-    scale_err = abs(meta3.get('scale', 1.0) - TRUE_SCALE)
-    if scale_err > 0.05:
-        print(f'T3 FAIL: scale err {scale_err:.3f} (got {meta3.get("scale")}, expected {TRUE_SCALE})')
+    _, meta_scale = align_centroid(imu_line, uwb_scaled, _ConfigScale())
+    scale_error = abs(meta_scale.get('scale', 1.0) - TRUE_SCALE)
+    if scale_error > 0.05:
+        print(f'T3 FAIL: scale err {scale_error:.3f} (got {meta_scale.get("scale")}, expected {TRUE_SCALE})')
         ok = False
     else:
-        print(f'T3 PASS  scale={meta3.get("scale")}  err={scale_err:.3f}')
+        print(f'T3 PASS  scale={meta_scale.get("scale")}  err={scale_error:.3f}')
 
     sys.exit(0 if ok else 1)

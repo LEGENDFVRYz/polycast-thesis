@@ -1,33 +1,48 @@
-# --- Python cache ---
+# Python cache
 __pycache__/
 *.py[cod]
 
-# --- Test cache ---
+# Test cache
 .pytest_cache/
 
-# --- Environments (dependent) ---
+# Environments
 .venv/
 .conda/
 .env
 
-# --- Logs Files ---
-logs/
+# Logs
 *.log
 
-# --- Databases ---
-instance/
+# Databases
 *.db
 
-# --- CSS maps (any) ---
+# CSS maps
 *.css.map
 
-# --- Generated Frames or Notes ---
+# Generated Frames or Notes
+docs/
 archive/
+instance/
 app/static/gallery_images/
 
-# --- sample and output data ---
+# Testing Directory
+test/_datasets
+test/batch/outputs
+test/tuning/results
+
+# Module self-test artifacts; the README documents the layout and stays tracked.
+test/module_runs/*
+!test/module_runs/README.md
+
+
+# Generated logs
+tuning_results/
+logs/
+
+# Sample Datas
 *.csv
 
-# --- docs and claude md files (temporary, for calibrating) ---
-docs/
-claude.md
+# ML Training Data
+*.npz
+*.npy
+*.png

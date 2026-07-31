@@ -5,7 +5,7 @@ Turns the flat stream of fused events from the fusion engine into finished
 stroke polylines. A stroke is a contiguous sequence of points drawn while the
 pen was in the CONTACT_DRAWING state (stroke_active=True).
 
-Input (from ESKF.process_event / FusionEngine.process_event - fused events):
+Input (from ESKF.process_event - fused events):
     {
         'source':        'IMU' | 'UWB',
         'ts_hw':         int,
@@ -36,7 +36,7 @@ Rules:
 Run directly for a synthetic self-test, or --live to wire the full pipeline
 from a serial port:
     python -m background.pipelines.reconstruct
-    python -m background.pipelines.reconstruct --live --fusion eskf
+    python -m background.pipelines.reconstruct --live
 """
 
 import math
@@ -476,15 +476,12 @@ class StrokeReconstructor:
 #   --live : wire the full live pipeline (Serial -> ... -> Fusion -> Reconstruct)
 # -----------------------------------------------------------------------------
 
-def _run_live(fusion_mode: str = 'complementary'):
+def _run_live():
     """
     Live pipeline: SerialStreamer -> Normalizer -> TimeAlign ->
-    (IMU branch + UWB branch) -> Fusion -> StrokeReconstructor.
+    (IMU branch + UWB branch) -> ESKF -> StrokeReconstructor.
 
     Prints one line per stroke close. Ctrl+C to stop.
-
-    fusion_mode: 'complementary' (default) -> baseline FusionEngine
-                 'eskf'                    -> ESKF
     """
 
     import os
@@ -495,18 +492,14 @@ def _run_live(fusion_mode: str = 'complementary'):
     from background.pipelines.cleaner.normalizer import StreamNormalizer
     from background.pipelines.cleaner.time_alignment import TimeAlignLayer
     from background.pipelines.cleaner.unpacker import SerialStreamer
+    from background.pipelines.fusion.eskf import ESKF
     from background.pipelines.preprocess.contact import ContactStateDetector
     from background.pipelines.preprocess.imu import IMUPreprocessor
     from background.pipelines.preprocess.uwb.position import UWBPositionFilter
     from background.pipelines.preprocess.uwb.range import UWBRangePreprocessor
     from background.pipelines.preprocess.uwb.trilateration import UWBSolver
 
-    if fusion_mode == 'eskf':
-        from background.pipelines.fusion.eskf import ESKF
-        fusion = ESKF()
-    else:
-        from background.pipelines.fusion.baseline import FusionEngine
-        fusion = FusionEngine(fusion_alpha=0.15)
+    fusion = ESKF()
 
     port = getattr(cfg.serial, 'port', 'COM20')
     baud = getattr(cfg.serial, 'baud', 115200)
@@ -527,7 +520,7 @@ def _run_live(fusion_mode: str = 'complementary'):
 
     print("=" * 60)
     print(f"  [TEST] MODULE 8 LIVE: Stroke Reconstructor on {port}")
-    print(f"  Fusion engine : {fusion_mode}")
+    print("  Fusion engine : eskf")
     print("  Draw strokes with pen-lifts between. Ctrl+C to stop.")
     print("=" * 60)
 
@@ -708,15 +701,7 @@ def _run_synthetic():
 if __name__ == '__main__':
     import sys
 
-    # --fusion eskf|complementary  (default: complementary)
-    fusion_mode = 'complementary'
-    for index, arg in enumerate(sys.argv):
-        if arg == '--fusion' and index + 1 < len(sys.argv):
-            fusion_mode = sys.argv[index + 1]
-        elif arg.startswith('--fusion='):
-            fusion_mode = arg.split('=', 1)[1]
-
     if '--live' in sys.argv:
-        _run_live(fusion_mode)
+        _run_live()
     else:
         _run_synthetic()

@@ -5,24 +5,17 @@ Module 7 of the pipeline. Takes preprocessed IMU events (from
 `preprocess/uwb/position.py`) and produces a single fused pen-tip position per
 event, on the board plane.
 
-Two interchangeable engines live here, both exposing the same
-`process_event(event) -> dict | None`:
+`ESKF` (`eskf.py`) is the sole fusion engine, exposing
+`process_event(event) -> dict | None`.
 
-| Engine | File | Role |
-| --- | --- | --- |
-| `ESKF` | `eskf.py` | Production filter |
-| `FusionEngine` | `baseline.py` | Complementary filter, kept for A/B comparison |
-
-Run either directly against live hardware:
+Run directly against live hardware:
 
 ```
 python -m background.pipelines.fusion.eskf
-python -m background.pipelines.fusion.baseline
 ```
 
-Both export a session CSV to
-`test/module_runs/fusion_eskf/` and `test/module_runs/fusion_baseline/` on
-Ctrl+C - see `test/module_runs/README.md`.
+Exports a session CSV to `test/module_runs/fusion_eskf/` on Ctrl+C - see
+`test/module_runs/README.md`.
 
 ## Package layout
 

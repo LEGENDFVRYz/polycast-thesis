@@ -45,8 +45,7 @@ Folders appear only once their module has been run at least once.
 | `preprocess_uwb_trilateration` | `python -m background.pipelines.preprocess.uwb.trilateration` | 5b - Trilateration solver | `trilateration_math_report.csv`, `trilateration_math_report.png` |
 | `preprocess_uwb_position` | `python -m background.pipelines.preprocess.uwb.position` | 5c - Position filter | `position_filter_report.csv`, `position_filter_report.png` |
 | `preprocess_contact` | `python -m background.pipelines.preprocess.contact` | 6 - Contact / stroke state | `state_detector_report.csv`, `state_detector_report.png` |
-| `fusion_baseline` | `python -m background.pipelines.fusion.baseline` | 7 - Complementary filter | `fusion_baseline_report.csv`, `fusion_baseline_report.png` |
-| `fusion_eskf` | `python -m background.pipelines.fusion.eskf` | 7b - ESKF fusion | `eskf_session.csv` |
+| `fusion_eskf` | `python -m background.pipelines.fusion.eskf` | 7 - ESKF fusion | `eskf_session.csv` |
 | `visualizer` | `python -m background.pipelines.visualizer` | Full pipeline dashboard | `visualizer_log.csv`, `visualizer_output.png` |
 
 The three `cleaner_*` modules print to the console and write no files, so their
@@ -74,8 +73,7 @@ meaningless, so start from the earliest one that looks wrong.
   strictly inside the board outline even where the raw trace exits it.
 - **`preprocess_contact`** - force against the detected stroke session. Confirms
   micro-pauses do not fragment a stroke.
-- **`fusion_eskf`** / **`fusion_baseline`** - fused output with filter health.
-  Run both on the same motion to compare the two engines.
+- **`fusion_eskf`** - fused output with filter health.
 - **`visualizer`** - all layers at once: fused ink, air movement, raw UWB, and
   IMU-only dead reckoning.
 

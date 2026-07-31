@@ -19,7 +19,6 @@ Outputs:
 
 Usage:
     python -m background.pipelines.visualizer
-    python -m background.pipelines.visualizer --fusion complementary
 """
 
 import csv
@@ -49,7 +48,6 @@ from background.pipelines.cleaner.normalizer import StreamNormalizer
 from background.pipelines.cleaner.time_alignment import TimeAlignLayer
 from background.pipelines.cleaner.unpacker import SerialStreamer
 from background.pipelines.config import cfg
-from background.pipelines.fusion.baseline import FusionEngine
 from background.pipelines.fusion.eskf import ESKF
 from background.pipelines.module_output import ModuleRunOutput
 from background.pipelines.preprocess.contact import ContactStateDetector
@@ -419,11 +417,10 @@ def _imu_curve_csv(imu_event: dict) -> list:
 # -----------------------------------------------------------------------------
 class VisualizerWindow(QtWidgets.QMainWindow):
 
-    def __init__(self, fusion_mode: str):
+    def __init__(self):
         super().__init__()
-        self.fusion_mode = fusion_mode
         self.setWindowTitle(
-            f'PolyCast Visualizer  -  fusion={fusion_mode}  -  {cfg.serial.port}'
+            f'PolyCast Visualizer  -  fusion=eskf  -  {cfg.serial.port}'
         )
         self.resize(1280, 700)
 
@@ -438,7 +435,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self.position_filter = UWBPositionFilter()
         self.reconstructor = StrokeReconstructor()
         self.imu_track = _IMUTrack()
-        self.fusion = ESKF() if fusion_mode == 'eskf' else FusionEngine(fusion_alpha=0.15)
+        self.fusion = ESKF()
 
         # Data accumulators
         self.air_x = deque(maxlen=AIR_TRAIL)
@@ -615,7 +612,7 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self._dirty = False
 
         print('=' * 62)
-        print(f'  [VISUALIZER]  {cfg.serial.port}  fusion={fusion_mode}')
+        print(f'  [VISUALIZER]  {cfg.serial.port}  fusion=eskf')
         print(f'  CSV  -> {run_output().path(CSV_FILENAME)}')
         print(f'  PNG  -> {PNG_FILENAME}  (on Ctrl+C / window close)')
         print('  Draw strokes. Close window or Ctrl+C to stop and export.')
@@ -911,16 +908,9 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 # Entry point
 # -----------------------------------------------------------------------------
 def main() -> None:
-    fusion_mode = 'eskf'
-    for index, arg in enumerate(sys.argv):
-        if arg == '--fusion' and index + 1 < len(sys.argv):
-            fusion_mode = sys.argv[index + 1]
-        elif arg.startswith('--fusion='):
-            fusion_mode = arg.split('=', 1)[1]
-
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
 
-    window = VisualizerWindow(fusion_mode)
+    window = VisualizerWindow()
     window.show()
 
     # Let Ctrl+C in the terminal trigger a clean shutdown

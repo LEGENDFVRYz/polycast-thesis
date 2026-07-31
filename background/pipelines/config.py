@@ -1,37 +1,35 @@
 """
-[config] - Centralized Configuration for the "pipelines" of polycast
+Centralized configuration for the PolyCast pipeline stages.
 
-All of the configuration here are solely intended for main pipeline
-modules, only to be used my the module inside this folder (pipelines)
+Every value here is intended solely for the modules under
+background/pipelines/ - nothing outside that package should read this file.
 
-Note: Main Pipelines - Transforming Marker Sensor to Stroke Coordinates
-
-Handwriting Base Config v1:
-- Goal: capture small/fast handwritten letters, not geometric shapes.
-- Philosophy:
-    IMU = short-term stroke detail / fast motion shape
-    UWB = long-term absolute anchor / drift correction
-    Force = stroke state / drawing mode selector
+Handwriting Base Config:
+    
+    Philosophy:
+        IMU    short-term stroke detail / fast motion shape
+        UWB    long-term absolute anchor / drift correction
+        Force  stroke state / drawing mode selector
 """
 
 from dataclasses import dataclass, field
 
 
-# ------------------------------------------------------------------------
-# SERIAL / HARDWARE
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Serial / hardware
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM3"
+    port: str = "COM20"
     baud: int = 921600
 
 
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # IMU (Adafruit BNO085)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class IMUConfig:
-    # Actual observed effective rate is closer to 170–180 Hz than ideal 250 Hz.
+    # Actual observed effective rate is closer to 170-180 Hz than ideal 250 Hz.
     # ESKF dt clamp depends on this value, so keep it near measured reality.
     sample_rate_hz: float = 170.0
 
@@ -79,9 +77,9 @@ class IMUConfig:
     # Confirmed on circle, triangle, hline, abc, w across two recording sessions.
     rigid_body_sign: int = -1
 
-    # Pre-derivative low-pass filtering.  Never derive alpha or jerk from raw
+    # Pre-derivative low-pass filtering. Never derive alpha or jerk from raw
     # frame-to-frame sensor deltas; first smooth the gyro/quaternion-derived
-    # omega and body acceleration, then take the derivative.  The alpha values
+    # omega and body acceleration, then take the derivative. The alpha values
     # below use new-sample weight: 0.20 means current = 20%, previous = 80%.
     pre_derivative_lpf_enabled: bool = True
     gyro_lpf_alpha: float = 0.20
@@ -99,9 +97,9 @@ class IMUConfig:
     alpha_ema_alpha: float = 0.7
 
 
-# ------------------------------------------------------------------------
-# CONTACT STATE DETECTOR
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Contact state detector
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class ContactConfig:
     # Hysteresis: pen exits contact at force_enter * ratio.
@@ -109,7 +107,7 @@ class ContactConfig:
 
     # Debounce prevents force spikes/dips from fragmenting strokes.
     pen_down_debounce_ms: float = 10.0
-    pen_up_debounce_ms: float = 8.0   # Phase-3: reduced from 30 ms — debounce window was wider than FSR noise requires
+    pen_up_debounce_ms: float = 8.0   # Phase-3: reduced from 30 ms - debounce window was wider than FSR noise requires
 
     # Minimum confirmed drawing time before opening a stroke.
     min_draw_ms: float = 25.0
@@ -118,9 +116,9 @@ class ContactConfig:
     state_debounce_n: int = 4
 
 
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 # UWB (Ai Thinker BU03)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class UWBConfig:
     # Per-anchor range calibration offsets.
@@ -172,9 +170,9 @@ class UWBConfig:
     wls_epsilon: float = 0.01
 
 
-# ------------------------------------------------------------------------
-# ANCHOR GEOMETRY (Target Whiteboard)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Anchor geometry (target whiteboard)
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AnchorConfig:
     board_size_x: float = 1.25
@@ -194,9 +192,9 @@ class AnchorConfig:
     )
 
 
-# ------------------------------------------------------------------------
-# PIPELINE (constraints)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Pipeline (constraints)
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class PipelineConfig:
     # Buffer for timestamp sorting across sensors.
@@ -210,10 +208,11 @@ class PipelineConfig:
     uwb_max_range_m: float = 6.00
 
 
-# ------------------------------------------------------------------------
-# MARKER (physical layout)
-#   Body frame: tip at origin; sensors are mounted near marker end.
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Marker (physical layout)
+#
+# Body frame: tip at origin; sensors are mounted near marker end.
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class MarkerConfig:
     # Current prototype body-axis mapping.
@@ -222,9 +221,9 @@ class MarkerConfig:
     r_uwb_body_m: tuple[float, float, float] = (0.200, 0.0, 0.0)
 
 
-# ------------------------------------------------------------------------
-# FUSION — per-mode parameter table
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Fusion - per-mode parameter table
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionModeParams:
     # UWB sigma scale on top of sigma_uwb.
@@ -232,7 +231,7 @@ class FusionModeParams:
     # Higher = more IMU freedom.
     sigma_scale: float = 0.55
 
-    # Velocity drag in s⁻¹.
+    # Velocity drag in s^-1.
     # Higher = velocity dies faster, smoother but less expressive.
     drag_inv_s: float = 0.4
 
@@ -253,7 +252,7 @@ class FusionModeParams:
 
     # Hard ceiling on position Kalman gain K[0:2].
     # Values < 1.0 prevent a momentarily clean UWB from yanking the stroke
-    # even if R collapses.  Set to 1.0 to disable.
+    # even if R collapses. Set to 1.0 to disable.
     pos_gain_cap: float = 1.0
 
 
@@ -287,12 +286,12 @@ class FusionModeTable:
     # UWB re-anchors aggressively; IMU suppressed to prevent drift carry-over.
     air: FusionModeParams = field(default_factory=lambda: FusionModeParams(
         sigma_scale    = 0.48,   # Phase-1: strong UWB pull between strokes to re-anchor placement
-        drag_inv_s     = 4.0,    # keep from Stage-3 tuner — aggressively kill air dead-reckoning drift
+        drag_inv_s     = 4.0,    # keep from Stage-3 tuner - aggressively kill air dead-reckoning drift
         dir_penalty    = 3.0,
         jump_speed_max = 1.4,
         pos_floor      = 0.015,
         acc_scale      = 0.08,   # suppress IMU integration while pen is lifted
-        pos_gain_cap   = 1.0,    # no cap in air — UWB should correct freely
+        pos_gain_cap   = 1.0,    # no cap in air - UWB should correct freely
     ))
 
     # Still/idle mode.
@@ -308,17 +307,17 @@ class FusionModeTable:
     ))
 
 
-# ------------------------------------------------------------------------
-# STROKE DEAD RECKONER
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Stroke dead reckoner
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class StrokeDeadReckonerConfig:
     # Blend weight for HPF component inside CONTACT_DRAWING.
     # acc_for_pred = (acc_raw - b_a)*(1-detail_weight) + acc_hpf*detail_weight
-    # Raised from 0.35 → 0.55: more HPF reduces slow-bias accumulation during fast strokes.
+    # Raised from 0.35 -> 0.55: more HPF reduces slow-bias accumulation during fast strokes.
     detail_weight: float = 0.55
 
-    # IMU scale during AIR_MOVE — limits air drift without blackout.
+    # IMU scale during AIR_MOVE - limits air drift without blackout.
     air_scale: float = 0.10
 
     # Snap dead-reckoner origin toward latest UWB tip on pen-down.
@@ -328,9 +327,9 @@ class StrokeDeadReckonerConfig:
     pen_down_snap_max_dist_m: float = 0.08
 
 
-# ------------------------------------------------------------------------
-# FUSION (ESKF)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Fusion (ESKF)
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
     # Process noise for acceleration.
@@ -359,7 +358,7 @@ class FusionESKFConfig:
     k_nlos: float = 0.5     # tuner Stage-4 winner: less aggressive NLOS scaling on current datasets
     r_scale_max: float = 10.0  # tuner Stage-4 winner: cap R inflation earlier
     hard_reject_mult: float = 3.0  # tighter hard rejection for bad trilateration periods
-    innov_hard_reject_m: float = 0.50  # UWB innovation magnitude hard reject (m); >25 cm UWB↔IMU disagreement is non-physical in board writing
+    innov_hard_reject_m: float = 0.50  # UWB innovation magnitude hard reject (m); >25 cm UWB<->IMU disagreement is non-physical in board writing
     # Recovery: after this many consecutive innovation-gate rejections with clean
     # UWB geometry the filter is assumed lost and _snap_to_uwb() re-localizes.
     # At 50 Hz UWB this is ~120 ms before recovery triggers.
@@ -396,19 +395,19 @@ class FusionESKFConfig:
     dir_check_cos_thresh: float = -0.3
 
     # UWB jump gate: if UWB implies fast motion but IMU speed is low, reject.
-    # Lowered from 0.5 → 0.15 so the gate fires whenever pen is not genuinely fast,
+    # Lowered from 0.5 -> 0.15 so the gate fires whenever pen is not genuinely fast,
     # preventing NLOS spikes from sneaking through when IMU has moderate velocity.
     uwb_jump_imu_speed_min: float = 0.15
 
     # Velocity covariance floor.
-    # Lowered from 0.08 → 0.02 so the filter can converge velocity confidence after
-    # consistent UWB anchoring.  0.08 kept P_vel ≥ 0.0064 m²/s² permanently, giving
+    # Lowered from 0.08 -> 0.02 so the filter can converge velocity confidence after
+    # consistent UWB anchoring. 0.08 kept P_vel >= 0.0064 m^2/s^2 permanently, giving
     # the UWB velocity pseudo-update a ~0.9 Kalman gain even on noisy samples.
     vel_floor: float = 0.02
 
     # UWB velocity deviation gate: skip the velocity pseudo-update when the central-
     # difference UWB velocity disagrees with the current filter velocity by more than
-    # this amount.  Prevents ~5 cm UWB noise over 50 ms (≈1 m/s) from injecting a
+    # this amount. Prevents ~5 cm UWB noise over 50 ms (~1 m/s) from injecting a
     # large spurious velocity that integrates into a 40+ cm teleport.
     uwb_vel_dev_max: float = 0.45
 
@@ -419,18 +418,18 @@ class FusionESKFConfig:
     stroke_start_sigma_scale: float = 0.90    # multiplied onto sigma_uwb
     stroke_start_uwb_max_age_s: float = 0.10  # skip snap if UWB is older than this
 
-    # Phase 4 — in-stroke position bias (pos_bias EMA tracker).
+    # Phase 4 - in-stroke position bias (pos_bias EMA tracker).
     # During CONTACT_DRAWING or DRAWING_FAST, each accepted UWB fix nudges a
-    # parallel bias b_p by alpha*(z_uwb - (p + b_p)).  The visible output is
+    # parallel bias b_p by alpha*(z_uwb - (p + b_p)). The visible output is
     # p + b_p, so the letter shape (relative IMU motion in p) is preserved while
     # the global placement slowly drifts toward UWB.
-    # alpha = 0.01 → time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
+    # alpha = 0.01 -> time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
     # a steady offset over a 2-second stroke.
     bias_uwb_alpha: float = 0.055  # stronger visible-bias tracking during active ink
     bias_decay:     float = 0.25
     bias_max_m:     float = 0.045
 
-    # Stroke-age drift guard — adaptive pos_gain_cap ramp.
+    # Stroke-age drift guard - adaptive pos_gain_cap ramp.
     # Stage-9 result: ramp fires on abc handwriting at all tested start thresholds
     # because abc stroke durations overlap geometric shape durations in this dataset.
     # Neutralised by setting mult_max=1.0 (multiplier stays flat = ramp disabled).
@@ -457,11 +456,11 @@ class FusionESKFConfig:
 
     # Mode-aware stationary-contact clamp.
     # Goal: if the marker tip is physically on the board but not truly moving,
-    # the visible tip should stay put instead of integrating IMU noise.  This
+    # the visible tip should stay put instead of integrating IMU noise. This
     # directly targets start/end hold artefacts and contact micro-pauses.
     contact_static_lock_enabled: bool = True
 
-    # CONTACT_STATIC from contact.py is trusted immediately.  The thresholds
+    # CONTACT_STATIC from contact.py is trusted immediately. The thresholds
     # below are a fallback for older logs or borderline frames where force/contact
     # and IMU stillness are present but the diagnostic substate has not switched.
     contact_static_lock_min_frames: int = 2
@@ -469,14 +468,14 @@ class FusionESKFConfig:
     contact_static_lock_acc_thresh_ms2: float = 0.65
     contact_static_lock_omega_thresh_rads: float = 0.60
 
-    # UWB anchoring while the tip is locked.  Pen-down uses stronger UWB anchoring
+    # UWB anchoring while the tip is locked. Pen-down uses stronger UWB anchoring
     # because no ink has been committed yet; mid-stroke pauses use a much smaller
     # blend to avoid snapping corners/letter pauses away from their drawn shape.
     contact_static_lock_uwb_max_age_s: float = 0.18
     contact_static_lock_pen_down_uwb_blend: float = 0.85
     contact_static_lock_micro_pause_uwb_blend: float = 0.02
 
-    # How hard to hold the visible tip at the lock anchor.  Position alpha is
+    # How hard to hold the visible tip at the lock anchor. Position alpha is
     # applied to p so b_p remains the normal global-placement bias.
     contact_static_lock_pos_alpha: float = 0.92
     contact_static_lock_vel_decay: float = 0.08
@@ -501,7 +500,7 @@ class FusionESKFConfig:
     pos_cap_mult: float = 6.0
 
     # DRAWING_FAST gate.
-    # 4 frames at 180 Hz ≈ 22 ms.
+    # 4 frames at 180 Hz ~= 22 ms.
     # This gives short IMU authority without letting drift dominate.
     drawing_fast_speed_thresh: float = 0.36     # tuner Stage-2 winner: fast mode should trigger only on clear speed bursts
     drawing_fast_min_frames: int = 10            # tuner Stage-2 winner: require sustained fast motion, avoids noisy over-triggering
@@ -519,10 +518,9 @@ class FusionESKFConfig:
     p0_bias: float = 0.05
 
 
-
-# ------------------------------------------------------------------------
-# STROKE FINALIZATION IMU CLEANER
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Stroke finalization IMU cleaner
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class StrokeCleanerConfig:
     # Batch/offline cleanup applied only after pen-up. Live ESKF output is still
@@ -534,11 +532,11 @@ class StrokeCleanerConfig:
     min_points: int = 6
 
     # Reference-style acceleration drift removal threshold, matching the role of
-    # `threshold` in john2zy/IMU-Position-Tracking.removeAccErr(). Units: m/s².
+    # `threshold` in john2zy/IMU-Position-Tracking.removeAccErr(). Units: m/s^2.
     acc_motion_threshold: float = 0.20
 
     # Reference-style stationary threshold for ZUPT velocity correction, matching
-    # john2zy/IMU-Position-Tracking.zupt(..., threshold=0.2). Units: m/s².
+    # john2zy/IMU-Position-Tracking.zupt(..., threshold=0.2). Units: m/s^2.
     zupt_acc_threshold: float = 0.20
 
     # Pen-up is treated as the end still phase for whiteboard strokes. This applies
@@ -559,9 +557,10 @@ class StrokeCleanerConfig:
     # outside this ratio versus the raw fused bbox, keep the raw fused stroke.
     max_bbox_ratio: float = 1.10
 
-# ------------------------------------------------------------------------
-# POST-PROCESS (pen-up corrections: centroid alignment + minimum-jerk)
-# ------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Post-process (pen-up corrections: centroid alignment + minimum-jerk)
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class CentroidAlignConfig:
     # Minimum UWB samples buffered during the stroke to trust the centroid estimate.
@@ -575,7 +574,7 @@ class CentroidAlignConfig:
     # Prevents a bad UWB cluster from teleporting an otherwise good stroke.
     max_translation_m: float = 0.10
 
-    # Optional uniform scale correction.  Kept tightly clamped so letter shapes are preserved.
+    # Optional uniform scale correction. Kept tightly clamped so letter shapes are preserved.
     scale_enabled: bool = True
     scale_percentile: float = 0.80
     scale_min: float = 0.70
@@ -583,19 +582,20 @@ class CentroidAlignConfig:
 
     # Similarity alignment: after centroid translation, estimate one global
     # 2D transform that can rotate and scale the finished stroke as a rigid
-    # object.  Procrustes uses resampled stroke↔UWB correspondences; PCA is kept
+    # object. Procrustes uses resampled stroke<->UWB correspondences; PCA is kept
     # as a fallback for older tests.
     rotation_enabled: bool = True
     rotation_max_deg: float = 20.0
     procrustes_enabled: bool = True
     procrustes_samples: int = 48
-    # Trim a small fraction only for estimating the transform.  The full stroke
-    # is still transformed and rendered.  This reduces pen-down/pen-up hooks from
+    # Trim a small fraction only for estimating the transform. The full stroke
+    # is still transformed and rendered. This reduces pen-down/pen-up hooks from
     # dominating the rotation estimate.
     procrustes_endpoint_trim: float = 0.04
-    # Minimum eigenvalue ratio (λ_max / λ_min) required to trust PCA fallback.
+    # Minimum eigenvalue ratio (lambda_max / lambda_min) required to trust PCA fallback.
     # A ratio < 2 means the distribution is too round to have a reliable direction.
     pca_min_eigenratio: float = 2.0
+
 
 @dataclass(frozen=True)
 class MinJerkConfig:
@@ -613,6 +613,7 @@ class MinJerkConfig:
     # Reject smoothed result if its bbox grows beyond this ratio vs the aligned bbox.
     max_bbox_ratio: float = 1.10
 
+
 @dataclass(frozen=True)
 class PostprocessConfig:
     enabled: bool = False
@@ -622,9 +623,9 @@ class PostprocessConfig:
     minjerk: MinJerkConfig = field(default_factory=MinJerkConfig)
 
 
-# ------------------------------------------------------------------------
-# ROOT CONFIG (wrapper)
-# ------------------------------------------------------------------------
+# -----------------------------------------------------------------------------
+# Root config (wrapper)
+# -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class Config:
     serial: SerialConfig = field(default_factory=SerialConfig)
@@ -639,5 +640,5 @@ class Config:
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
 
 
-# declare the config file
+# Module-level singleton every pipeline stage imports.
 cfg = Config()

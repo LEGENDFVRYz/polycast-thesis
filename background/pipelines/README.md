@@ -65,10 +65,14 @@ serial bytes and the rest of the pipeline.
 | `imu.py` | `IMUPreprocessor` - rigid-body lever-arm tip correction, three parallel smoothing paths (light EMA / heavy EMA for ZUPT / high-pass), ZUPT stillness detection, angular kinematics |
 | `contact.py` | `ContactStateDetector` - three-layer state machine: physical force latch, kinematic substate, to logical stroke session |
 | `uwb/range.py` | `UWBRangePreprocessor` - per-anchor range filtering, jump/blind-spot detection |
+| `uwb/_range_kf.py` | `RangeTracker` - per-anchor constant-velocity range Kalman pre-filter, owned by `range.py` |
 | `uwb/trilateration.py` | `UWBSolver` - weighted least-squares trilateration (`soft_l1` loss, IDW anchor weighting, warm-start) |
 | `uwb/position.py` | `UWBPositionFilter` - alpha-beta position smoothing, board clamp, speed-outlier gate |
 
 IMU and UWB are processed on independent branches here; they only meet in `fusion/`.
+
+**Note:** `range.py` emits two range series that are not interchangeable -
+`solver_dists` for trilateration and `clean_dists` for display.
 
 ## Stage 7 (ESKF Method): `fusion/`
 

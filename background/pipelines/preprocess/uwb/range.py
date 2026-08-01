@@ -11,25 +11,25 @@ Process Flow:
     3. Sanity check        confirm the range is within the room's plausible bounds
     4. Jump detection      reject impossible movement between samples
     5. Anti-lockout        force a resync if the jump gate has held too long
-    6. Median filter       suppress isolated spikes
-    7. Adaptive EMA        smooth, adapting to the real inter-sample interval
+    6. Range Kalman        constant-velocity per-anchor filter (_range_kf.py)
+    7. Median filter       suppress isolated spikes
+    8. Adaptive EMA        smooth, adapting to the real inter-sample interval
 
 Steps 4 and 5 are in tension by design: the jump gate rejects NLOS spikes, but
 without the anti-lockout escape a genuine fast move would be rejected forever
 because every new sample is measured against a frozen estimate.
 
-Two range series come out of this stage, and they are not interchangeable:
+This stage produces two range outputs for different purposes:
 
-    solver_dists  steps 1-5 only. The trilateration solver consumes this.
-    clean_dists   steps 1-7, i.e. additionally smoothed. Display and
-                  diagnostics only.
+    solver_dists  Steps 1-6. Used by the trilateration solver.
+    clean_dists   Steps 1-8. Used for display and diagnostics.
 
-Smoothing spans a few hundred milliseconds, which is also how long a single
-handwriting stroke lasts, so a smoothed range has had the pen motion averaged
-out of it. Solving positions from that collapses the stroke toward a line.
-Rejection gates are shared because they discard bad samples outright rather
-than blurring good ones.
+The solver uses the Kalman-filtered ranges because they reduce noise while
+preserving motion. The display uses additional median and EMA smoothing, which
+looks cleaner but introduces lag that would distort the solved position.
 
+Both outputs share the same rejection gates since they remove invalid samples
+without affecting valid ones.
 Input:  normalized UWB events from "normalizer" module
 Output: {'sensor', 'ts_hw', 'packet_id', 'raw_dists', 'clean_dists',
          'solver_dists', 'valid_mask', 'outlier_flags'}
@@ -41,8 +41,10 @@ Usage (Import as stage or run directly to trace normalized events):
 import math
 import statistics
 from collections import deque
+from typing import NamedTuple
 
 from background.pipelines.config import cfg
+from background.pipelines.preprocess.uwb._range_kf import RangeTracker
 
 MICROSECONDS_PER_SECOND = 1_000_000
 
@@ -62,6 +64,35 @@ _FAST_MOVEMENT_DELTA_M = 0.10
 _FAST_MOVEMENT_ALPHA_GAIN = 3.0
 
 
+class _AnchorOutcome(NamedTuple):
+    """
+    What one anchor contributed to a reading.
+
+    The two range values are not interchangeable. clean_value carries a fixed
+    lag as wide as a stroke, which suits a plot and ruins a solved position;
+    solver_value tracks range-rate, so it denoises without averaging out the
+    motion the solver is trying to measure.
+    """
+
+    valid: bool           # trustworthy enough for trilateration to use
+    outlier: bool         # suspicious sample; the values below are a fallback
+    clean_value: float    # median + EMA, for display and diagnostics
+    solver_value: float   # Kalman-filtered, for the trilateration solver
+
+
+class _RejectionVerdict(NamedTuple):
+    """
+    What to report for a sample the gates turned down.
+
+    valid can still be True: a first-ever sample has no history to have jumped
+    from, so it is taken as real rather than leaving the anchor unseeded.
+    """
+
+    valid: bool
+    outlier: bool
+    value: float
+
+
 class UWBRangePreprocessor:
     """Per-anchor range cleaner holding independent filter state for each anchor."""
 
@@ -77,6 +108,7 @@ class UWBRangePreprocessor:
         self._ema: list[float | None] = [None] * anchor_count
         self._prev_clean: list[float | None] = [None] * anchor_count
         self._jump_count = [0] * anchor_count
+        self._range_tracker = RangeTracker(anchor_count)
 
         self.max_jumps = _MAX_CONSECUTIVE_JUMPS
         self._prev_ts: int | None = None
@@ -122,13 +154,11 @@ class UWBRangePreprocessor:
         outlier_flags = []
 
         for index, raw_distance in enumerate(raw_distances):
-            valid, outlier, clean_value, solver_value = self._process_anchor(
-                index, raw_distance, dt_s
-            )
-            clean_distances.append(clean_value)
-            solver_distances.append(solver_value)
-            valid_mask.append(valid)
-            outlier_flags.append(outlier)
+            outcome = self._process_anchor(index, raw_distance, dt_s)
+            clean_distances.append(outcome.clean_value)
+            solver_distances.append(outcome.solver_value)
+            valid_mask.append(outcome.valid)
+            outlier_flags.append(outcome.outlier)
 
         return {
             'sensor': 'UWB',
@@ -148,6 +178,7 @@ class UWBRangePreprocessor:
         self._history = [deque(maxlen=cfg.uwb.median_window) for _ in range(anchor_count)]
         self._ema = [None] * anchor_count
         self._prev_clean = [None] * anchor_count
+        self._range_tracker.reset()
         self._prev_ts = None
 
     # -------------------------------------------------------------------------
@@ -167,36 +198,85 @@ class UWBRangePreprocessor:
         self._prev_ts = ts
         return dt_s if dt_s > 0 else nominal_dt_s
 
-    def _process_anchor(self, index: int, raw_distance, dt_s: float = None):
+    def _process_anchor(
+        self, index: int, raw_distance: float | None, dt_s: float | None = None
+    ) -> _AnchorOutcome:
         """
-        Filter one anchor's range.
+        Run one anchor's range through the gates, then through both filters.
 
-        Returns (valid, outlier, clean_value, solver_value):
-            valid        the reading is trustworthy enough for trilateration
-            outlier      this sample was suspicious; the values are a fallback
-            clean_value  median+EMA smoothed range, for display and diagnostics
-            solver_value calibrated range with no median and no EMA, for the
-                         trilateration solver
-
-        The two outputs differ only on the accepted path. Smoothing spans
-        hundreds of milliseconds, which is the same timescale as a handwriting
-        stroke, so feeding it to the solver removes the motion being measured.
-        Rejection gates apply to both - they drop bad samples rather than
-        blurring good ones.
+        The gates are shared by the two output series because they discard bad
+        samples outright; only the filtering differs. See _AnchorOutcome for why
+        the two values cannot be swapped.
         """
 
         if self._is_blind_spot(raw_distance):
-            # Hold the last good estimate rather than letting a blocked anchor
-            # poison the median buffer.
-            held = self._ema[index]
-            held = held if held is not None else _NO_ESTIMATE_SENTINEL
-            return False, True, held, held
+            return self._blind_spot_outcome(index, dt_s)
 
         calibrated = raw_distance + self.offsets[index]
-
         within_room = (
             cfg.pipeline.uwb_min_range_m <= calibrated <= cfg.pipeline.uwb_max_range_m
         )
+
+        if self._is_rejected(index, calibrated, within_room):
+            return self._rejected_outcome(index, calibrated, within_room, dt_s)
+
+        return self._accepted_outcome(index, calibrated, dt_s)
+
+    # -------------------------------------------------------------------------
+    # Outcomes
+    #
+    # One per path through the gates. Each decides what the display series and
+    # the solver series report, which is the only thing that differs between
+    # them.
+    # -------------------------------------------------------------------------
+
+    def _blind_spot_outcome(self, index: int, dt_s: float | None) -> _AnchorOutcome:
+        """Report a held estimate for an anchor the hardware cannot see."""
+
+        # Hold the last good estimate rather than letting a blocked anchor
+        # poison the median buffer.
+        held = self._ema[index]
+        held = held if held is not None else _NO_ESTIMATE_SENTINEL
+        return _AnchorOutcome(False, True, held, self._coast(index, dt_s, held))
+
+    def _rejected_outcome(
+        self, index: int, calibrated: float, within_room: bool, dt_s: float | None
+    ) -> _AnchorOutcome:
+        """Report a fallback for a sample the room or jump gate turned down."""
+
+        verdict = self._fallback_value(index, calibrated, within_room)
+
+        if verdict.valid:
+            # A first-ever sample is real data despite tripping the gate, so it
+            # seeds the Kalman filter like any accepted sample would.
+            solver_value = self._track(index, verdict.value, dt_s)
+        else:
+            solver_value = self._coast(index, dt_s, verdict.value)
+
+        return _AnchorOutcome(verdict.valid, verdict.outlier, verdict.value, solver_value)
+
+    def _accepted_outcome(
+        self, index: int, calibrated: float, dt_s: float | None
+    ) -> _AnchorOutcome:
+        """Filter a sample that passed every gate, once per output series."""
+
+        clean_value = self._smooth(index, calibrated, dt_s)
+        self._prev_clean[index] = clean_value
+        return _AnchorOutcome(True, False, clean_value, self._track(index, calibrated, dt_s))
+
+    # -------------------------------------------------------------------------
+    # Gates
+    # -------------------------------------------------------------------------
+
+    def _is_rejected(self, index: int, calibrated: float, within_room: bool) -> bool:
+        """
+        True when the room or jump gate turns this sample down.
+
+        Consumes the jump gate's state as a side effect, so it runs exactly once
+        per sample: _register_jump both counts the rejection and decides whether
+        the anti-lockout escape has fired.
+        """
+
         jumped = self._detect_jump(index, calibrated, within_room)
 
         if jumped:
@@ -204,19 +284,10 @@ class UWBRangePreprocessor:
         else:
             self._jump_count[index] = 0
 
-        is_outlier = (not within_room) or jumped
-        if is_outlier:
-            # Every fallback branch already reports an unsmoothed value, so the
-            # display and solver signals agree here.
-            valid, outlier, fallback = self._fallback_value(index, calibrated, within_room)
-            return valid, outlier, fallback, fallback
-
-        clean_value = self._smooth(index, calibrated, dt_s)
-        self._prev_clean[index] = clean_value
-        return True, False, clean_value, calibrated
+        return (not within_room) or jumped
 
     @staticmethod
-    def _is_blind_spot(raw_distance) -> bool:
+    def _is_blind_spot(raw_distance: float | None) -> bool:
         """True for readings the hardware emits when it cannot see the anchor."""
 
         return (
@@ -248,26 +319,67 @@ class UWBRangePreprocessor:
         self._jump_count[index] = 0
         self._ema[index] = calibrated
         self._history[index].clear()
+        # The tracker's history describes a range the tag has already left, so
+        # it is restarted here rather than left to fight every later sample.
+        self._range_tracker.reseed(index, calibrated)
         return False
 
-    def _fallback_value(self, index: int, calibrated: float, within_room: bool):
-        """
-        Choose what to report for a rejected sample.
-
-        A first-ever sample that trips the jump gate is accepted anyway: with no
-        history there is nothing to have jumped from, and rejecting it would
-        leave the anchor unseeded forever.
-        """
+    def _fallback_value(
+        self, index: int, calibrated: float, within_room: bool
+    ) -> _RejectionVerdict:
+        """Choose what to report for a sample the gates turned down."""
 
         if self._ema[index] is not None:
-            return False, True, self._ema[index]
+            return _RejectionVerdict(False, True, self._ema[index])
 
+        # No history yet, so there is nothing this sample could have jumped
+        # from. Rejecting it would leave the anchor unseeded forever.
         if within_room:
-            return True, False, calibrated
+            return _RejectionVerdict(True, False, calibrated)
 
-        return False, True, calibrated
+        return _RejectionVerdict(False, True, calibrated)
 
-    def _smooth(self, index: int, calibrated: float, dt_s: float) -> float:
+    # -------------------------------------------------------------------------
+    # Filters
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _interval_or_nominal(dt_s: float | None) -> float:
+        """Seconds since the previous reading, or the nominal UWB period."""
+
+        return dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
+
+    def _track(self, index: int, calibrated: float, dt_s: float | None) -> float:
+        """Fold an accepted range into the anchor's Kalman filter."""
+
+        if not cfg.uwb.range_kf_enabled:
+            return calibrated
+
+        return self._range_tracker.update(
+            index, calibrated, self._interval_or_nominal(dt_s)
+        )
+
+    def _coast(self, index: int, dt_s: float | None, fallback: float) -> float:
+        """
+        Advance the anchor's Kalman filter through a rejected sample.
+
+        The measurement is withheld but time still passed, so the filter
+        predicts forward and reports where it expects the range to be. Freezing
+        it instead would make the next accepted sample look like a jump and trip
+        the gate that just let it through.
+
+        Falls back to the caller's value while the filter is still unseeded.
+        """
+
+        if not cfg.uwb.range_kf_enabled:
+            return fallback
+
+        coasted = self._range_tracker.predict_only(
+            index, self._interval_or_nominal(dt_s)
+        )
+        return fallback if coasted is None else coasted
+
+    def _smooth(self, index: int, calibrated: float, dt_s: float | None) -> float:
         """
         Median-filter then EMA-smooth an accepted range.
 
@@ -279,7 +391,7 @@ class UWBRangePreprocessor:
         self._history[index].append(calibrated)
         median_value = statistics.median(self._history[index])
 
-        interval_s = dt_s if dt_s is not None else 1.0 / cfg.uwb.rate_hz
+        interval_s = self._interval_or_nominal(dt_s)
         base_alpha = 1.0 - math.exp(-interval_s / cfg.uwb.range_tau_s)
 
         if self._ema[index] is None:

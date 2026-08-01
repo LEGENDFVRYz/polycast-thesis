@@ -139,6 +139,21 @@ class UWBConfig:
     # Median window for per-anchor range filtering.
     median_window: int = 10
 
+    # Per-anchor range Kalman pre-filter (preprocess/uwb/range_kf.py).
+    #
+    # This is what the trilateration solver consumes. A median or an EMA wide
+    # enough to suppress UWB noise also spans a whole stroke and averages the
+    # handwriting away; a constant-velocity filter tracks range-rate instead, so
+    # it follows real motion and only pulls hard on samples that disagree with
+    # it.
+    #
+    # sigma_rate bounds how fast a range is allowed to change: a writing stroke
+    # barely exceeds 0.3 m/s along any one anchor bearing. Raise it if strokes
+    # look rounded off, lower it if the solved position stays noisy.
+    range_kf_enabled: bool = True
+    range_kf_sigma_rate_ms: float = 0.30
+    range_kf_sigma_meas_m: float = 0.08
+
     # Position-level speed outlier gate.
     #
     # The limit is a sanity bound, not a motion model: consecutive raw fixes

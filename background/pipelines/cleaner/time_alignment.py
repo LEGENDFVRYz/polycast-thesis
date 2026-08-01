@@ -49,6 +49,7 @@ class TimeAlignLayer:
 
         self._buffer: list[dict] = []
         self._buffer_size = buffer_size
+        self._dropped_on_overflow = 0
 
         self._imu_ts_history: deque[int] = deque(maxlen=_IMU_HISTORY_SAMPLES)
         self._uwb_ts_history: deque[int] = deque(maxlen=_UWB_HISTORY_SAMPLES)
@@ -86,6 +87,17 @@ class TimeAlignLayer:
         self._buffer.sort(key=lambda event: event['ts_hw'])
 
         if len(self._buffer) > self._buffer_size:
+            # Overflow discards the oldest events outright, so it is real data
+            # loss rather than backpressure. The live loops drain every poll and
+            # normally hold a handful of events; reaching the cap means the
+            # consumer stalled long enough to fall behind the sensors, which is
+            # worth saying out loud instead of losing quietly.
+            self._dropped_on_overflow += len(self._buffer) - self._buffer_size
+            print(
+                f"[TIMEALIGN] Buffer overflow: dropped "
+                f"{len(self._buffer) - self._buffer_size} oldest events "
+                f"(cap {self._buffer_size}, {self._dropped_on_overflow} total)"
+            )
             self._buffer = self._buffer[-self._buffer_size:]
 
     def clear(self):

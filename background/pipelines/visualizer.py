@@ -427,7 +427,10 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         # Pipeline
         self.streamer = SerialStreamer(port=cfg.serial.port, baud=cfg.serial.baud)
         self.normalizer = StreamNormalizer()
-        self.aligner = TimeAlignLayer(buffer_size=500)
+        # Drained every poll, so this only has to absorb a GUI stall. At the
+        # combined IMU+UWB rate 500 covered under two seconds, which a window
+        # drag or a PNG export can exceed; 4000 buys about fifteen.
+        self.aligner = TimeAlignLayer(buffer_size=4000)
         self.imu_prep = IMUPreprocessor()
         self.contact = ContactStateDetector()
         self.range_prep = UWBRangePreprocessor(offsets=cfg.uwb.range_offsets_m)
@@ -687,11 +690,13 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                                 fused_x - self.current_ink_x[-1], fused_y - self.current_ink_y[-1]
                             )
                             if jump > _MAX_INK_JUMP_M:
-                                # Teleport guard: break the polyline here.
-                                # Accumulated points are preserved; next point
-                                # starts fresh.
-                                self.current_ink_x.clear()
-                                self.current_ink_y.clear()
+                                # Teleport guard: break the polyline so no line
+                                # is drawn across the jump. NaN reads as a gap
+                                # to PyQtGraph, which keeps the points already
+                                # drawn on screen - clearing the list would
+                                # erase the stroke still being written.
+                                self.current_ink_x.append(float('nan'))
+                                self.current_ink_y.append(float('nan'))
                         self.current_ink_x.append(fused_x)
                         self.current_ink_y.append(fused_y)
                     else:
@@ -699,8 +704,8 @@ class VisualizerWindow(QtWidgets.QMainWindow):
                             air_jump = math.hypot(fused_x - self.air_x[-1], fused_y - self.air_y[-1])
                             if air_jump > _MAX_INK_JUMP_M:
                                 # Same teleport guard for the gray air trail.
-                                self.air_x.clear()
-                                self.air_y.clear()
+                                self.air_x.append(float('nan'))
+                                self.air_y.append(float('nan'))
                         self.air_x.append(fused_x)
                         self.air_y.append(fused_y)
 

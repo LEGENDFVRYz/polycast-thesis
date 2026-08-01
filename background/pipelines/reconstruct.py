@@ -506,7 +506,8 @@ def _run_live():
 
     streamer = SerialStreamer(port=port, baud=baud)
     normalizer = StreamNormalizer()
-    aligner = TimeAlignLayer(buffer_size=500)
+    # Drained every pass; sized to absorb a stall rather than to hold history.
+    aligner = TimeAlignLayer(buffer_size=4000)
 
     imu_prep = IMUPreprocessor()
     contact = ContactStateDetector()

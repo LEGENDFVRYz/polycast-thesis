@@ -18,9 +18,21 @@ Steps 4 and 5 are in tension by design: the jump gate rejects NLOS spikes, but
 without the anti-lockout escape a genuine fast move would be rejected forever
 because every new sample is measured against a frozen estimate.
 
+Two range series come out of this stage, and they are not interchangeable:
+
+    solver_dists  steps 1-5 only. The trilateration solver consumes this.
+    clean_dists   steps 1-7, i.e. additionally smoothed. Display and
+                  diagnostics only.
+
+Smoothing spans a few hundred milliseconds, which is also how long a single
+handwriting stroke lasts, so a smoothed range has had the pen motion averaged
+out of it. Solving positions from that collapses the stroke toward a line.
+Rejection gates are shared because they discard bad samples outright rather
+than blurring good ones.
+
 Input:  normalized UWB events from "normalizer" module
 Output: {'sensor', 'ts_hw', 'packet_id', 'raw_dists', 'clean_dists',
-         'valid_mask', 'outlier_flags'}
+         'solver_dists', 'valid_mask', 'outlier_flags'}
 
 Usage (Import as stage or run directly to trace normalized events):
     python -m background.pipelines.preprocess.uwb.range
@@ -105,12 +117,16 @@ class UWBRangePreprocessor:
         raw_distances = tuple(distances)
 
         clean_distances = []
+        solver_distances = []
         valid_mask = []
         outlier_flags = []
 
         for index, raw_distance in enumerate(raw_distances):
-            valid, outlier, clean_value = self._process_anchor(index, raw_distance, dt_s)
+            valid, outlier, clean_value, solver_value = self._process_anchor(
+                index, raw_distance, dt_s
+            )
             clean_distances.append(clean_value)
+            solver_distances.append(solver_value)
             valid_mask.append(valid)
             outlier_flags.append(outlier)
 
@@ -120,6 +136,7 @@ class UWBRangePreprocessor:
             'packet_id': event.get('packet_id'),
             'raw_dists': raw_distances,
             'clean_dists': tuple(clean_distances),
+            'solver_dists': tuple(solver_distances),
             'valid_mask': tuple(valid_mask),
             'outlier_flags': tuple(outlier_flags),
         }
@@ -154,17 +171,26 @@ class UWBRangePreprocessor:
         """
         Filter one anchor's range.
 
-        Returns (valid, outlier, clean_value):
-            valid       the reading is trustworthy enough for trilateration
-            outlier     this sample was suspicious; clean_value is a fallback
-            clean_value best available range, held over from history when rejected
+        Returns (valid, outlier, clean_value, solver_value):
+            valid        the reading is trustworthy enough for trilateration
+            outlier      this sample was suspicious; the values are a fallback
+            clean_value  median+EMA smoothed range, for display and diagnostics
+            solver_value calibrated range with no median and no EMA, for the
+                         trilateration solver
+
+        The two outputs differ only on the accepted path. Smoothing spans
+        hundreds of milliseconds, which is the same timescale as a handwriting
+        stroke, so feeding it to the solver removes the motion being measured.
+        Rejection gates apply to both - they drop bad samples rather than
+        blurring good ones.
         """
 
         if self._is_blind_spot(raw_distance):
             # Hold the last good estimate rather than letting a blocked anchor
             # poison the median buffer.
             held = self._ema[index]
-            return False, True, held if held is not None else _NO_ESTIMATE_SENTINEL
+            held = held if held is not None else _NO_ESTIMATE_SENTINEL
+            return False, True, held, held
 
         calibrated = raw_distance + self.offsets[index]
 
@@ -180,11 +206,14 @@ class UWBRangePreprocessor:
 
         is_outlier = (not within_room) or jumped
         if is_outlier:
-            return self._fallback_value(index, calibrated, within_room)
+            # Every fallback branch already reports an unsmoothed value, so the
+            # display and solver signals agree here.
+            valid, outlier, fallback = self._fallback_value(index, calibrated, within_room)
+            return valid, outlier, fallback, fallback
 
         clean_value = self._smooth(index, calibrated, dt_s)
         self._prev_clean[index] = clean_value
-        return True, False, clean_value
+        return True, False, clean_value, calibrated
 
     @staticmethod
     def _is_blind_spot(raw_distance) -> bool:

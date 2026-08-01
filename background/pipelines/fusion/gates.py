@@ -111,8 +111,13 @@ def quality_noise_multiplier(uwb_quality: dict) -> float:
     Extra noise inflation from position-filter quality flags.
 
     A clamped fix was moved by the board clamp and no longer reflects a real
-    measurement; a low-confidence fix had poor solver geometry. Both are
-    down-weighted rather than rejected so coverage is not lost.
+    measurement; a low-confidence fix had poor solver geometry; a speed-flagged
+    fix stepped further from its predecessor than a pen could travel. All three
+    are down-weighted rather than rejected so coverage is not lost.
+
+    The speed flag earns the mildest inflation of the three. It fires on roughly
+    a quarter of fixes, most of them ordinary solver jitter rather than genuine
+    outliers, so a large multiplier here would discard the fix in all but name.
     """
 
     multiplier = 1.0
@@ -120,6 +125,8 @@ def quality_noise_multiplier(uwb_quality: dict) -> float:
         multiplier *= 4.0
     if uwb_quality.get('low_confidence'):
         multiplier *= 3.0
+    if uwb_quality.get('speed_flag'):
+        multiplier *= 2.0
     return multiplier
 
 

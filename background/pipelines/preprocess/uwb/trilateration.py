@@ -43,9 +43,16 @@ _BOUNDS_MARGIN_M = 0.10
 # Residual band between "clean" and the hard rejection threshold.
 _LOW_CONFIDENCE_RESIDUAL_M = 0.08
 
-# The pen tip is on the board plane; anchors sit slightly proud of it, and the
-# 3D distance math accounts for that offset on its own.
-_PEN_PLANE_Z_M = 0.0
+# What the ranges actually measure is the UWB tag, which sits at the rear of the
+# marker - not the pen tip on the board plane. With the marker held roughly
+# perpendicular the tag stands off the board by the full tip-to-tag distance, so
+# solving as if it were at z=0 forces that missing height into the in-plane
+# solution as a position-dependent radial bias.
+#
+# Modelled as a constant because a UWB event carries no attitude; this is exact
+# for a perpendicular marker and degrades gracefully as it tilts. The ESKF still
+# applies the full attitude-aware tag-to-tip correction downstream.
+_TAG_HEIGHT_M = float(abs(cfg.marker.r_uwb_body_m[0]))
 
 
 class UWBSolver:
@@ -56,7 +63,7 @@ class UWBSolver:
         self.board_width = cfg.anchors.board_size_x
         self.board_height = getattr(cfg.anchors, 'board_size_y', 1.24)
 
-        self.pen_z = _PEN_PLANE_Z_M
+        self.pen_z = _TAG_HEIGHT_M
 
         self.bounds_min = [-_BOUNDS_MARGIN_M, -_BOUNDS_MARGIN_M]
         self.bounds_max = [
@@ -80,13 +87,20 @@ class UWBSolver:
         residual shows it converged to a geometrically impossible point.
         """
 
-        if event.get('sensor') != 'UWB' or 'clean_dists' not in event:
+        if event.get('sensor') != 'UWB':
             return None
 
-        clean_distances = np.array(event['clean_dists'])
+        # Prefer the unsmoothed series: median/EMA smoothing runs on the same
+        # timescale as a stroke and averages the motion away. clean_dists is the
+        # fallback for events produced before that split existed.
+        distances = event.get('solver_dists') or event.get('clean_dists')
+        if distances is None:
+            return None
+
+        solver_distances = np.array(distances)
         valid_mask = np.array(event.get('valid_mask', [True] * 4), dtype=bool)
 
-        valid_distances = clean_distances[valid_mask]
+        valid_distances = solver_distances[valid_mask]
         valid_anchors = self.anchors[valid_mask]
 
         if len(valid_distances) < _MIN_ANCHORS_FOR_SOLVE:

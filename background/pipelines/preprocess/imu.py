@@ -189,6 +189,11 @@ class IMUPreprocessor:
         self._ema_alpha_body = None
         self._prev_quat_rb = None
 
+        # Time since the last quaternion update. The BNO085 often repeats the same
+        # quaternion, so quat_delta uses this to compute rotation over the true interval.
+        self._quat_hold_s = 0.0
+        self._prev_omega_quat_delta = (0.0, 0.0, 0.0)
+
         # Path A: light EMA on world-frame acceleration, sensor point and tip.
         self._prev_acc_world_clean = None
         self._prev_acc_tip_clean = None
@@ -367,26 +372,59 @@ class IMUPreprocessor:
 
     def _read_body_angular_velocity(self, event: dict, quat_unit, dt_s: float):
         """
-        Obtain body-frame angular velocity, preferring the hardware gyro.
+        Obtain body-frame angular velocity in rad/s, preferring the hardware gyro.
 
-        Falls back to differentiating consecutive quaternions so recordings made
-        before the gyro field existed still process.
+        Falls back to consecutive-quaternion differentiation when gyro data is
+        unavailable. Uses the exact rotation angle to preserve accuracy on fast
+        turns, where the small-angle approximation breaks down.
         """
 
-        gyro = event.get('gyro') or event.get('gyr') or event.get('omega_body_raw')
+        # Presence, not truthiness: a genuine all-zero reading from a perfectly
+        # still marker must not fall through to the quaternion path.
+        gyro = event.get('gyro')
+        if gyro is None:
+            gyro = event.get('gyr')
+        if gyro is None:
+            gyro = event.get('omega_body_raw')
 
         if gyro is not None:
             try:
-                return tuple(float(component) for component in gyro), 'hardware'
+                components = tuple(float(component) for component in gyro)
             except (TypeError, ValueError):
-                return (0.0, 0.0, 0.0), 'hardware'
+                components = None
+
+            if (components is not None
+                    and len(components) == 3
+                    and event.get('gyro_valid', True)
+                    and all(math.isfinite(component) for component in components)):
+                return components, 'hardware'
 
         if self._prev_quat_rb is not None and dt_s > 1e-6:
+
+            self._quat_hold_s += dt_s
+
             delta = _quat_multiply(quat_unit, _quat_conjugate(self._prev_quat_rb))
+            
             # Negating gives the shorter arc; both represent the same rotation.
             if delta[3] < 0:
                 delta = (-delta[0], -delta[1], -delta[2], -delta[3])
-            return _vec_scale(delta[:3], 2.0 / dt_s), 'quat_delta'
+
+            vector_norm = _vec_magnitude(delta[:3])
+            if vector_norm <= 1e-12:
+                
+                # Quaternion unchanged: the sensor has not published a new
+                # orientation yet. Holding the previous estimate is right
+                return self._prev_omega_quat_delta, 'quat_delta'
+
+            # omega = angle/elapsed about the unit rotation axis, with
+            # angle = 2*atan2(|vec|, w). atan2 stays accurate across the whole
+            # range, where 2*acos(w) loses precision as w approaches 1.
+            angle = 2.0 * math.atan2(vector_norm, delta[3])
+            omega = _vec_scale(delta[:3], angle / (vector_norm * self._quat_hold_s))
+
+            self._quat_hold_s = 0.0
+            self._prev_omega_quat_delta = omega
+            return omega, 'quat_delta'
 
         return (0.0, 0.0, 0.0), 'quat_delta'
 

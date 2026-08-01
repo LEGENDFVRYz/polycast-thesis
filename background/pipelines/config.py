@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class SerialConfig:
-    port: str = "COM5"
+    port: str = "COM20"
     baud: int = 921600
 
 
@@ -29,9 +29,10 @@ class SerialConfig:
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class IMUConfig:
-    # Actual observed effective rate is closer to 170-180 Hz than ideal 250 Hz.
+    # Measured median across test/_datasets on the current rig: 203-215 Hz
+    # (kuru rate_profile.json reports 219.15 Hz over 109k samples).
     # ESKF dt clamp depends on this value, so keep it near measured reality.
-    sample_rate_hz: float = 170.0
+    sample_rate_hz: float = 215.0
 
     # ZUPT / stillness detector.
     # These values are intentionally permissive enough to catch real pauses,
@@ -123,7 +124,7 @@ class ContactConfig:
 class UWBConfig:
     # Per-anchor range calibration offsets.
     # range_offsets_m: tuple = (-0.1538, -0.0134, -0.1833, -0.0960)         # -- old validation
-    range_offsets_m: tuple = (-0.1585, -0.0339, -0.1984, -0.1201)
+    range_offsets_m: tuple = (-0.1040, 0.0273, -0.1902, -0.1353)
 
     # Nominal UWB rate.
     rate_hz: float = 50.0
@@ -139,8 +140,19 @@ class UWBConfig:
     median_window: int = 10
 
     # Position-level speed outlier gate.
+    #
+    # The limit is a sanity bound, not a motion model: consecutive raw fixes
+    # imply a median 1.4-1.5 m/s on this rig, which is solver jitter at 50 Hz
+    # rather than pen speed (handwriting runs 0.1-0.5 m/s). A threshold near
+    # that median cuts into the noise floor and censors the fastest fixes,
+    # which are the ones carrying the most motion.
+    #
+    # Flag, do not drop. Dropping deletes the event before fusion, so the ESKF
+    # cannot weigh a fix it never receives. Kept as a flag, speed_flag reaches
+    # gates.quality_noise_multiplier and inflates R for that one update, which
+    # is the same decision made with covariance and innovation in hand.
     outlier_speed_limit_ms: float = 2.0
-    drop_speed_outliers: bool = True
+    drop_speed_outliers: bool = False
 
     num_anchors: int = 4
 
@@ -175,19 +187,19 @@ class UWBConfig:
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class AnchorConfig:
-    board_size_x: float = 1.25
+    board_size_x: float = 1.90
     board_size_y: float = 1.20
 
     # Anchors are mounted at board corners with slight depth offset.
     a0: tuple[float, float, float] = (0.00, 0.00, 0.01)
-    a1: tuple[float, float, float] = (1.25, 0.00, 0.01)
-    a2: tuple[float, float, float] = (1.25, 1.20, 0.01)
+    a1: tuple[float, float, float] = (1.90, 0.00, 0.01)
+    a2: tuple[float, float, float] = (1.90, 1.20, 0.01)
     a3: tuple[float, float, float] = (0.00, 1.20, 0.01)
 
     positions: tuple[tuple[float, float, float], ...] = (
         (0.00, 0.00, 0.01),
-        (1.25, 0.00, 0.01),
-        (1.25, 1.20, 0.01),
+        (1.90, 0.00, 0.01),
+        (1.90, 1.20, 0.01),
         (0.00, 1.20, 0.01),
     )
 
@@ -215,10 +227,14 @@ class PipelineConfig:
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class MarkerConfig:
-    # Current prototype body-axis mapping.
+    # Current prototype body-axis mapping, measured along the marker long axis
+    # from the tip. Matches kuru_method/asynchronous_stream/config.py, which is
+    # the calibrated source for this rig:
+    #   IMU_S_FROM_TIP_M      = 0.125  (tip -> IMU)
+    #   TIP_OFFSET_FROM_TAG_M = 0.215  (tip -> UWB tag, == MARKER_LENGTH)
     # For perpendicular wall testing, projected board-plane lever arm should be small.
-    r_imu_body_m: tuple[float, float, float] = (0.110, 0.0, 0.0)
-    r_uwb_body_m: tuple[float, float, float] = (0.200, 0.0, 0.0)
+    r_imu_body_m: tuple[float, float, float] = (0.125, 0.0, 0.0)
+    r_uwb_body_m: tuple[float, float, float] = (0.215, 0.0, 0.0)
 
 
 # -----------------------------------------------------------------------------

@@ -34,6 +34,7 @@ os.environ['FOR_DISABLE_CONSOLE_CTRL_HANDLER'] = '1'
 # PyQtGraph / Qt
 try:
     import pyqtgraph as pg
+    import pyqtgraph.exporters
     from pyqtgraph.Qt import QtCore, QtGui, QtWidgets
 except ImportError as import_error:
     sys.exit(
@@ -64,6 +65,19 @@ RENDER_HZ = 20           # target refresh rate
 POLL_MS = 4              # serial-poll interval (QTimer)
 CSV_FILENAME = 'visualizer_log.csv'
 PNG_FILENAME = 'visualizer_output.png'
+
+# Wall-clock ceiling on how long one _poll_pipeline() call may spend running
+# events through the fusion/reconstruction/CSV path, checked between events
+# rather than as a fixed event count: profiled per-event cost varies with
+# what an event does (a plain IMU sample vs. one that closes a stroke and
+# triggers a pyqtgraph plot add), so a count-based cap either blocks too long
+# on expensive batches or under-uses idle capacity on cheap ones. Measured
+# per-event cost on this pipeline is ~0.5 ms mean / ~3 ms p99, so 12 ms keeps
+# a single tick's blocking time below where Windows starts treating the
+# window as unresponsive, while still processing enough events per tick
+# (~20+ at the measured mean cost) to drain a backlog well ahead of the
+# ~260 Hz combined IMU+UWB arrival rate.
+MAX_POLL_BLOCK_S = 0.012
 
 # One output directory per launch, shared by the streaming CSV and the final
 # PNG so both land in the same timestamped run folder. Created on first use
@@ -465,11 +479,20 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         self._stopping = False
         self._last_postprocess_meta: dict = {}
 
+        # Events sorted off the aligner but not yet run through the fusion/
+        # reconstruction/CSV path. _poll_pipeline() only processes up to
+        # MAX_EVENTS_PER_POLL per tick; the remainder waits here so a backlog
+        # drains across several ticks instead of one long call.
+        self._pending_events = deque()
+
         # Mode strip rolling colour buffer (one entry per IMU sample)
         self._strip_colors = deque(maxlen=_MODE_STRIP_LEN)
 
-        # CSV
-        self._csv_file = open(run_output().path(CSV_FILENAME), 'w', newline='', buffering=1)
+        # CSV. Default-buffered rather than line-buffered: a flush syscall
+        # per IMU sample (~200/s) was a meaningful share of the per-event
+        # cost that let the poll backlog outgrow real time. Flushed
+        # explicitly on the render tick and once more on shutdown instead.
+        self._csv_file = open(run_output().path(CSV_FILENAME), 'w', newline='')
         self._csv_writer = csv.writer(self._csv_file)
         self._csv_writer.writerow([
             'ts_hw', 'source',
@@ -629,118 +652,125 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             return
 
         raw_packets = self.streamer.read_new_packets()
-        if not raw_packets:
-            return
+        if raw_packets:
+            self.aligner.add_events(self.normalizer.normalize(raw_packets))
+            self._pending_events.extend(self.aligner.get_all_sorted())
+            self.aligner.clear()
 
-        self.aligner.add_events(self.normalizer.normalize(raw_packets))
-        sorted_events = self.aligner.get_all_sorted()
-        self.aligner.clear()
+        # Bounded by wall-clock time, not event count, so a backlog (a GUI
+        # stall, a slow tick) drains across several ticks instead of one call
+        # running long enough to starve the render timer and the Qt event
+        # loop until the whole backlog clears - see MAX_POLL_BLOCK_S.
+        deadline = time.perf_counter() + MAX_POLL_BLOCK_S
+        while self._pending_events and time.perf_counter() < deadline:
+            self._process_event(self._pending_events.popleft())
 
-        for event in sorted_events:
+    def _process_event(self, event: dict) -> None:
+        """Run one sorted IMU or UWB event through fusion/reconstruction/CSV."""
 
-            if event['sensor'] == 'IMU':
-                preprocessed = self.imu_prep.process_one(event)
-                if not preprocessed:
+        if event['sensor'] == 'IMU':
+            preprocessed = self.imu_prep.process_one(event)
+            if not preprocessed:
+                return
+
+            self.latest_imu_event = preprocessed
+
+            with_contact = self.contact.process_one(preprocessed)
+            fused = self.fusion.process_event(with_contact)
+            if not fused:
+                return
+
+            self.imu_count += 1
+            self.latest_fused = fused
+            self._dirty = True
+
+            stroke_active_now = bool(fused.get('stroke_active', False))
+
+            # Reset blue IMU track to board center on each new stroke start.
+            # This makes each stroke's raw dead-reckoned shape start from
+            # the same reference so drift is visible per-stroke, not
+            # accumulated.
+            if stroke_active_now and not self._prev_stroke_active:
+                snap = self.imu_track.reset()
+                # Insert NaN break so PyQtGraph does not draw a line from
+                # the last stroke's endpoint to the new origin on reset.
+                self.imu_x.append(float('nan'))
+                self.imu_y.append(float('nan'))
+                self.imu_x.append(snap[0])
+                self.imu_y.append(snap[1])
+
+            # Only integrate while the pen is confirmed writing - idle and
+            # air-move frames are excluded so between-stroke drift does
+            # not contaminate the blue layer.
+            if stroke_active_now:
+                self.last_imu_position = self.imu_track.update(preprocessed)
+                self.imu_x.append(self.last_imu_position[0])
+                self.imu_y.append(self.last_imu_position[1])
+
+            self._prev_stroke_active = stroke_active_now
+
+            # Mode strip - one entry per IMU sample (store mode name string)
+            self._strip_colors.append(fused.get('fusion_mode', 'AIR_MOVE'))
+
+            fused_x, fused_y = fused['fused_x'], fused['fused_y']
+            if math.isfinite(fused_x) and math.isfinite(fused_y):
+                if fused.get('stroke_active', False):
+                    if self.current_ink_x:
+                        jump = math.hypot(
+                            fused_x - self.current_ink_x[-1], fused_y - self.current_ink_y[-1]
+                        )
+                        if jump > _MAX_INK_JUMP_M:
+                            # Teleport guard: break the polyline so no line
+                            # is drawn across the jump. NaN reads as a gap
+                            # to PyQtGraph, which keeps the points already
+                            # drawn on screen - clearing the list would
+                            # erase the stroke still being written.
+                            self.current_ink_x.append(float('nan'))
+                            self.current_ink_y.append(float('nan'))
+                    self.current_ink_x.append(fused_x)
+                    self.current_ink_y.append(fused_y)
+                else:
+                    if self.air_x:
+                        air_jump = math.hypot(fused_x - self.air_x[-1], fused_y - self.air_y[-1])
+                        if air_jump > _MAX_INK_JUMP_M:
+                            # Same teleport guard for the gray air trail.
+                            self.air_x.append(float('nan'))
+                            self.air_y.append(float('nan'))
+                    self.air_x.append(fused_x)
+                    self.air_y.append(fused_y)
+
+            closed = self.reconstructor.process_event(fused)
+            if closed:
+                points = [(point[0], point[1]) for point in closed['points']]
+                self._add_ink_stroke(points)
+                self.current_ink_x.clear()
+                self.current_ink_y.clear()
+                self.closed_count += 1
+                self._last_postprocess_meta = closed.get('postprocess', {})
+
+            self._write_csv_row(fused, preprocessed, 'IMU')
+
+        elif event['sensor'] == 'UWB':
+            for ranged in self.range_prep.feed([event]):
+                solved = self.trilateration.process_one(ranged)
+                if not solved:
+                    continue
+                clean = self.position_filter.process_one(solved)
+                if not clean:
                     continue
 
-                self.latest_imu_event = preprocessed
+                clean_position = clean.get('pos_clean', (BOARD_WIDTH / 2, BOARD_HEIGHT / 2))
+                self.last_uwb_position = clean_position
+                self.uwb_x.append(clean_position[0])
+                self.uwb_y.append(clean_position[1])
+                self.latest_uwb_event = clean
 
-                with_contact = self.contact.process_one(preprocessed)
-                fused = self.fusion.process_event(with_contact)
-                if not fused:
-                    continue
-
-                self.imu_count += 1
-                self.latest_fused = fused
-                self._dirty = True
-
-                stroke_active_now = bool(fused.get('stroke_active', False))
-
-                # Reset blue IMU track to board center on each new stroke start.
-                # This makes each stroke's raw dead-reckoned shape start from
-                # the same reference so drift is visible per-stroke, not
-                # accumulated.
-                if stroke_active_now and not self._prev_stroke_active:
-                    snap = self.imu_track.reset()
-                    # Insert NaN break so PyQtGraph does not draw a line from
-                    # the last stroke's endpoint to the new origin on reset.
-                    self.imu_x.append(float('nan'))
-                    self.imu_y.append(float('nan'))
-                    self.imu_x.append(snap[0])
-                    self.imu_y.append(snap[1])
-
-                # Only integrate while the pen is confirmed writing - idle and
-                # air-move frames are excluded so between-stroke drift does
-                # not contaminate the blue layer.
-                if stroke_active_now:
-                    self.last_imu_position = self.imu_track.update(preprocessed)
-                    self.imu_x.append(self.last_imu_position[0])
-                    self.imu_y.append(self.last_imu_position[1])
-
-                self._prev_stroke_active = stroke_active_now
-
-                # Mode strip - one entry per IMU sample (store mode name string)
-                self._strip_colors.append(fused.get('fusion_mode', 'AIR_MOVE'))
-
-                fused_x, fused_y = fused['fused_x'], fused['fused_y']
-                if math.isfinite(fused_x) and math.isfinite(fused_y):
-                    if fused.get('stroke_active', False):
-                        if self.current_ink_x:
-                            jump = math.hypot(
-                                fused_x - self.current_ink_x[-1], fused_y - self.current_ink_y[-1]
-                            )
-                            if jump > _MAX_INK_JUMP_M:
-                                # Teleport guard: break the polyline so no line
-                                # is drawn across the jump. NaN reads as a gap
-                                # to PyQtGraph, which keeps the points already
-                                # drawn on screen - clearing the list would
-                                # erase the stroke still being written.
-                                self.current_ink_x.append(float('nan'))
-                                self.current_ink_y.append(float('nan'))
-                        self.current_ink_x.append(fused_x)
-                        self.current_ink_y.append(fused_y)
-                    else:
-                        if self.air_x:
-                            air_jump = math.hypot(fused_x - self.air_x[-1], fused_y - self.air_y[-1])
-                            if air_jump > _MAX_INK_JUMP_M:
-                                # Same teleport guard for the gray air trail.
-                                self.air_x.append(float('nan'))
-                                self.air_y.append(float('nan'))
-                        self.air_x.append(fused_x)
-                        self.air_y.append(fused_y)
-
-                closed = self.reconstructor.process_event(fused)
-                if closed:
-                    points = [(point[0], point[1]) for point in closed['points']]
-                    self._add_ink_stroke(points)
-                    self.current_ink_x.clear()
-                    self.current_ink_y.clear()
-                    self.closed_count += 1
-                    self._last_postprocess_meta = closed.get('postprocess', {})
-
-                self._write_csv_row(fused, preprocessed, 'IMU')
-
-            elif event['sensor'] == 'UWB':
-                for ranged in self.range_prep.feed([event]):
-                    solved = self.trilateration.process_one(ranged)
-                    if not solved:
-                        continue
-                    clean = self.position_filter.process_one(solved)
-                    if not clean:
-                        continue
-
-                    clean_position = clean.get('pos_clean', (BOARD_WIDTH / 2, BOARD_HEIGHT / 2))
-                    self.last_uwb_position = clean_position
-                    self.uwb_x.append(clean_position[0])
-                    self.uwb_y.append(clean_position[1])
-                    self.latest_uwb_event = clean
-
-                    fused = self.fusion.process_event(clean)
-                    if fused:
-                        self.uwb_count += 1
-                        self.latest_fused = fused
-                        self.latest_uwb_fused = fused
-                        self._dirty = True
+                fused = self.fusion.process_event(clean)
+                if fused:
+                    self.uwb_count += 1
+                    self.latest_fused = fused
+                    self.latest_uwb_fused = fused
+                    self._dirty = True
 
     # -------------------------------------------------------------------------
     # Render refresh (called every 1000/RENDER_HZ ms)
@@ -749,6 +779,11 @@ class VisualizerWindow(QtWidgets.QMainWindow):
         if not self._dirty:
             return
         self._dirty = False
+
+        # CSV rows accumulate in Python's file buffer between renders now
+        # that the file isn't line-buffered; flush here so the file on disk
+        # stays reasonably current without a syscall per row.
+        self._csv_file.flush()
 
         # Update rolling curves
         if self.imu_x:
@@ -887,11 +922,12 @@ class VisualizerWindow(QtWidgets.QMainWindow):
             self.closed_count += 1
 
         self.streamer.close()
-        self._csv_file.close()
 
-        # Final refresh for PNG
+        # Final refresh for PNG. Runs before closing the CSV file since it
+        # flushes any rows still sitting in the file's write buffer.
         self._dirty = True
         self._refresh_display()
+        self._csv_file.close()
 
         # Export PNG using pyqtgraph's exporter
         try:

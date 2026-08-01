@@ -136,14 +136,16 @@ class SerialStreamer:
         self.port = port
         self.baud = baud
         self.ser = None
+        # Bytes read but not yet forming a complete '\n'-terminated line.
+        # Carried across read_new_packets() calls so a line split across two
+        # poll ticks is never lost, without ever waiting for it to complete.
+        self._read_buffer = b''
         self.connect()
 
     def connect(self):
         """Open the serial port, leaving self.ser as None if it is unavailable."""
 
         try:
-            # A non-zero timeout lets readline() block until it sees '\n',
-            # which is what guarantees whole lines rather than partial reads.
             self.ser = serial.Serial(self.port, self.baud, timeout=1)
             time.sleep(_BOARD_RESET_DELAY_S)
             self.ser.reset_input_buffer()
@@ -160,8 +162,10 @@ class SerialStreamer:
         """
         Drain every complete line currently buffered and return parsed events.
 
-        Only reads while bytes are already waiting, so a quiet stream returns
-        immediately instead of blocking the caller's poll loop.
+        Reads only the bytes currently available using `read()`, never `readline()`.
+        `readline()` can block until its timeout if only part of a line has arrived,
+        stalling the polling loop. Partial lines are buffered in `self._read_buffer`
+        and completed on the next call.
         """
 
         packets = []
@@ -170,8 +174,13 @@ class SerialStreamer:
             return packets
 
         try:
-            while self.ser.in_waiting > 0:
-                line = self.ser.readline().decode('utf-8', errors='replace').strip()
+            waiting = self.ser.in_waiting
+            if waiting > 0:
+                self._read_buffer += self.ser.read(waiting)
+
+            while b'\n' in self._read_buffer:
+                raw_line, self._read_buffer = self._read_buffer.split(b'\n', 1)
+                line = raw_line.decode('utf-8', errors='replace').strip()
                 if not line:
                     continue
 

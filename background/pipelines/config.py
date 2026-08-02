@@ -292,25 +292,38 @@ class FusionModeTable:
     # Normal pen-down drawing.
     # IMU owns letter shape; UWB gives a gentle global nudge only.
     drawing: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.42,   # tethered tune: UWB owns stroke scale, IMU adds short-term detail
-        drag_inv_s     = 1.67,   # stronger residual velocity kill for multi-stroke writing
+        # Tier B revised: 0.42 -> 0.85 produced visible tremor, so most of that
+        # step is taken back. Our p90 speed already exceeds kuru's; we were never
+        # short of high-frequency energy, and weakening the correction that damped
+        # it let IMU noise integrate between fixes. 0.55 keeps a mild R inflation
+        # during ink without freeing the noise.
+        sigma_scale    = 0.55,
+        # Tier A: was 1.67. At 215 Hz that is a 0.6 s velocity half-life against a
+        # ~1.3 s stroke, so mid-stroke velocity was a fraction of what the IMU asked
+        # for. 0.30 gives a 2.3 s half-life - longer than a stroke. kuru has no
+        # equivalent drag term at all.
+        drag_inv_s     = 0.30,
         dir_penalty    = 1.0,
         jump_speed_max = 1.8,
         pos_floor      = 0.012,
-        acc_scale      = 0.50,   # reduce IMU double-integration growth
-        pos_gain_cap   = 0.13    # raised from 0.095: allows UWB to correct loop scale during fast strokes
+        # Tier A: was 0.50. Halving acceleration at the input discarded half the
+        # stroke shape before it could integrate. kuru integrates unscaled.
+        acc_scale      = 1.00,
+        # Tier B revised: 0.13 -> 0.06 contributed to tremor by letting the state
+        # run unchecked between fixes. 0.11 is close to the original.
+        pos_gain_cap   = 0.11
     ))
 
     # Short high-speed burst mode.
     # IMU authority burst; UWB kept loosely so fast strokes don't explode.
     drawing_fast: FusionModeParams = field(default_factory=lambda: FusionModeParams(
-        sigma_scale    = 0.52,   # fast strokes keep detail but remain tethered to UWB scale
-        drag_inv_s     = 1.70,
+        sigma_scale    = 0.62,   # Tier B revised: 0.52 -> 1.00 was too far; see drawing mode.
+        drag_inv_s     = 0.30,   # Tier A: was 1.70. Matches drawing mode.
         dir_penalty    = 1.0,
         jump_speed_max = 2.2,
         pos_floor      = 0.020,
-        acc_scale      = 0.48,
-        pos_gain_cap   = 0.085
+        acc_scale      = 1.00,   # Tier A: was 0.48.
+        pos_gain_cap   = 0.075   # Tier B revised: 0.04 contributed to tremor.
     ))
 
     # Pen lifted / air movement.
@@ -363,6 +376,104 @@ class StrokeDeadReckonerConfig:
 # -----------------------------------------------------------------------------
 @dataclass(frozen=True)
 class FusionESKFConfig:
+    # -------------------------------------------------------------------------
+    # DIAGNOSTIC: pure-IMU mode
+    # -------------------------------------------------------------------------
+    # Set True to cut every path by which UWB reaches the output, leaving the
+    # visible tip driven only by double-integrated IMU acceleration. This is a
+    # measurement instrument, not a shipping configuration.
+    #
+    # What it answers: does the IMU carry letter shape at all? Partial tuning
+    # cannot separate "IMU has no shape to contribute" from "IMU shape is being
+    # overridden downstream", because both look identical in the render.
+    #
+    # How to read the output: judge SHAPE WITHIN each stroke and ignore where
+    # strokes sit relative to each other. Unaided inertial position drifts
+    # quadratically with time, so absolute placement WILL be wrong and later
+    # strokes will be further off than earlier ones. That is expected physics,
+    # not a defect.
+    #
+    #   letterforms present but drifting -> IMU carries the shape; the problem is
+    #                                       how UWB is coupled, and tuning is the
+    #                                       right lever
+    #   fragments as before              -> the shape is not in the IMU signal;
+    #                                       no rebalancing will produce it, and
+    #                                       the answer is upstream (preprocessing,
+    #                                       calibration) or structural
+    #
+    # UWB still runs upstream - ranges are solved and events flow - so only the
+    # fusion coupling is severed, nothing is starved of data.
+    imu_only_mode: bool = False
+
+    # -------------------------------------------------------------------------
+    # Shape mode - IMU owns stroke shape, UWB owns stroke placement
+    # -------------------------------------------------------------------------
+    # The working configuration derived from the pure-IMU diagnostic above. That
+    # test showed the IMU produces clearly recognizable letterforms, so the
+    # pipeline's problem was never a missing signal - UWB was overriding a good
+    # one.
+    #
+    # This splits the sensors by what each is actually good at, instead of
+    # blending them everywhere:
+    #
+    #   during a stroke   IMU owns position outright. No Kalman correction, no
+    #                     bias tracking, no boundary guard. Drift is real but
+    #                     bounded by stroke duration, and letters are small
+    #                     enough that it stays below the noise it replaces.
+    #
+    #   at pen-down       one deliberate UWB re-anchor places the stroke. This is
+    #                     the only moment a large correction is both correct and
+    #                     invisible, because no ink is committed yet.
+    #
+    #   in air            UWB converges the estimate but does not drag the
+    #                     visible tip. Measured on abcde_1, the blended config let
+    #                     UWB move the tip a median 19.7 cm between strokes -
+    #                     larger than a 14 cm letter - and each stroke then began
+    #                     wherever that drag landed.
+    #
+    # Set False to restore the previous blended behaviour exactly. Ignored when
+    # imu_only_mode is True, which is a diagnostic and takes precedence.
+    shape_mode: bool = True
+
+    # Pen-down re-anchor distance cap. The existing snap uses
+    # dead_reckoner.pen_down_snap_max_dist_m = 0.08, well under the measured
+    # 19.7 cm inter-stroke error, so it was skipped exactly when most needed. In
+    # shape mode the re-anchor must cover the full error; this bound exists only
+    # to reject a wild fix.
+    shape_mode_reanchor_max_m: float = 0.35
+
+    # Fraction of the pen-down placement error corrected at stroke start. 1.0
+    # places the stroke exactly on UWB; slightly under keeps one noisy fix from
+    # throwing the letter, since UWB carries ~2.4 cm of noise on this rig.
+    shape_mode_reanchor_alpha: float = 0.85
+
+    # Integrate ink the way the visualizer's blue reference track does.
+    #
+    # The blue "IMU dead-reck." layer is _IMUTrack in visualizer.py, a plain
+    # forward-Euler integrator. Users repeatedly observed it producing better
+    # letterforms than the fused trace from the same recording - most visibly the
+    # descender of 'g' - and with shape_mode on, UWB is provably not the cause:
+    # every UWB constraint measures 0.00 cm of tip movement during ink.
+    #
+    # The difference is what each integrates:
+    #
+    #   blue    acc_board_tip, as given
+    #   ESKF    (acc_board_tip - bias) * 0.45 + acc_board_hp_tip * 0.55,
+    #           then drag (drag_inv_s) and a velocity cap
+    #
+    # The high-pass path is the problem. At a 0.75 Hz cutoff its time constant is
+    # ~1.3 s, about the length of one stroke, so it removes stroke-scale content -
+    # which is why fused strokes come out truncated and doubled back while blue
+    # keeps the full extent.
+    #
+    # With this enabled, during ink only: acceleration is acc_board_tip with no
+    # HPF blend and no bias subtraction, and neither drag nor the velocity cap is
+    # applied. Air movement, placement and every UWB path are unchanged, so
+    # pen-down re-anchoring still puts strokes within ~4 cm - UWB's noise level.
+    #
+    # Requires shape_mode. Set False to restore the blended acceleration.
+    ink_from_dead_reckoner: bool = True
+
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
     # Too high makes UWB dominate; too low makes IMU drift dominate.
@@ -370,7 +481,10 @@ class FusionESKFConfig:
     # A/B diagnostic: clamp in-stroke acceleration magnitude to prevent impulse excursions.
     # Disabled by default; enable to test whether spikes are causing loop distortion.
     acc_spike_clamp_enabled: bool = True
-    acc_spike_clamp_ms2:     float = 1.8   # tightened from 2.5: limits centripetal overbloom during fast circular strokes
+    # Tier A: was 1.8. Real handwriting acceleration exceeds 1.8 m/s^2 on corners,
+    # so the clamp was cutting letterform rather than impulse spikes. 4.0 keeps the
+    # runaway guard while leaving normal writing untouched.
+    acc_spike_clamp_ms2:     float = 4.0
 
     # Acceleration-bias random walk.
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
@@ -456,7 +570,11 @@ class FusionESKFConfig:
     # the global placement slowly drifts toward UWB.
     # alpha = 0.01 -> time-constant ~1/( 50 Hz * 0.01) = 2 s; absorbs ~63% of
     # a steady offset over a 2-second stroke.
-    bias_uwb_alpha: float = 0.055  # stronger visible-bias tracking during active ink
+    # Tier B: was 0.055. At 50 Hz that is a ~0.36 s time constant, so the bias
+    # tracker was acting as a second position correction *within* a stroke rather
+    # than a slow placement fix across strokes. 0.015 gives ~1.3 s - longer than a
+    # stroke, so placement still converges but letter shape is left alone.
+    bias_uwb_alpha: float = 0.015
     bias_decay:     float = 0.25
     bias_max_m:     float = 0.045
 
@@ -474,16 +592,31 @@ class FusionESKFConfig:
     # expands far away from the last accepted tip-corrected UWB point, gently pull
     # the visible output back inside a local radius. It prevents large abc/cat loops
     # while still allowing IMU shape within the UWB neighbourhood.
-    active_vel_cap_ms: float = 0.36
+    # Tier A: was 0.36. Measured pen speed on the kuru reference over abcde_1 is
+    # median 0.292 m/s with p90 0.550, so the old cap sat below the 90th percentile
+    # of real motion and clipped every fast stroke segment. 1.00 still catches a
+    # genuine runaway.
+    active_vel_cap_ms: float = 1.00
     active_uwb_guard_enabled: bool = True
-    active_uwb_guard_radius_m: float = 0.022   # tightened from 0.030: triggers pullback sooner for fast circles
+    # Tier B revised. The 0.060 attempt caused visible blooming and was based on a
+    # bad inference: the radius was sized against a whole 14 cm letter, but the
+    # guard measures excursion from the *latest* UWB fix, which updates at 50 Hz
+    # and tracks along the stroke. It never needed to be letter-sized - only large
+    # enough that normal in-stroke IMU detail is not clipped every frame.
+    # 0.030 gives that headroom over the original 0.022 while keeping the guard a
+    # real safety net.
+    active_uwb_guard_radius_m: float = 0.030
     active_uwb_guard_alpha: float = 0.78
     active_uwb_guard_max_age_s: float = 0.85
 
     # Fraction of the outward velocity component removed when visible fused ink
     # is already drifting away from the latest tip-corrected UWB neighbourhood.
     # 0.0 = disabled; 1.0 = remove all outward velocity; tangential velocity remains.
-    active_uwb_outward_velocity_damping: float = 0.85
+    # Tier B revised. 0.30 was too weak once Tier A removed the input-side damping:
+    # with little restoring force, strokes bloomed past where they should stop.
+    # 0.65 still relaxes the original 0.85 - which was absorbing the velocity Tier A
+    # restored - but keeps a real brake on outward excursion.
+    active_uwb_outward_velocity_damping: float = 0.65
 
     # Mode-aware stationary-contact clamp.
     # Goal: if the marker tip is physically on the board but not truly moving,
@@ -645,6 +778,52 @@ class MinJerkConfig:
     max_bbox_ratio: float = 1.10
 
 
+# -----------------------------------------------------------------------------
+# Two-point stroke anchoring (pen-up drift removal)
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class TwoPointAnchorConfig:
+    # Pins both endpoints of a finished stroke to UWB, removing the drift that
+    # ink_from_dead_reckoner reintroduced by dropping the HPF, bias subtraction,
+    # drag and velocity cap during ink.
+    #
+    # A constant acceleration bias displaces position by 0.5*b*t^2, so drift is
+    # negligible at pen-down and largest at pen-up - which is exactly where the
+    # overshoot appears. Subtracting error*(t/T)^2 removes that parabola and
+    # leaves genuine motion, so the letter keeps its shape.
+    #
+    # Runs at pen-up on a finished stroke, so unlike every mid-stroke UWB
+    # correction tried before it, it cannot fight the IMU while the letter is
+    # being drawn.
+    enabled: bool = True
+
+    # Shorter strokes have not accumulated enough drift for the correction to
+    # beat the UWB noise it would introduce.
+    min_points: int = 8
+
+    # Half-width of the window around the stroke endpoint whose UWB fixes are
+    # medianed into the anchor. One fix carries ~2.4 cm of noise on this rig -
+    # the same order as the drift - so a single sample is not a usable target.
+    # 150 ms spans roughly 7 fixes at 50 Hz.
+    anchor_window_us: int = 150_000
+
+    # Beyond this the endpoint disagreement is not drift, and applying it would
+    # move the letter rather than straighten it.
+    #
+    # Measured per-stroke endpoint error on abcde_1 runs 1.5-18.6 cm, and it
+    # tracks stroke duration and span the way t^2 drift predicts: 0.29 s strokes
+    # show 1.5-5 cm while 1.1-1.4 s strokes show 14-19 cm. An earlier 0.12 value
+    # rejected 4 of 10 strokes - precisely the long ones that had drifted most
+    # and needed the correction. 0.25 covers the observed range with headroom
+    # while still refusing a fix that disagrees by more than a letter width.
+    max_correction_m: float = 0.25
+
+    # Fraction of the measured endpoint error removed. Below 1.0 because the
+    # anchor itself is noisy: correcting fully would inject UWB noise into the
+    # stroke tail, which is the thing being fixed.
+    correction_alpha: float = 0.85
+
+
 @dataclass(frozen=True)
 class PostprocessConfig:
     enabled: bool = False
@@ -669,6 +848,7 @@ class Config:
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    two_point_anchor: TwoPointAnchorConfig = field(default_factory=TwoPointAnchorConfig)
 
 
 # Module-level singleton every pipeline stage imports.

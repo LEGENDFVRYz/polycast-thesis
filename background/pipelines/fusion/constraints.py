@@ -102,6 +102,11 @@ class StationaryContactLock:
         eskf_cfg = cfg.fusion_eskf
         blend = 0.0
 
+        # In the pure-IMU diagnostic the anchor is the current visible tip only,
+        # so a pause holds where the IMU says it is rather than snapping to UWB.
+        if eskf_cfg.imu_only_mode:
+            return np.asarray(visible_position, dtype=float).copy(), 0.0
+
         if uwb_age_s is not None and uwb_age_s <= eskf_cfg.contact_static_lock_uwb_max_age_s:
             blend = (
                 eskf_cfg.contact_static_lock_pen_down_uwb_blend
@@ -208,6 +213,13 @@ class ActiveStrokeBoundaryGuard:
         # The stationary lock is a stronger physical claim than this guard; if
         # the tip is planted, the lock anchor wins.
         if tip_locked or not stroke_active or not eskf_cfg.active_uwb_guard_enabled:
+            self._stand_down()
+            return
+
+        # This guard exists to bound the tip to the UWB neighbourhood, which is
+        # exactly the coupling the pure-IMU diagnostic removes - and which shape
+        # mode hands to the IMU for the duration of a stroke.
+        if eskf_cfg.imu_only_mode or eskf_cfg.shape_mode:
             self._stand_down()
             return
 

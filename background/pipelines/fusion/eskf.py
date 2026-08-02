@@ -84,6 +84,12 @@ _ACTIVE_VELOCITY_CLIP_MS = 0.025
 _AIR_POSITION_CLIP_M = 0.10
 _AIR_VELOCITY_CLIP_MS = 0.50
 
+# Shape mode corrects placement once per stroke at pen-down, so an air fix only
+# needs to keep the estimate converged, not haul the visible tip toward every
+# noisy sample. Measured on abcde_1, air mode's uncapped gain moved the tip a
+# median 19.7 cm between strokes - wider than a letter.
+_SHAPE_MODE_AIR_GAIN_CAP = 0.05
+
 
 class ESKF:
     """Error-state Kalman filter fusing IMU dead-reckoning with UWB position."""
@@ -184,7 +190,10 @@ class ESKF:
 
         mode_parameters = self.modes.update_fast_mode(self.state.speed)
         if tip_is_planted:
-            mode_parameters = cfg.fusion_eskf.modes.static
+            # static mode sets acc_scale = 0.0, which blanks the IMU entirely.
+            # In the diagnostic that would hide real motion rather than reveal it.
+            if not cfg.fusion_eskf.imu_only_mode:
+                mode_parameters = cfg.fusion_eskf.modes.static
             self.modes.force_stationary()
 
         acceleration, detail_weight = self._blend_acceleration(
@@ -289,6 +298,14 @@ class ESKF:
             return np.zeros(2, dtype=float), 0.0
 
         if stroke_state == 'CONTACT_DRAWING':
+            # ink_from_dead_reckoner reproduces the visualizer's blue _IMUTrack,
+            # which integrates acc_board_tip directly. The HPF path the ESKF
+            # normally blends in has a 0.75 Hz cutoff - a ~1.3 s time constant,
+            # about one stroke - so it strips stroke-scale content and leaves the
+            # truncated, doubled-back letterforms the shape comparison showed.
+            if self._ink_from_dead_reckoner():
+                return smoothed.copy(), 0.0
+
             detail_weight = float(dead_reckoner_cfg.detail_weight)
             acceleration = (
                 (smoothed - self.state.accel_bias) * (1.0 - detail_weight)
@@ -340,11 +357,15 @@ class ESKF:
         self.state.velocity += acceleration * dt_s
 
         # Drag tightens as UWB goes stale, bounding how far unaided IMU
-        # dead-reckoning can wander before the next correction arrives.
-        drag = mode_parameters.drag_inv_s * stale_factor
-        self.state.velocity *= max(0.0, 1.0 - drag * dt_s)
+        # dead-reckoning can wander before the next correction arrives. Skipped
+        # during ink in dead-reckoner mode: the blue reference integrator applies
+        # neither drag nor a velocity cap, and matching it is the point.
+        drawing_free = self._ink_from_dead_reckoner() and self._stroke_active_prev
+        if not drawing_free:
+            drag = mode_parameters.drag_inv_s * stale_factor
+            self.state.velocity *= max(0.0, 1.0 - drag * dt_s)
 
-        if self._stroke_active_prev:
+        if self._stroke_active_prev and not drawing_free:
             self.state.velocity = clip_vector_norm(
                 self.state.velocity, cfg.fusion_eskf.active_vel_cap_ms
             )
@@ -391,6 +412,7 @@ class ESKF:
             self.state.velocity[:] = 0.0
             apply_zero_velocity_update(self.state, _PEN_DOWN_ZUPT_SIGMA)
             self._snap_stroke_start_to_uwb(ts)
+
             self.dead_reckoner.reset(
                 uwb_tip=self.state.last_uwb_tip,
                 current_p=self.state.position,
@@ -433,11 +455,19 @@ class ESKF:
         """
 
         eskf_cfg = cfg.fusion_eskf
+        if eskf_cfg.imu_only_mode:
+            # Would re-anchor every stroke to UWB, which is most of the placement
+            # authority the diagnostic exists to remove.
+            return
         if self._last_accepted_tip is None or self._last_accepted_tip_ts is None:
             return
 
         age_s = (ts - self._last_accepted_tip_ts) / 1_000_000.0
         if age_s > eskf_cfg.stroke_start_uwb_max_age_s:
+            return
+
+        if eskf_cfg.shape_mode:
+            self._reanchor_stroke_start(eskf_cfg)
             return
 
         sigma = eskf_cfg.sigma_uwb * eskf_cfg.stroke_start_sigma_scale
@@ -453,6 +483,52 @@ class ESKF:
         if applied:
             self.telemetry.stroke_start_snaps += 1
 
+    @staticmethod
+    def _ink_from_dead_reckoner() -> bool:
+        """Whether ink is drawn from the dead reckoner rather than the ESKF state."""
+
+        eskf_cfg = cfg.fusion_eskf
+        return eskf_cfg.ink_from_dead_reckoner and eskf_cfg.shape_mode
+
+    def _reanchor_stroke_start(self, eskf_cfg) -> None:
+        """
+        Place a stroke on the board at pen-down, in shape mode.
+
+        This is the single moment UWB is allowed real authority over position:
+        no ink is committed yet, so a large correction is invisible, and it is
+        the last chance to fix placement before the IMU takes the stroke over.
+
+        Deliberately a direct move rather than a Kalman update. The gain path is
+        capped and covariance-dependent, which is what previously reduced this to
+        a token nudge; here the whole point is to absorb the full placement error
+        in one step.
+        """
+
+        target = self._last_accepted_tip
+        error = target - self.state.visible_position
+        error_norm = float(np.linalg.norm(error))
+
+        # Beyond this the fix disagrees with dead reckoning by more than a bad
+        # fix plausibly explains, so trust the integrated position instead.
+        if error_norm > eskf_cfg.shape_mode_reanchor_max_m:
+            return
+
+        alpha = float(np.clip(eskf_cfg.shape_mode_reanchor_alpha, 0.0, 1.0))
+        self.state.position += error * alpha
+
+        # The bias exists to carry slow UWB placement correction during a stroke,
+        # which shape mode no longer does. Clearing it keeps visible_position and
+        # position from drifting apart across strokes.
+        self.state.position_bias[:] = 0.0
+
+        # Position was just asserted from a measurement, so the covariance should
+        # reflect that rather than the width inherited from the air segment.
+        self.state.covariance[0, 0] = eskf_cfg.sigma_uwb ** 2
+        self.state.covariance[1, 1] = eskf_cfg.sigma_uwb ** 2
+        self.state.apply_covariance_floor()
+
+        self.telemetry.stroke_start_snaps += 1
+
     # -------------------------------------------------------------------------
     # UWB path - gated Kalman correction
     # -------------------------------------------------------------------------
@@ -463,6 +539,24 @@ class ESKF:
 
         measurement = self._read_uwb_measurement(event)
         if measurement is None:
+            return self._emit(ts, 'POSITION', STATE_UWB_DROPPED, 0, False)
+
+        if cfg.fusion_eskf.imu_only_mode:
+            # Diagnostic mode: the measurement is recorded for display and for
+            # the initial anchor, but never corrects the state. Returning before
+            # the bootstrap would leave the filter at board centre forever, so
+            # the very first fix is still allowed through to place the trace on
+            # the board; everything after it is inert.
+            self.last_uwb_measurement = measurement.copy()
+            if self.telemetry.uwb_accepted == 0 and self._have_imu_attitude:
+                tip, _offset, _world = self._correct_for_lever_arm(
+                    measurement, self.state.attitude
+                )
+                self.state.position[:] = tip
+                self.state.velocity[:] = 0.0
+                self._record_accepted_fix(tip, event.get('ts_hw', ts))
+                self.telemetry.uwb_accepted += 1
+                return self._emit(ts, 'POSITION', STATE_UWB_BOOTSTRAP, 0, False)
             return self._emit(ts, 'POSITION', STATE_UWB_DROPPED, 0, False)
 
         self.last_uwb_measurement = measurement.copy()
@@ -644,6 +738,18 @@ class ESKF:
 
         eskf_cfg = cfg.fusion_eskf
 
+        # Shape mode: while ink is committed the IMU owns position. The fix is
+        # still recorded - it keeps the staleness clock alive and becomes the
+        # re-anchor target for the next pen-down - but it does not move the pen
+        # mid-letter.
+        if eskf_cfg.shape_mode and self._stroke_active_prev:
+            self.telemetry.innovation_norm = float(
+                np.linalg.norm(tip_measurement - self.state.position)
+            )
+            self.telemetry.uwb_residual_rms = solve_error
+            self.telemetry.position_gain = 0.0
+            return True
+
         if gates.exceeds_nlos_residual(solve_error):
             self.telemetry.innovation_norm = 0.0
             self.telemetry.nlos_scale = eskf_cfg.r_scale_max
@@ -693,6 +799,14 @@ class ESKF:
             * self.modes.stroke_age_gain_multiplier(self._last_uwb_ts or 0),
             1.0,
         )
+
+        # In shape mode the air segment only has to keep the estimate converged
+        # for the next pen-down re-anchor, so the gain is capped rather than left
+        # at air mode's uncapped 1.0. Capping the per-fix step size instead does
+        # not work: at ~1000 air fixes per recording even a 1 cm step accumulates
+        # into metres of visible travel. The rate is what matters, not the step.
+        if eskf_cfg.shape_mode:
+            gain_cap = min(gain_cap, _SHAPE_MODE_AIR_GAIN_CAP)
 
         limits = (
             ErrorStateClipLimits(
@@ -784,6 +898,13 @@ class ESKF:
             return
 
         eskf_cfg = cfg.fusion_eskf
+
+        # Shape mode places the stroke once at pen-down. Continuing to nudge the
+        # bias mid-stroke would re-introduce the same UWB pull through the
+        # visible-position path that the Kalman correction just gave up.
+        if eskf_cfg.shape_mode:
+            return
+
         placement_error = tip_measurement - self.state.visible_position
         self.state.position_bias += eskf_cfg.bias_uwb_alpha * placement_error
 
@@ -852,9 +973,14 @@ class ESKF:
         # stroke gate enabled this path should not run at all, but freezing it
         # here means a future config change cannot reintroduce the 8-11 cm
         # in-stroke fold this once produced.
+        # Shape mode freezes position here in air as well as in ink. The velocity
+        # correction is still wanted - it keeps the air estimate sane - but the
+        # position side-effect was measured moving the visible tip 108 cm over a
+        # recording, and pen-down re-anchoring makes that movement pointless.
+        freeze = self._stroke_active_prev or cfg.fusion_eskf.shape_mode
         limits = (
             ErrorStateClipLimits(position_m=0.0, velocity_ms=0.15, freeze_position=True)
-            if self._stroke_active_prev
+            if freeze
             else ErrorStateClipLimits(position_m=0.08, velocity_ms=1.50)
         )
 

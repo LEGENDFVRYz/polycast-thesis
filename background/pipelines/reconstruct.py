@@ -42,7 +42,11 @@ from a serial port:
 import math
 
 from background.pipelines.config import cfg
-from background.pipelines.postprocess import StrokePostprocessor, UWBStrokeBuffer
+from background.pipelines.postprocess import (
+    StrokePostprocessor,
+    TwoPointStrokeAnchor,
+    UWBStrokeBuffer,
+)
 
 
 def _pair_norm(pair):
@@ -327,6 +331,7 @@ class StrokeReconstructor:
         self._imu_cleaner = StrokeFinalizationIMUCleaner()
         self._postprocessor = StrokePostprocessor()
         self._uwb_buffer = UWBStrokeBuffer()
+        self._two_point_anchor = TwoPointStrokeAnchor()
 
     # -------------------------------------------------------------------------
     # Main entry
@@ -463,6 +468,13 @@ class StrokeReconstructor:
         stroke = self._imu_cleaner.clean(stroke)
 
         uwb_points = self._uwb_buffer.drain(stroke['start_ts'], stroke['end_ts'])
+
+        # Before the postprocessor, which estimates a centroid and a similarity
+        # transform: those assume the stroke is a rigid object that is merely
+        # misplaced, so they should see a stroke whose internal drift has already
+        # been removed rather than fitting a transform to a warped shape.
+        stroke = self._two_point_anchor.apply(stroke, uwb_points)
+
         stroke = self._postprocessor.process(stroke, uwb_points)
 
         self._closed_count += 1

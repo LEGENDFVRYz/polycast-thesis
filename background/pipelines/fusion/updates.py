@@ -47,6 +47,16 @@ class ErrorStateClipLimits:
     # Set where a correction must never move position at all, only velocity.
     freeze_position: bool = False
 
+    # Set where a correction must not touch the accelerometer bias.
+    #
+    # The error state couples position error into bias error, so a UWB fix that
+    # disagrees with the integrated position is partly explained as sensor bias.
+    # That is correct when the disagreement really is bias, and corrosive when it
+    # is accumulated dead-reckoning drift: measured on abc_extralarge, in-stroke
+    # innovations of 15.6 cm median drove the bias to 0.71 m/s^2, which then
+    # integrated to 0.36 m/s of position error and pushed the state off-board.
+    freeze_bias: bool = False
+
 
 def position_observation_matrix() -> np.ndarray:
     """Observation matrix for a direct position measurement, H = [I 0 0]."""
@@ -155,7 +165,12 @@ def clip_error_state(error_state: np.ndarray, limits: ErrorStateClipLimits) -> n
             error_state[VELOCITY_SLICE], -limits.velocity_ms, limits.velocity_ms
         )
 
-    error_state[BIAS_SLICE] = np.clip(error_state[BIAS_SLICE], -limits.bias_ms2, limits.bias_ms2)
+    if limits.freeze_bias:
+        error_state[BIAS_SLICE] = 0.0
+    else:
+        error_state[BIAS_SLICE] = np.clip(
+            error_state[BIAS_SLICE], -limits.bias_ms2, limits.bias_ms2
+        )
     return error_state
 
 

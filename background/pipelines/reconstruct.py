@@ -43,6 +43,7 @@ import math
 
 from background.pipelines.config import cfg
 from background.pipelines.postprocess import (
+    IMUDegeneracyFallback,
     StrokePostprocessor,
     TwoPointStrokeAnchor,
     UWBStrokeBuffer,
@@ -332,6 +333,7 @@ class StrokeReconstructor:
         self._postprocessor = StrokePostprocessor()
         self._uwb_buffer = UWBStrokeBuffer()
         self._two_point_anchor = TwoPointStrokeAnchor()
+        self._imu_degeneracy = IMUDegeneracyFallback()
 
     # -------------------------------------------------------------------------
     # Main entry
@@ -469,11 +471,19 @@ class StrokeReconstructor:
 
         uwb_points = self._uwb_buffer.drain(stroke['start_ts'], stroke['end_ts'])
 
+        # First: a stroke whose inertial signal carried no shape is rebuilt from
+        # UWB. Runs ahead of the anchor because a UWB-derived stroke has no
+        # inertial drift to remove - anchoring it would only fit a drift
+        # parabola to measurement noise.
+        stroke = self._imu_degeneracy.apply(stroke, uwb_points)
+        rebuilt_from_uwb = bool((stroke.get('imu_degeneracy') or {}).get('replaced'))
+
         # Before the postprocessor, which estimates a centroid and a similarity
         # transform: those assume the stroke is a rigid object that is merely
         # misplaced, so they should see a stroke whose internal drift has already
         # been removed rather than fitting a transform to a warped shape.
-        stroke = self._two_point_anchor.apply(stroke, uwb_points)
+        if not rebuilt_from_uwb:
+            stroke = self._two_point_anchor.apply(stroke, uwb_points)
 
         stroke = self._postprocessor.process(stroke, uwb_points)
 

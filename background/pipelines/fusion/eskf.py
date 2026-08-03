@@ -814,6 +814,10 @@ class ESKF:
                 velocity_ms=_ACTIVE_VELOCITY_CLIP_MS,
                 clip_position_by_norm=True,
                 clip_velocity_by_norm=True,
+                # In-stroke innovation is dominated by dead-reckoning drift, not
+                # by sensor bias, so letting it write to b_a mislabels drift as
+                # bias and poisons every later prediction.
+                freeze_bias=True,
             )
             if self._stroke_active_prev
             else ErrorStateClipLimits(
@@ -979,7 +983,12 @@ class ESKF:
         # recording, and pen-down re-anchoring makes that movement pointless.
         freeze = self._stroke_active_prev or cfg.fusion_eskf.shape_mode
         limits = (
-            ErrorStateClipLimits(position_m=0.0, velocity_ms=0.15, freeze_position=True)
+            ErrorStateClipLimits(
+                position_m=0.0,
+                velocity_ms=0.15,
+                freeze_position=True,
+                freeze_bias=self._stroke_active_prev,
+            )
             if freeze
             else ErrorStateClipLimits(position_m=0.08, velocity_ms=1.50)
         )

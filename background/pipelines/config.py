@@ -490,6 +490,19 @@ class FusionESKFConfig:
     # Keep very small so bias does not absorb UWB/IMU disagreement too quickly.
     sigma_b_a: float = 0.0001
 
+    # Hard bound on the magnitude of the estimated accelerometer bias vector.
+    #
+    # sigma_b_a already says the bias is nearly constant, but nothing enforced a
+    # magnitude, so a run of large innovations could walk it arbitrarily far. On
+    # abc_extralarge it reached 0.71 m/s^2 - which integrates to 0.36 m/s of
+    # position error per second, drove the state off the board, and then failed
+    # every UWB fix on the board-margin gate, leaving no way back.
+    #
+    # A BNO085 does not legitimately exhibit a bias this large. 0.15 leaves room
+    # for a real sensor offset while making that runaway impossible. Set 0 to
+    # disable the bound.
+    accel_bias_max_ms2: float = 0.15
+
     # ZUPT velocity measurement noise.
     sigma_zupt: float = 0.005
 
@@ -824,6 +837,54 @@ class TwoPointAnchorConfig:
     correction_alpha: float = 0.85
 
 
+# -----------------------------------------------------------------------------
+# Per-stroke IMU reliability gate (UWB shape fallback)
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class IMUDegeneracyConfig:
+    # For most strokes the IMU carries shape and UWB only places it. For some it
+    # does not: the three strokes forming the 'h' in abcde_1 integrate to a
+    # nearly one-dimensional path while UWB observes real 2D motion over the same
+    # interval. Undamped double integration of the raw acceleration, with no
+    # filter in the path, is equally flat - so the weak axis is absent from the
+    # inertial signal rather than removed by our processing.
+    #
+    # Such a stroke is rebuilt from UWB. The result is noisier than a good IMU
+    # stroke, but a noisy 'h' is legible where a flat line is not.
+    enabled: bool = True
+
+    # Anisotropy is minor/major principal axis: 0 is a line, 1 is round.
+    # Measured across abcde_1 and abc_extralarge:
+    #   good strokes   0.227 - 0.739
+    #   'h' strokes    0.020 - 0.141
+    # An order of magnitude apart with nothing between, so 0.18 separates them
+    # without being near either group.
+    max_anisotropy: float = 0.18
+
+    # Second condition on the same stroke: the minor axis in absolute terms.
+    # Good strokes measured 2.4-5.5 cm, degenerate ones 0.10-0.25 cm. This stops
+    # a large stroke that happens to be elongated from qualifying.
+    max_minor_axis_m: float = 0.012
+
+    # UWB must show meaningfully more structure than the IMU did, or there is
+    # nothing to recover - a genuinely straight stroke (a 'T' stem, an underline)
+    # is legitimately anisotropic and must not be replaced by UWB noise.
+    uwb_structure_ratio: float = 1.5
+
+    # And that structure must be real rather than jitter. UWB carries ~2.4 cm of
+    # noise on this rig, so its minor axis has to clear a floor before it counts
+    # as observed motion.
+    min_uwb_minor_axis_m: float = 0.004
+
+    # Enough samples for the PCA to mean anything.
+    min_points: int = 12
+    min_uwb_points: int = 6
+
+    # Centred moving average over the rebuilt stroke. UWB noise would otherwise
+    # be drawn directly as ink.
+    smoothing_window: int = 5
+
+
 @dataclass(frozen=True)
 class PostprocessConfig:
     enabled: bool = False
@@ -849,6 +910,7 @@ class Config:
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     two_point_anchor: TwoPointAnchorConfig = field(default_factory=TwoPointAnchorConfig)
+    imu_degeneracy: IMUDegeneracyConfig = field(default_factory=IMUDegeneracyConfig)
 
 
 # Module-level singleton every pipeline stage imports.

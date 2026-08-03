@@ -104,6 +104,7 @@ class ESKFState:
         self.position += error_state[POSITION_SLICE]
         self.velocity += error_state[VELOCITY_SLICE]
         self.accel_bias += error_state[BIAS_SLICE]
+        self.clamp_accel_bias()
 
     def apply_joseph_covariance_update(
         self,
@@ -209,6 +210,33 @@ class ESKFState:
             self.position[:] = np.array([self.board_width * 0.5, self.board_height * 0.5])
         if not np.all(np.isfinite(self.position_bias)):
             self.position_bias[:] = 0.0
+
+    def clamp_accel_bias(self) -> None:
+        """
+        Hold the accelerometer bias inside a physically plausible band.
+
+        `sigma_b_a` already asserts the bias is very nearly constant, but nothing
+        enforced a magnitude, so a run of large innovations could walk it far
+        past anything the sensor could actually exhibit. On abc_extralarge it
+        reached 0.71 m/s^2 - integrating to 0.36 m/s of position error per second
+        and driving the state off the board, after which every UWB fix failed the
+        board-margin gate and no correction path was left.
+
+        A BNO085 does not exhibit a bias this large; anything approaching it is an
+        estimation failure, so it is bounded rather than trusted.
+        """
+
+        limit = cfg.fusion_eskf.accel_bias_max_ms2
+        if limit <= 0.0:
+            return
+
+        # Bounded by norm rather than per axis: the physical claim is about the
+        # magnitude of the bias vector, and a per-axis clamp would admit
+        # limit*sqrt(2) along a diagonal. Scaling preserves the estimated
+        # direction, which per-axis clipping would skew toward the axes.
+        magnitude = float(np.linalg.norm(self.accel_bias))
+        if magnitude > limit:
+            self.accel_bias *= limit / magnitude
 
     def clamp_to_board(self) -> None:
         self.position[0] = max(0.0, min(self.board_width, self.position[0]))

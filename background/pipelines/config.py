@@ -894,6 +894,79 @@ class PostprocessConfig:
     minjerk: MinJerkConfig = field(default_factory=MinJerkConfig)
 
 
+
+# -----------------------------------------------------------------------------
+# Causal trace filter (display-side smoothing of the fused ink)
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class TraceFilterConfig:
+    """
+    Adaptive-alpha causal EMA applied to the fused position for display.
+
+    This is downstream of the ESKF with no feedback, so it cannot destabilize
+    the filter - it changes what is drawn, not what is estimated.
+
+    The problem it solves: 55-60% of consecutive in-stroke fused samples land
+    within 0.5 mm of each other while the p90 step is 3.5-5.9 mm. The trace is
+    mostly sub-noise dither punctuated by real motion, and the dither shows up
+    as direction reversal - a single `circle_medium-` stroke accumulates over
+    50 full turns of absolute heading change. A fixed EMA strong enough to
+    remove that also rounds off letter corners; selecting alpha per sample from
+    the step length, then raising it again when the direction turns sharply,
+    removes the dither and keeps the corners.
+
+    Measured on test/_datasets by replaying the fused output through this
+    filter: accumulated turning falls 14% (abcde_1), 35% (abc_extralarge),
+    69% (hello_world_1) and 90% (circle_medium-), while the stroke bounding-box
+    diagonal moves by at most 1%. Extent is preserved, so what is removed is
+    not carrying letter shape.
+
+    Ported from kuru_method/asynchronous_stream/main_ekf.py RecognitionTraceFilter.
+    Keep the numerics aligned with it - the measurements above assume them.
+    """
+
+    enabled: bool = True
+
+    # 'light' follows intentional motion closely and only suppresses dither;
+    # 'normal' is markedly heavier. Light is what the measurements above used.
+    mode: str = "light"
+
+    # Emitted points closer together than this are dropped. Removes repeated
+    # near-identical samples without touching the drawn shape.
+    min_step_m: float = 0.0015
+
+    # Step-length band edges that select alpha. Below step_small_m a sample is
+    # almost certainly quantisation noise; above step_large_m it is deliberate
+    # pen motion and should be followed nearly unfiltered.
+    step_small_m: float = 0.003
+    step_medium_m: float = 0.010
+    step_large_m: float = 0.025
+
+    # New-sample weight per band, ordered (small, medium, large, larger).
+    # Higher = follows the raw sample more closely.
+    alpha_light: tuple[float, float, float, float] = (0.50, 0.65, 0.78, 0.90)
+    alpha_normal: tuple[float, float, float, float] = (0.18, 0.32, 0.52, 0.72)
+
+    # Corner preservation. When the stroke direction turns sharply, alpha is
+    # raised to at least the value below so the filtered line does not cut the
+    # corner. Steps shorter than corner_min_step_m have too noisy a direction
+    # to test. cos is between the previous and current step vectors:
+    #   cos < 0.35  -> roughly a >70 degree turn
+    #   cos < 0.0   -> a reversal / cusp
+    #
+    # The cusp arm is the one that does real work. A >70 degree turn taken at a
+    # 4-10 mm step already gets a base alpha of 0.65, so corner_alpha_turn is
+    # nearly a no-op; a reversal jumps from 0.65 to 0.80, which is what keeps
+    # the apex of a 'v' or the bottom of a stem from being cut. trace_filter.py
+    # tests the cusp threshold before the turn threshold for that reason - see
+    # its docstring for why the reference implementation's ordering disables it.
+    corner_min_step_m: float = 0.004
+    corner_cos_turn: float = 0.35
+    corner_alpha_turn: float = 0.68
+    corner_cos_cusp: float = 0.0
+    corner_alpha_cusp: float = 0.80
+
+
 # -----------------------------------------------------------------------------
 # Root config (wrapper)
 # -----------------------------------------------------------------------------
@@ -911,6 +984,7 @@ class Config:
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
     two_point_anchor: TwoPointAnchorConfig = field(default_factory=TwoPointAnchorConfig)
     imu_degeneracy: IMUDegeneracyConfig = field(default_factory=IMUDegeneracyConfig)
+    trace_filter: TraceFilterConfig = field(default_factory=TraceFilterConfig)
 
 
 # Module-level singleton every pipeline stage imports.

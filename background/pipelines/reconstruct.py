@@ -42,6 +42,7 @@ from a serial port:
 import math
 
 from background.pipelines.config import cfg
+from background.pipelines.trace_filter import CausalTraceFilter
 from background.pipelines.postprocess import (
     IMUDegeneracyFallback,
     StrokePostprocessor,
@@ -486,6 +487,17 @@ class StrokeReconstructor:
             stroke = self._two_point_anchor.apply(stroke, uwb_points)
 
         stroke = self._postprocessor.process(stroke, uwb_points)
+
+        # Last, on the finished geometry every consumer sees. The fused trace
+        # carries far more direction reversal than the letters justify - most
+        # consecutive in-stroke samples land within a fraction of a millimetre
+        # of each other, and that dither reads as jitter rather than shape.
+        # Applied here rather than in the visualizer so the CSV and every
+        # downstream stage get the same points that are drawn.
+        if cfg.trace_filter.enabled and len(stroke['points']) >= 2:
+            smoothed = CausalTraceFilter().filter_points(stroke['points'])
+            if len(smoothed) >= 2:
+                stroke['points'] = smoothed
 
         self._closed_count += 1
         self._point_count += len(stroke['points'])

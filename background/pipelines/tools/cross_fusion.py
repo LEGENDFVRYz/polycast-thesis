@@ -21,6 +21,17 @@ built: kuru's IMU preprocessor emits quat + raw accel, while our ESKF reads
 than fake it, D swaps the one genuinely substitutable stage -- the
 acceleration path -- and is labelled a hybrid everywhere it appears.
 
+A second family runs the comparison from the opposite side. Instead of giving
+our fusion kuru's inputs, it takes away the IMU-derived mechanisms kuru does
+not have, to test whether ours are misfiring:
+
+    E1 ours, ZUPT off        is_static forced False
+    E2 ours, turn gate off   jerk forced 0.0
+    E3 ours, both off        combined
+
+Each is a single-variable change against control C. See AblationPreprocess for
+what each field actually drives, and for why `alpha_world` is excluded.
+
 A and C reproduce existing behaviour. If they do not look like what the
 visualizer already produces for a dataset, this harness is wrong and nothing
 may be concluded from B.
@@ -318,6 +329,65 @@ class OurPreprocess:
         return
 
 
+class AblationPreprocess(OurPreprocess):
+    """
+    Configuration E: our pipeline with one IMU-derived mechanism neutralised.
+
+    kuru reaches a legible trace without our per-sample stillness flag and
+    without our jerk-gated corner detector. That does not mean those mechanisms
+    are useless -- kuru runs its own ZUPT inside its EKF (ekf_fusion.py:151-169,
+    a variance test on raw accel), so the real difference is *where* stillness
+    is detected, not whether. What E tests is narrower and answerable: is our
+    version of each mechanism misfiring on this data?
+
+    Two fields reach fusion, and each has exactly one consumer:
+
+      is_static -> eskf.py:390  `_apply_stillness`, which fires ZUPT and, after
+                   `zupt_hard_reset_n` sustained samples, zeroes velocity
+                   outright. A false positive mid-stroke stalls the pen.
+
+      jerk      -> eskf.py:1074 `_update_turn_detection`. A corner must be both
+                   fast-rotating AND jerky; when armed it multiplies accel
+                   process noise by `turn_k_q` (updates.py:114), letting UWB
+                   sculpt shape harder at corners. Forcing jerk to 0 means the
+                   gate never arms, so sigma_a stays nominal throughout.
+
+    Deliberately NOT ablated: `alpha_world`. I previously listed it alongside
+    these two, which was wrong -- it is written to the CSV and the diagnostic
+    print and never read by the filter (eskf.py:1300, 1450). Ablating it would
+    produce a guaranteed-null panel and imply a variable that does not exist.
+
+    Everything else stays ours, so E is a single-variable change against
+    control C.
+    """
+
+    def __init__(self, disable_zupt: bool = False, disable_turn_gate: bool = False):
+        super().__init__()
+        self._disable_zupt = disable_zupt
+        self._disable_turn_gate = disable_turn_gate
+        self.name = 'ablation'
+
+    def imu(self, packet: dict) -> dict | None:
+        adapted = super().imu(packet)
+        if adapted is None or self.last_imu_event is None:
+            return None
+
+        event = dict(self.last_imu_event)
+
+        if self._disable_zupt:
+            # `_apply_stillness` early-returns on a falsy flag, so ZUPT never
+            # fires and the sustained-stillness velocity reset never triggers.
+            event['is_static'] = False
+
+        if self._disable_turn_gate:
+            # The corner test is `is_turning and is_jerky`; zero jerk makes the
+            # second term permanently false regardless of rotation rate.
+            event['jerk'] = 0.0
+
+        self.last_imu_event = event
+        return adapted
+
+
 class HybridAccelPreprocess(OurPreprocess):
     """
     Configuration D: kuru's acceleration path substituted into our event.
@@ -550,18 +620,18 @@ def print_table(dataset: str, results: list[RunResult]):
     print('=' * 78)
     print(f'  cross-fusion  |  dataset: {dataset}')
     print('=' * 78)
-    print(f'  {"cfg":<4}{"preprocess -> fusion":<26}{"strokes":>8}{"points":>8}'
+    print(f'  {"cfg":<5}{"preprocess -> fusion":<30}{"strokes":>8}{"points":>8}'
           f'{"init":>7}{"ink m":>9}{"bbox m":>9}')
     print('  ' + '-' * 74)
 
     for item in results:
         if item.error:
-            print(f'  {item.label:<4}{item.detail:<26}{"--":>8}{"--":>8}{"--":>7}'
+            print(f'  {item.label:<5}{item.detail:<30}{"--":>8}{"--":>8}{"--":>7}'
                   f'{"--":>9}{"--":>9}')
             continue
 
         init = '-' if item.init_index is None else str(item.init_index)
-        print(f'  {item.label:<4}{item.detail:<26}{len(item.strokes):>8}'
+        print(f'  {item.label:<5}{item.detail:<30}{len(item.strokes):>8}'
               f'{item.point_count:>8}{init:>7}'
               f'{item.ink_length_m():>9.2f}{item.bbox_diagonal_m():>9.3f}')
 
@@ -578,6 +648,7 @@ def print_table(dataset: str, results: list[RunResult]):
     print('  Counts are descriptive: they detect a broken run, not a better one.')
     print('  A and C are controls -- if they do not match the known output for')
     print('  this dataset, the harness is wrong and B proves nothing.')
+    print('  E1-E3 are single-variable ablations of C; compare each against C.')
     print('=' * 78)
 
 
@@ -590,8 +661,12 @@ def render(dataset: str, results: list[RunResult], out_path: Path) -> bool:
         print(f'  [plot] matplotlib unavailable ({error}); skipping PNG.')
         return False
 
-    figure, axes = plt.subplots(2, 2, figsize=(15, 10))
-    figure.suptitle(f'cross-fusion 2x2  |  {dataset}', fontsize=15)
+    columns = 2 if len(results) <= 4 else 4
+    rows = math.ceil(len(results) / columns)
+    figure, axes = plt.subplots(
+        rows, columns, figsize=(3.9 * columns, 3.4 * rows), squeeze=False
+    )
+    figure.suptitle(f'cross-fusion  |  {dataset}', fontsize=15)
 
     # Shared limits so the four panels are visually comparable at a glance.
     all_x = [x for item in results for xs, _ in item.strokes for x in xs]
@@ -603,8 +678,11 @@ def render(dataset: str, results: list[RunResult], out_path: Path) -> bool:
     else:
         xlim = ylim = None
 
+    for axis in axes.flat[len(results):]:
+        axis.axis('off')
+
     for axis, item in zip(axes.flat, results):
-        axis.set_title(f'{item.label}.  {item.detail}', fontsize=11)
+        axis.set_title(f'{item.label}.  {item.detail}', fontsize=10)
         axis.set_aspect('equal', adjustable='box')
         axis.grid(True, alpha=0.25, linewidth=0.5)
 
@@ -668,7 +746,19 @@ def main(argv: list[str] | None = None) -> int:
         run_kuru_fusion(packets, KuruPreprocess(), 'A', 'kuru -> kuru  (control)'),
         run_kuru_fusion(packets, OurPreprocess(), 'B', 'ours -> kuru  (TEST)'),
         run_our_fusion(packets, OurPreprocess(), 'C', 'ours -> ours  (control)'),
-        run_our_fusion(packets, HybridAccelPreprocess(), 'D', "kuru accel -> ours (hybrid)"),
+        run_our_fusion(packets, HybridAccelPreprocess(), 'D', 'kuru accel -> ours (hybrid)'),
+        run_our_fusion(
+            packets, AblationPreprocess(disable_zupt=True),
+            'E1', 'ours, ZUPT off',
+        ),
+        run_our_fusion(
+            packets, AblationPreprocess(disable_turn_gate=True),
+            'E2', 'ours, turn gate off',
+        ),
+        run_our_fusion(
+            packets, AblationPreprocess(disable_zupt=True, disable_turn_gate=True),
+            'E3', 'ours, both off',
+        ),
     ]
 
     print_table(csv_path.stem, results)

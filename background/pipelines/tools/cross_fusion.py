@@ -13,7 +13,13 @@ a 2x2:
     A  kuru preprocess -> kuru fusion    control (kuru baseline)
     B  ours preprocess -> kuru fusion    the cell under test
     C  ours preprocess -> ours fusion    control (our baseline)
-    D  kuru preprocess -> ours fusion    completes the square
+    D  kuru accel      -> ours fusion    hybrid; see HybridAccelPreprocess
+
+D is deliberately not "kuru preprocess -> ours fusion". That cell cannot be
+built: kuru's IMU preprocessor emits quat + raw accel, while our ESKF reads
+~20 keys including board-frame tip acceleration and contact substate. Rather
+than fake it, D swaps the one genuinely substitutable stage -- the
+acceleration path -- and is labelled a hybrid everywhere it appears.
 
 A and C reproduce existing behaviour. If they do not look like what the
 visualizer already produces for a dataset, this harness is wrong and nothing
@@ -312,6 +318,71 @@ class OurPreprocess:
         return
 
 
+class HybridAccelPreprocess(OurPreprocess):
+    """
+    Configuration D: kuru's acceleration path substituted into our event.
+
+    NOT "kuru preprocessing -> our fusion". That configuration does not exist
+    and cannot be built. kuru's IMUPreprocessor emits a 7-tuple
+    (quat + raw accel); our ESKF reads ~20 keys including `acc_board_tip`,
+    `contact`, `stroke_state`, `is_static`, `omega_world` and `jerk`. A thin
+    producer cannot fill a thick consumer's contract, and synthesising the
+    missing keys with our own IMU stage would just reproduce configuration C
+    while wearing kuru's label.
+
+    What IS substitutable is the acceleration path, because both pipelines
+    produce the same quantity in the same frame by different routes:
+
+      ours:  quat-rotate to world -> light EMA -> rigid-body tip correction
+             -> project onto board axes            = `acc_board_tip`
+      kuru:  clamp + deadband -> heading-locked rotation -> lever-arm
+             centripetal correction                = `get_wb_acceleration()`
+
+    kuru returns [wb_ax, wb_ay] already in board frame (imu_integrator.py:246),
+    and our `board_axes` is ("x","z"), so the two occupy the same slot.
+
+    This swaps that one stage and leaves every other field ours. It is a
+    hybrid, and the panel says so. It answers a narrower question than A-C:
+    "is our tip-projection route the weak link, or is the ESKF itself?"
+
+    Caveat worth knowing when reading the result: kuru's integrator returns
+    zeros until its heading locks (~250 ms of samples), so D starts from a
+    brief dead zone that our own path does not have.
+    """
+
+    name = 'hybrid'
+
+    def __init__(self):
+        super().__init__()
+        from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator
+        self._integrator = IMUIntegrator()
+
+    def imu(self, packet: dict) -> dict | None:
+        adapted = super().imu(packet)
+        if adapted is None or self.last_imu_event is None:
+            return None
+
+        event = self.last_imu_event
+
+        # Feed kuru's integrator the raw body-frame sample, exactly as kuru
+        # does -- its own preprocessor only normalises the quaternion.
+        board_accel = self._integrator.get_wb_acceleration(
+            np.asarray(event['quat'], dtype=float),
+            np.asarray(event['acc_sensor'], dtype=float),
+            ts=event.get('ts_hw'),
+        )
+
+        # Replace only the acceleration our ESKF integrates during ink. The
+        # high-pass variant is derived from the same source so the two stay
+        # consistent; kuru applies no high-pass, so it receives the same value.
+        substituted = dict(event)
+        substituted['acc_board_tip'] = (float(board_accel[0]), float(board_accel[1]))
+        substituted['acc_board_hp_tip'] = substituted['acc_board_tip']
+        self.last_imu_event = substituted
+
+        return adapted
+
+
 # -----------------------------------------------------------------------------
 # Fusion back ends
 # -----------------------------------------------------------------------------
@@ -403,13 +474,11 @@ def run_our_fusion(packets: list[dict], preprocess, label: str, detail: str) -> 
         result.error = f'pipeline construction failed: {error}'
         return result
 
-    kuru_front = preprocess.name == 'kuru'
-    if kuru_front:
+    if preprocess.name == 'kuru':
         # Our ESKF consumes the rich preprocessed event (board-frame tip accel,
         # contact substate, stillness). kuru's preprocessor emits none of that,
-        # so configuration D cannot be driven end-to-end without reimplementing
-        # our IMU stage on top of kuru's output -- which would no longer be
-        # kuru's preprocessing. Reported rather than faked.
+        # so a true kuru->ours cell cannot be driven end-to-end. See
+        # HybridAccelPreprocess for the substitutable subset that can.
         result.error = (
             'not runnable: our ESKF requires board-frame tip acceleration and '
             'contact substate, which kuru preprocessing does not produce'
@@ -599,7 +668,7 @@ def main(argv: list[str] | None = None) -> int:
         run_kuru_fusion(packets, KuruPreprocess(), 'A', 'kuru -> kuru  (control)'),
         run_kuru_fusion(packets, OurPreprocess(), 'B', 'ours -> kuru  (TEST)'),
         run_our_fusion(packets, OurPreprocess(), 'C', 'ours -> ours  (control)'),
-        run_our_fusion(packets, KuruPreprocess(), 'D', 'kuru -> ours'),
+        run_our_fusion(packets, HybridAccelPreprocess(), 'D', "kuru accel -> ours (hybrid)"),
     ]
 
     print_table(csv_path.stem, results)

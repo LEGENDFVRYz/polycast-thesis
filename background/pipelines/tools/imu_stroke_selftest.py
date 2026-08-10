@@ -17,19 +17,30 @@ matches what `ink_from_dead_reckoner` integrates during ink (eskf.py, via
 `_ink_from_dead_reckoner`), so a stroke that dead-reckons well is one the
 current in-stroke path can in principle reproduce.
 
-Each stroke is drawn twice, normalised to its own bounding box so letters of
+Each stroke is drawn normalised to its own bounding box, so letters of
 different sizes stay comparable:
 
-    grey   fused output   what the pipeline actually produced
+    grey   fused output   what our pipeline actually produced
     blue   IMU-only       double-integrated acc_board_tip
+    red    kuru           the same stroke through kuru's pipeline
+
+The red reference is load-bearing, and the tool is misleading without it.
+`drift` measures how far the IMU-only trace ends from the fused trace -- how
+much those two agree with *each other*. It says nothing about whether either
+resembles a letter, and both can agree while both are wrong. kuru renders this
+dataset legibly from the same recording, so its per-stroke output is the
+closest available stand-in for "what this letter should look like".
 
 Reading the panels:
 
-  * blue resembles the letter, grey does not
-        -> the IMU carried the shape and fusion lost it.
-  * grey resembles the letter, blue does not
+  * blue tracks red, grey does not
+        -> the IMU carried the shape and our fusion lost it.
+  * grey tracks red, blue does not
         -> UWB is carrying that letter; IMU alone is not sufficient there.
-  * neither resembles the letter
+  * blue and grey agree with each other but neither tracks red
+        -> our pipeline is consistently wrong; low drift here means agreement,
+           not correctness.
+  * none of the three resembles a letter
         -> that stroke's recording is genuinely poor; do not tune against it.
 
 Reported per stroke, all descriptive rather than scored:
@@ -76,6 +87,7 @@ class StrokeTrace:
     index: int
     fused: list = field(default_factory=list)      # [(x, y), ...]
     imu: list = field(default_factory=list)        # [(x, y), ...]
+    kuru: list = field(default_factory=list)       # [(x, y), ...] reference
     duration_s: float = 0.0
 
     @property
@@ -228,6 +240,41 @@ def collect_strokes(packets: list[dict]) -> list[StrokeTrace]:
     return [s for s in strokes if s.point_count > 1]
 
 
+def attach_kuru_reference(packets: list[dict], strokes: list[StrokeTrace]) -> bool:
+    """
+    Overlay kuru's per-stroke output as a known-legible reference.
+
+    Why this matters: `drift` measures how far the IMU-only trace ends from the
+    fused trace -- how much the two agree with each other. It says nothing
+    about whether either one looks like a letter, and the two can agree while
+    both being wrong. kuru renders this dataset legibly from the same file, so
+    its per-stroke trace is the closest thing available to ground truth for
+    "what should this letter look like".
+
+    Both pipelines segment on the same FSR contact signal and produce the same
+    stroke count in the same order, so stroke #N is the same pen-down segment
+    in both. That is asserted rather than assumed: on a count mismatch the
+    reference is dropped instead of silently pairing the wrong letters.
+    """
+
+    from background.pipelines.tools.cross_fusion import KuruPreprocess, run_kuru_fusion
+
+    result = run_kuru_fusion(packets, KuruPreprocess(), 'ref', 'kuru reference')
+    if result.error:
+        print(f'  [kuru] reference unavailable: {result.error}')
+        return False
+
+    if len(result.strokes) != len(strokes):
+        print(f'  [kuru] stroke count mismatch '
+              f'(kuru {len(result.strokes)} vs ours {len(strokes)}); '
+              f'reference dropped rather than risk pairing different letters.')
+        return False
+
+    for stroke, (xs, ys) in zip(strokes, result.strokes):
+        stroke.kuru = list(zip(xs, ys))
+    return True
+
+
 def print_table(dataset: str, strokes: list[StrokeTrace]):
     print()
     print('=' * 72)
@@ -265,11 +312,11 @@ def render(dataset: str, strokes: list[StrokeTrace], out_path: Path) -> bool:
     figure, axes = plt.subplots(
         rows, columns, figsize=(3.0 * columns, 3.3 * rows), squeeze=False
     )
-    figure.suptitle(
-        f'per-stroke IMU self-test  |  {dataset}\n'
-        'grey = fused output      blue = IMU-only (double-integrated)',
-        fontsize=13,
-    )
+    has_kuru = any(stroke.kuru for stroke in strokes)
+    legend = 'grey = fused output      blue = IMU-only (double-integrated)'
+    if has_kuru:
+        legend += '      red = kuru (reference)'
+    figure.suptitle(f'per-stroke IMU self-test  |  {dataset}\n{legend}', fontsize=13)
 
     for axis in axes.flat[len(strokes):]:
         axis.axis('off')
@@ -277,6 +324,7 @@ def render(dataset: str, strokes: list[StrokeTrace], out_path: Path) -> bool:
     for axis, stroke in zip(axes.flat, strokes):
         fused = _normalise(stroke.fused)
         imu = _normalise(stroke.imu)
+        kuru = _normalise(stroke.kuru)
 
         if fused:
             axis.plot([p[0] for p in fused], [p[1] for p in fused],
@@ -284,6 +332,10 @@ def render(dataset: str, strokes: list[StrokeTrace], out_path: Path) -> bool:
         if imu:
             axis.plot([p[0] for p in imu], [p[1] for p in imu],
                       color='#1f77d0', linewidth=1.6, solid_capstyle='round')
+        if kuru:
+            axis.plot([p[0] for p in kuru], [p[1] for p in kuru],
+                      color='#d62728', linewidth=1.5, alpha=0.85,
+                      solid_capstyle='round')
 
         axis.set_title(f'#{stroke.index}', fontsize=11)
         axis.set_aspect('equal', adjustable='box')
@@ -323,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         print('  no strokes found.')
         return 2
 
+    attach_kuru_reference(packets, strokes)
     print_table(csv_path.stem, strokes)
 
     out_path = Path(args.out) if args.out else (

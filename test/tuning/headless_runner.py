@@ -15,6 +15,7 @@ so they pick up any cfg patches applied before the call.
 """
 
 import re
+from background.pipelines.cleaner.unpacker import parse_packet_line
 from background.pipelines.config import cfg
 from background.pipelines.preprocess.imu import IMUPreprocessor
 from background.pipelines.preprocess.contact import ContactStateDetector
@@ -30,12 +31,23 @@ def parse_dataset(csv_path: str) -> list[dict]:
     """
     Parse a dataset CSV into normalized event dicts sorted by ts_hw.
 
-    CSV formats:
-      IMU: I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts_hw>  — 11 fields
-      UWB: U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts_hw>[,,,...]                  — 7+ fields
+    Line parsing is delegated to the pipeline's own `parse_packet_line`, which
+    is the single source of truth for the wire format and accepts both IMU
+    layouts:
 
-    Uses the same split logic as _tx1replay.py (re.split + empty-string filter)
-    to handle trailing commas in v2/v3 datasets.
+      IMU v2:  I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<gx>,<gy>,<gz>,<force>,<ts>
+      IMU v1:  I,<seq>,<qx>,<qy>,<qz>,<qw>,<ax>,<ay>,<az>,<force>,<ts>
+      UWB:     U,<seq>,<d0>,<d1>,<d2>,<d3>,<ts>
+
+    This previously had its own copy of the format that only accepted the
+    11-field legacy IMU layout. Every dataset in test/_datasets is v2 with
+    gyro, so all 3549 IMU lines of abcde_1 were silently dropped and only UWB
+    survived: with no contact signal the batch reported strokes=0 for every
+    dataset and produced blank plots. Delegating keeps the two in step when
+    the format changes again.
+
+    Trailing commas in v2/v3 datasets are stripped before parsing, since
+    `parse_packet_line` identifies layouts by field count.
     """
 
     events = []
@@ -44,33 +56,13 @@ def parse_dataset(csv_path: str) -> list[dict]:
             line = line.strip()
             if not line:
                 continue
-            parts = [p for p in _SPLIT_RE.split(line) if p]
-            if len(parts) < 2:
-                continue
-            t = parts[0]
-            try:
-                if t == 'I' and len(parts) == 11:
-                    events.append({
-                        'sensor':     'IMU',
-                        'packet_id':  int(parts[1]),
-                        'sample_idx': 0,
-                        'quat':  (float(parts[2]), float(parts[3]),
-                                  float(parts[4]), float(parts[5])),
-                        'acc':   (float(parts[6]), float(parts[7]), float(parts[8])),
-                        'force': float(parts[9]),
-                        'ts_hw': int(parts[10]),
-                    })
-                elif t == 'U' and len(parts) >= 7:
-                    events.append({
-                        'sensor':     'UWB',
-                        'packet_id':  int(parts[1]),
-                        'sample_idx': 0,
-                        'dists': (float(parts[2]), float(parts[3]),
-                                  float(parts[4]), float(parts[5])),
-                        'ts_hw': int(parts[6]),
-                    })
-            except (ValueError, IndexError):
-                continue
+
+            # Collapse whitespace/tab separators and drop empty fields so a
+            # trailing comma cannot change the field count.
+            normalized = ','.join(p for p in _SPLIT_RE.split(line) if p)
+            packet = parse_packet_line(normalized)
+            if packet is not None:
+                events.append(packet)
     events.sort(key=lambda e: e['ts_hw'])
     return events
 

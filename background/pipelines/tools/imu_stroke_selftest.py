@@ -20,26 +20,31 @@ current in-stroke path can in principle reproduce.
 Each stroke is drawn normalised to its own bounding box, so letters of
 different sizes stay comparable:
 
-    grey   fused output   what our pipeline actually produced
-    blue   IMU-only       double-integrated acc_board_tip
-    red    kuru           the same stroke through kuru's pipeline
+    grey   our fused output    what our pipeline actually produced
+    blue   our IMU-only        double-integrated acc_board_tip
+    red    kuru IMU-only       double-integrated get_wb_acceleration()
 
-The red reference is load-bearing, and the tool is misleading without it.
-`drift` measures how far the IMU-only trace ends from the fused trace -- how
-much those two agree with *each other*. It says nothing about whether either
-resembles a letter, and both can agree while both are wrong. kuru renders this
-dataset legibly from the same recording, so its per-stroke output is the
-closest available stand-in for "what this letter should look like".
+Blue and red are the comparison this tool exists for: the same double
+integration, the same reset points, the same zero initial velocity, applied to
+the same samples. Only the acceleration derivation differs. Neither involves
+UWB or any filter, so a difference between them is attributable to the IMU
+front end alone.
+
+`drift` in the table compares our IMU-only trace against our fused trace, i.e.
+how much those two agree with *each other*. It is not a correctness measure --
+both can agree while both are wrong -- so read it as a stability number and
+judge shape from the grid.
 
 Reading the panels:
 
-  * blue tracks red, grey does not
-        -> the IMU carried the shape and our fusion lost it.
-  * grey tracks red, blue does not
-        -> UWB is carrying that letter; IMU alone is not sufficient there.
-  * blue and grey agree with each other but neither tracks red
-        -> our pipeline is consistently wrong; low drift here means agreement,
-           not correctness.
+  * blue and red agree
+        -> both IMU front ends see the same motion; any pipeline difference
+           downstream is not coming from acceleration derivation.
+  * they diverge
+        -> the derivations genuinely disagree, and the one that better matches
+           the intended letter identifies the better front end.
+  * both drift far from grey
+        -> UWB is doing the work on that stroke; IMU alone is insufficient.
   * none of the three resembles a letter
         -> that stroke's recording is genuinely poor; do not tune against it.
 
@@ -240,39 +245,125 @@ def collect_strokes(packets: list[dict]) -> list[StrokeTrace]:
     return [s for s in strokes if s.point_count > 1]
 
 
-def attach_kuru_reference(packets: list[dict], strokes: list[StrokeTrace]) -> bool:
+def attach_kuru_imu_only(packets: list[dict], strokes: list[StrokeTrace]) -> bool:
     """
-    Overlay kuru's per-stroke output as a known-legible reference.
+    Overlay kuru's IMU dead-reckoning, integrated identically to ours.
 
-    Why this matters: `drift` measures how far the IMU-only trace ends from the
-    fused trace -- how much the two agree with each other. It says nothing
-    about whether either one looks like a letter, and the two can agree while
-    both being wrong. kuru renders this dataset legibly from the same file, so
-    its per-stroke trace is the closest thing available to ground truth for
-    "what should this letter look like".
+    This is an IMU-vs-IMU comparison, so it deliberately does NOT run kuru's
+    EKF: that output is fused with UWB and would not isolate the IMU. Instead
+    kuru's `IMUIntegrator.get_wb_acceleration()` is fed the same raw body-frame
+    samples and its board-frame output is double-integrated with the same
+    formula, the same reset points and the same zero initial velocity used for
+    our own trace.
 
-    Both pipelines segment on the same FSR contact signal and produce the same
-    stroke count in the same order, so stroke #N is the same pen-down segment
-    in both. That is asserted rather than assumed: on a count mismatch the
-    reference is dropped instead of silently pairing the wrong letters.
+    The only difference between the blue and red curves is therefore how
+    board-frame acceleration is derived:
+
+        ours  quat-rotate to world -> light EMA -> rigid-body tip correction
+              -> project onto board axes                    = acc_board_tip
+        kuru  clamp + deadband -> heading-locked rotation -> lever-arm
+              centripetal correction                        = get_wb_acceleration()
+
+    Stroke boundaries come from our pipeline for both curves, so panel #N is
+    the same pen-down segment in both and no pairing assumption is needed.
+
+    One asymmetry worth knowing when reading the result: kuru's integrator
+    returns zeros until its heading locks (imu_integrator.py:198-208), roughly
+    the first 250 ms of the recording. Its first stroke can therefore start
+    flat through no fault of the derivation.
     """
 
-    from background.pipelines.tools.cross_fusion import KuruPreprocess, run_kuru_fusion
+    from kuru_method.asynchronous_stream.imu_integrator import IMUIntegrator
 
-    result = run_kuru_fusion(packets, KuruPreprocess(), 'ref', 'kuru reference')
-    if result.error:
-        print(f'  [kuru] reference unavailable: {result.error}')
-        return False
+    preprocess = OurPreprocess()
+    integrator = IMUIntegrator()
 
-    if len(result.strokes) != len(strokes):
-        print(f'  [kuru] stroke count mismatch '
-              f'(kuru {len(result.strokes)} vs ours {len(strokes)}); '
-              f'reference dropped rather than risk pairing different letters.')
-        return False
+    # Rebuild the same stroke segmentation our own pass produced, keyed by the
+    # stroke index, so both curves are cut at identical pen-down boundaries.
+    by_index = {stroke.index: stroke for stroke in strokes}
+    current: StrokeTrace | None = None
+    was_active = False
+    stroke_number = 0
 
-    for stroke, (xs, ys) in zip(strokes, result.strokes):
-        stroke.kuru = list(zip(xs, ys))
-    return True
+    velocity = np.zeros(2)
+    position = np.zeros(2)
+
+    from background.pipelines.fusion.eskf import ESKF
+    from background.pipelines.preprocess.uwb.position import UWBPositionFilter
+    from background.pipelines.preprocess.uwb.trilateration import UWBSolver
+
+    fusion = ESKF()
+    solver = UWBSolver()
+    position_filter = UWBPositionFilter()
+
+    for packet in packets:
+        if packet['sensor'] == 'UWB':
+            preprocess.uwb(packet)
+            if preprocess.last_uwb_event is None:
+                continue
+            solved = solver.process_one(preprocess.last_uwb_event)
+            if not solved:
+                continue
+            positioned = position_filter.process_one(solved)
+            if positioned:
+                fusion.process_event(positioned)
+            continue
+
+        if packet['sensor'] != 'IMU':
+            continue
+
+        preprocess.imu(packet)
+        event = preprocess.last_imu_event
+        if not event:
+            continue
+
+        fused = fusion.process_event(event)
+        if not fused:
+            continue
+
+        active = bool(fused.get('stroke_active'))
+        x, y = fused.get('fused_x'), fused.get('fused_y')
+        if x is None or y is None or not (math.isfinite(x) and math.isfinite(y)):
+            continue
+
+        board_accel = integrator.get_wb_acceleration(
+            np.asarray(event['quat'], dtype=float),
+            np.asarray(event['acc_sensor'], dtype=float),
+            ts=event.get('ts_hw'),
+        )
+
+        if not active:
+            current = None
+            was_active = False
+            continue
+
+        if not was_active:
+            stroke_number += 1
+            current = by_index.get(stroke_number)
+            was_active = True
+            velocity = np.zeros(2)
+            position = np.array([float(x), float(y)])
+            if current is not None:
+                current.kuru = [(position[0], position[1])]
+            continue
+
+        if current is None:
+            continue
+
+        dt = event.get('dt_s')
+        if not isinstance(dt, (int, float)) or not math.isfinite(dt) or dt <= 0:
+            continue
+
+        ax, ay = float(board_accel[0]), float(board_accel[1])
+        if not (math.isfinite(ax) and math.isfinite(ay)):
+            ax = ay = 0.0
+
+        accel_vec = np.array([ax, ay])
+        position = position + velocity * dt + 0.5 * accel_vec * dt * dt
+        velocity = velocity + accel_vec * dt
+        current.kuru.append((float(position[0]), float(position[1])))
+
+    return any(stroke.kuru for stroke in strokes)
 
 
 def print_table(dataset: str, strokes: list[StrokeTrace]):
@@ -313,9 +404,9 @@ def render(dataset: str, strokes: list[StrokeTrace], out_path: Path) -> bool:
         rows, columns, figsize=(3.0 * columns, 3.3 * rows), squeeze=False
     )
     has_kuru = any(stroke.kuru for stroke in strokes)
-    legend = 'grey = fused output      blue = IMU-only (double-integrated)'
+    legend = 'grey = our fused output      blue = our IMU-only'
     if has_kuru:
-        legend += '      red = kuru (reference)'
+        legend += '      red = kuru IMU-only (same integration)'
     figure.suptitle(f'per-stroke IMU self-test  |  {dataset}\n{legend}', fontsize=13)
 
     for axis in axes.flat[len(strokes):]:
@@ -375,7 +466,7 @@ def main(argv: list[str] | None = None) -> int:
         print('  no strokes found.')
         return 2
 
-    attach_kuru_reference(packets, strokes)
+    attach_kuru_imu_only(packets, strokes)
     print_table(csv_path.stem, strokes)
 
     out_path = Path(args.out) if args.out else (

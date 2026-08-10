@@ -808,7 +808,7 @@ class TwoPointAnchorConfig:
     # Runs at pen-up on a finished stroke, so unlike every mid-stroke UWB
     # correction tried before it, it cannot fight the IMU while the letter is
     # being drawn.
-    enabled: bool = True
+    enabled: bool = False
 
     # Shorter strokes have not accumulated enough drift for the correction to
     # beat the UWB noise it would introduce.
@@ -851,7 +851,7 @@ class IMUDegeneracyConfig:
     #
     # Such a stroke is rebuilt from UWB. The result is noisier than a good IMU
     # stroke, but a noisy 'h' is legible where a flat line is not.
-    enabled: bool = True
+    enabled: bool = False
 
     # Anisotropy is minor/major principal axis: 0 is a line, 1 is round.
     # Measured across abcde_1 and abc_extralarge:

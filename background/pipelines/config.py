@@ -433,7 +433,8 @@ class FusionESKFConfig:
     #
     # Set False to restore the previous blended behaviour exactly. Ignored when
     # imu_only_mode is True, which is a diagnostic and takes precedence.
-    shape_mode: bool = True
+    # OG-BASELINE: was True. False restores the pre-shape_mode ESKF (e50b74b).
+    shape_mode: bool = False
 
     # Pen-down re-anchor distance cap. The existing snap uses
     # dead_reckoner.pen_down_snap_max_dist_m = 0.08, well under the measured
@@ -472,7 +473,8 @@ class FusionESKFConfig:
     # pen-down re-anchoring still puts strokes within ~4 cm - UWB's noise level.
     #
     # Requires shape_mode. Set False to restore the blended acceleration.
-    ink_from_dead_reckoner: bool = True
+    # OG-BASELINE: was True. False restores the blended acceleration path.
+    ink_from_dead_reckoner: bool = False
 
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
@@ -587,7 +589,8 @@ class FusionESKFConfig:
     # tracker was acting as a second position correction *within* a stroke rather
     # than a slow placement fix across strokes. 0.015 gives ~1.3 s - longer than a
     # stroke, so placement still converges but letter shape is left alone.
-    bias_uwb_alpha: float = 0.015
+    # OG-BASELINE: was 0.015.
+    bias_uwb_alpha: float = 0.055
     bias_decay:     float = 0.25
     bias_max_m:     float = 0.045
 
@@ -609,7 +612,8 @@ class FusionESKFConfig:
     # median 0.292 m/s with p90 0.550, so the old cap sat below the 90th percentile
     # of real motion and clipped every fast stroke segment. 1.00 still catches a
     # genuine runaway.
-    active_vel_cap_ms: float = 1.00
+    # OG-BASELINE: was 1.00.
+    active_vel_cap_ms: float = 0.36
     active_uwb_guard_enabled: bool = True
     # Tier B revised. The 0.060 attempt caused visible blooming and was based on a
     # bad inference: the radius was sized against a whole 14 cm letter, but the
@@ -618,7 +622,8 @@ class FusionESKFConfig:
     # enough that normal in-stroke IMU detail is not clipped every frame.
     # 0.030 gives that headroom over the original 0.022 while keeping the guard a
     # real safety net.
-    active_uwb_guard_radius_m: float = 0.030
+    # OG-BASELINE: was 0.030.
+    active_uwb_guard_radius_m: float = 0.022
     active_uwb_guard_alpha: float = 0.78
     active_uwb_guard_max_age_s: float = 0.85
 
@@ -629,7 +634,8 @@ class FusionESKFConfig:
     # with little restoring force, strokes bloomed past where they should stop.
     # 0.65 still relaxes the original 0.85 - which was absorbing the velocity Tier A
     # restored - but keeps a real brake on outward excursion.
-    active_uwb_outward_velocity_damping: float = 0.65
+    # OG-BASELINE: was 0.65.
+    active_uwb_outward_velocity_damping: float = 0.85
 
     # Mode-aware stationary-contact clamp.
     # Goal: if the marker tip is physically on the board but not truly moving,
@@ -925,7 +931,9 @@ class TraceFilterConfig:
     Keep the numerics aligned with it - the measurements above assume them.
     """
 
-    enabled: bool = True
+    # OG-BASELINE: was True. This filter postdates e50b74b, so it is off for
+    # a true baseline render.
+    enabled: bool = False
 
     # 'light' follows intentional motion closely and only suppresses dither;
     # 'normal' is markedly heavier. Light is what the measurements above used.

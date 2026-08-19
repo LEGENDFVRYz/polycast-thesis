@@ -250,6 +250,14 @@ class ESKF:
                 float(board_acceleration_hpf[0]),
                 float(board_acceleration_hpf[1]),
             ),
+            # The unfiltered tip acceleration, which is what ink_from_dead_reckoner
+            # actually integrates. The high-pass variant above has a ~1.3 s time
+            # constant - about one stroke - so it has already removed the
+            # stroke-scale content that a pen-up re-integration needs.
+            'acc_board_tip': (
+                float(board_acceleration_raw[0]),
+                float(board_acceleration_raw[1]),
+            ),
             'dt_s': float(dt_s),
             'vel': (float(self.state.velocity[0]), float(self.state.velocity[1])),
             'rel_pos': (float(self.state.position[0]), float(self.state.position[1])),

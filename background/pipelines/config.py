@@ -433,8 +433,7 @@ class FusionESKFConfig:
     #
     # Set False to restore the previous blended behaviour exactly. Ignored when
     # imu_only_mode is True, which is a diagnostic and takes precedence.
-    # OG-BASELINE: was True. False restores the pre-shape_mode ESKF (e50b74b).
-    shape_mode: bool = False
+    shape_mode: bool = True
 
     # Pen-down re-anchor distance cap. The existing snap uses
     # dead_reckoner.pen_down_snap_max_dist_m = 0.08, well under the measured
@@ -473,8 +472,7 @@ class FusionESKFConfig:
     # pen-down re-anchoring still puts strokes within ~4 cm - UWB's noise level.
     #
     # Requires shape_mode. Set False to restore the blended acceleration.
-    # OG-BASELINE: was True. False restores the blended acceleration path.
-    ink_from_dead_reckoner: bool = False
+    ink_from_dead_reckoner: bool = True
 
     # Process noise for acceleration.
     # Higher = filter admits IMU prediction uncertainty and lets UWB correct.
@@ -891,6 +889,54 @@ class IMUDegeneracyConfig:
     smoothing_window: int = 5
 
 
+# -----------------------------------------------------------------------------
+# Per-stroke velocity detrend (pen-up integration closure)
+# -----------------------------------------------------------------------------
+@dataclass(frozen=True)
+class VelocityDetrendConfig:
+    # Closes the velocity integration of a finished stroke.
+    #
+    # With ink_from_dead_reckoner on, in-stroke geometry is plain double
+    # integration of acc_board_tip. Nothing enforces the constraint the physics
+    # gives for free: a writing pen starts at rest and ends at rest. The ESKF
+    # zeroes velocity at pen-up, but that only fixes the next stroke's starting
+    # condition - the ink already drawn keeps its accumulated velocity error.
+    #
+    # A constant velocity error displaces position linearly in time, so the
+    # resulting ramp is about the size of the letter. Measured on abcde_1,
+    # stroke #1 ends at 0.168 m/s over 1.42 s, a 23.9 cm ramp across a 25.9 cm
+    # letter. That is why letters came out 1.84x and 0.55x their true extent.
+    #
+    # Subtracting strength * v_end * (t/T) from velocity before re-integrating
+    # removes the ramp and leaves genuine motion. Measured effect on mean
+    # |our span / kuru span - 1|: abcde_1 0.288 -> 0.197, abc_extralarge
+    # 0.633 -> 0.285, with ink length essentially unchanged.
+    #
+    # Necessarily a pen-up stage: v_end and T are both unknown until the stroke
+    # closes. A causal velocity leak was tested as a substitute and rejected -
+    # it damps real pen motion along with the error.
+    enabled: bool = True
+
+    # Fraction of the terminal velocity removed. 1.0 forces the stroke to end at
+    # exactly zero. Lower values suit a rig where the FSR releases slightly
+    # before the pen stops, leaving genuine residual motion at pen-up.
+    strength: float = 1.0
+
+    # Below this a stroke has not integrated long enough for the ramp to matter.
+    min_points: int = 8
+
+    # Guard against re-integrating a near-instantaneous stroke, where dt noise
+    # dominates the terminal velocity estimate.
+    min_duration_s: float = 0.10
+
+    # A terminal speed above this is not accumulated drift - either the pen was
+    # genuinely moving at pen-up or the samples are unreliable. Forcing a stop
+    # in that case would distort real motion, so the stroke is left alone.
+    # Handwriting peaks around 1 m/s; measured drift terminals here are
+    # 0.03-0.17 m/s.
+    max_terminal_velocity_ms: float = 0.60
+
+
 @dataclass(frozen=True)
 class PostprocessConfig:
     enabled: bool = False
@@ -933,7 +979,7 @@ class TraceFilterConfig:
 
     # OG-BASELINE: was True. This filter postdates e50b74b, so it is off for
     # a true baseline render.
-    enabled: bool = False
+    enabled: bool = True
 
     # 'light' follows intentional motion closely and only suppresses dither;
     # 'normal' is markedly heavier. Light is what the measurements above used.
@@ -990,6 +1036,7 @@ class Config:
     fusion_eskf: FusionESKFConfig = field(default_factory=FusionESKFConfig)
     stroke_cleaner: StrokeCleanerConfig = field(default_factory=StrokeCleanerConfig)
     postprocess: PostprocessConfig = field(default_factory=PostprocessConfig)
+    velocity_detrend: VelocityDetrendConfig = field(default_factory=VelocityDetrendConfig)
     two_point_anchor: TwoPointAnchorConfig = field(default_factory=TwoPointAnchorConfig)
     imu_degeneracy: IMUDegeneracyConfig = field(default_factory=IMUDegeneracyConfig)
     trace_filter: TraceFilterConfig = field(default_factory=TraceFilterConfig)

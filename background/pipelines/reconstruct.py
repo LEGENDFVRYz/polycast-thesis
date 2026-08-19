@@ -44,6 +44,7 @@ import math
 from background.pipelines.config import cfg
 from background.pipelines.trace_filter import CausalTraceFilter
 from background.pipelines.postprocess import (
+    StrokeVelocityDetrend,
     IMUDegeneracyFallback,
     StrokePostprocessor,
     TwoPointStrokeAnchor,
@@ -330,6 +331,7 @@ class StrokeReconstructor:
         self._current: dict | None = None
         self._closed_count = 0
         self._point_count = 0  # total points across all closed strokes
+        self._velocity_detrend = StrokeVelocityDetrend()
         self._imu_cleaner = StrokeFinalizationIMUCleaner()
         self._postprocessor = StrokePostprocessor()
         self._uwb_buffer = UWBStrokeBuffer()
@@ -417,6 +419,9 @@ class StrokeReconstructor:
         payload = event.get('imu_cleaner') or {}
         return {
             'acc_board_hp_tip': payload.get('acc_board_hp_tip', (0.0, 0.0)),
+            # Carried for StrokeVelocityDetrend, which must re-integrate the same
+            # unfiltered signal the dead reckoner drew the ink from.
+            'acc_board_tip': payload.get('acc_board_tip', (0.0, 0.0)),
             'dt_s': payload.get('dt_s'),
             'vel': payload.get('vel'),
             'rel_pos': payload.get('rel_pos'),
@@ -467,6 +472,15 @@ class StrokeReconstructor:
         stroke = self._current
         stroke['closed'] = True
         self._current = None
+
+        # First of all, because it consumes the per-sample record that
+        # _imu_cleaner discards, and because every stage after it reasons about
+        # stroke shape. The dead reckoner integrates from rest at pen-down but
+        # nothing closes the integration at pen-up, so the stroke carries a
+        # linear velocity ramp roughly the size of the letter. Removing it here
+        # means the anchor below fits its t^2 drift model to a shape whose
+        # linear error is already gone.
+        stroke = self._velocity_detrend.apply(stroke)
 
         stroke = self._imu_cleaner.clean(stroke)
 

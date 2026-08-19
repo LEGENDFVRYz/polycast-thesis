@@ -49,6 +49,7 @@ from background.pipelines.cleaner.normalizer import StreamNormalizer
 from background.pipelines.cleaner.time_alignment import TimeAlignLayer
 from background.pipelines.cleaner.unpacker import SerialStreamer
 from background.pipelines.config import cfg
+from background.pipelines import modes
 from background.pipelines.fusion.eskf import ESKF
 from background.pipelines.module_output import ModuleRunOutput
 from background.pipelines.preprocess.contact import ContactStateDetector
@@ -433,8 +434,15 @@ class VisualizerWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
+        # The mode belongs in the title so a screenshot carries the
+        # configuration that produced it - published output is otherwise
+        # indistinguishable between stages.
+        summary = modes.active_summary()
+        mode_name = (
+            modes.MODES[summary['matches']].key if summary['matches'] else 'custom'
+        )
         self.setWindowTitle(
-            f'PolyCast Visualizer  -  fusion=eskf  -  {cfg.serial.port}'
+            f'PolyCast Visualizer  -  mode={mode_name}  -  {cfg.serial.port}'
         )
         self.resize(1280, 700)
 

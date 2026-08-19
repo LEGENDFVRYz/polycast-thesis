@@ -42,6 +42,7 @@ from a serial port:
 import math
 
 from background.pipelines.config import cfg
+from background.pipelines import modes
 from background.pipelines.trace_filter import CausalTraceFilter
 from background.pipelines.postprocess import (
     StrokeVelocityDetrend,
@@ -569,7 +570,7 @@ def _run_live():
 
     print("=" * 60)
     print(f"  [TEST] MODULE 8 LIVE: Stroke Reconstructor on {port}")
-    print("  Fusion engine : eskf")
+    print(f"  {modes.banner()}")
     print("  Draw strokes with pen-lifts between. Ctrl+C to stop.")
     print("=" * 60)
 

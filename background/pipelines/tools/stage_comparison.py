@@ -65,6 +65,7 @@ from pathlib import Path
 import numpy as np
 
 from background.pipelines.config import cfg
+from background.pipelines import modes
 from background.pipelines.tools.board_overlay import OverlayLayer, render_overlay
 from background.pipelines.tools.cross_fusion import (
     OurPreprocess,
@@ -74,48 +75,11 @@ from background.pipelines.tools.cross_fusion import (
 )
 
 
-@dataclass(frozen=True)
-class Stage:
-    """One historical configuration, expressed as flag overrides."""
-
-    key: str
-    label: str
-    colour: str
-    fusion: dict = field(default_factory=dict)
-    postprocess_enabled: bool = False
-    trace_filter_enabled: bool = False
-    velocity_detrend_enabled: bool = False
-
-
-STAGES = [
-    Stage(
-        key='og',
-        label='OG blended ESKF',
-        colour='#1f77d0',
-        fusion={'shape_mode': False, 'ink_from_dead_reckoner': False},
-    ),
-    Stage(
-        key='shape',
-        label='SHAPE (UWB place + IMU path)',
-        colour='#2ca02c',
-        fusion={'shape_mode': True, 'ink_from_dead_reckoner': True},
-    ),
-    Stage(
-        key='shape_pp',
-        label='SHAPE + pen-up correction',
-        colour='#ff7f0e',
-        fusion={'shape_mode': True, 'ink_from_dead_reckoner': True},
-        postprocess_enabled=True,
-        trace_filter_enabled=True,
-        velocity_detrend_enabled=True,
-    ),
-    Stage(
-        key='live',
-        label='LIVE-ONLY (no pen-up stage)',
-        colour='#d62728',
-        fusion={'shape_mode': True, 'ink_from_dead_reckoner': True},
-    ),
-]
+# Stage definitions live in `background/pipelines/modes.py`, which is also what
+# `POLYCAST_MODE` selects at runtime. Keeping one registry means a stage cannot
+# mean one thing here and another when the pipeline is actually run.
+Stage = modes.PipelineMode
+STAGES = list(modes.MODES.values())
 
 
 @dataclass
@@ -163,43 +127,9 @@ class StrokeTrace:
 
 
 def _override(stage: Stage):
-    """
-    Apply a stage's flags to the frozen config, returning a restore callback.
+    """Apply a stage's flags, returning a restore callback. See modes.apply."""
 
-    `object.__setattr__` is the only way past the frozen dataclass, and every
-    pipeline module reads `cfg` at call time, so the override takes effect
-    without reimporting anything.
-    """
-
-    saved = {
-        'fusion_eskf': cfg.fusion_eskf,
-        'postprocess': cfg.postprocess,
-        'trace_filter': cfg.trace_filter,
-    }
-    detrend = getattr(cfg, 'velocity_detrend', None)
-    if detrend is not None:
-        saved['velocity_detrend'] = detrend
-
-    object.__setattr__(cfg, 'fusion_eskf', dataclasses.replace(cfg.fusion_eskf, **stage.fusion))
-    object.__setattr__(
-        cfg, 'postprocess',
-        dataclasses.replace(cfg.postprocess, enabled=stage.postprocess_enabled),
-    )
-    object.__setattr__(
-        cfg, 'trace_filter',
-        dataclasses.replace(cfg.trace_filter, enabled=stage.trace_filter_enabled),
-    )
-    if detrend is not None:
-        object.__setattr__(
-            cfg, 'velocity_detrend',
-            dataclasses.replace(detrend, enabled=stage.velocity_detrend_enabled),
-        )
-
-    def restore():
-        for name, value in saved.items():
-            object.__setattr__(cfg, name, value)
-
-    return restore
+    return modes.apply(stage)
 
 
 def run_stage(packets: list[dict], stage: Stage) -> list[StrokeTrace]:
@@ -441,7 +371,18 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('dataset', nargs='?', help='dataset name, or omit with --all')
     parser.add_argument('--all', action='store_true', help='run the default set')
     parser.add_argument('--out', default=None, help='output PNG path')
+    parser.add_argument(
+        '--mode', default=None,
+        help='comma-separated mode keys to compare (default: all). '
+             'Valid: ' + ', '.join(modes.MODES),
+    )
     args = parser.parse_args(argv)
+
+    if args.mode:
+        global STAGES
+        # modes.get raises with the valid keys listed, which is the behaviour
+        # wanted here too - a typo must not silently compare the wrong stages.
+        STAGES = [modes.get(key.strip()) for key in args.mode.split(',') if key.strip()]
 
     if not args.dataset and not args.all:
         parser.error('give a dataset name or --all')

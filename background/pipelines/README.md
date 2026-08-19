@@ -122,6 +122,114 @@ whole finished stroke at once instead of one event at a time.
 
 Gated by `cfg.postprocess.enabled` (**`False` by default**).
 
+## Config layout
+
+`config.py` is a package. Everything is re-exported from `__init__.py`, so
+`from background.pipelines.config import cfg` is unchanged.
+
+| file | holds |
+| --- | --- |
+| `sensors.py` | serial, IMU, contact, UWB, anchors, marker |
+| `fusion.py` | pipeline constraints, mode gain table, dead reckoner, ESKF |
+| `postprocess.py` | the six pen-up stages |
+| `_meta.py` | the `inert()` field marker |
+| `__init__.py` | the `Config` wrapper, the `cfg` singleton, `POLYCAST_MODE` |
+
+Anchor corners are defined once as `a0`-`a3`; `positions` derives from them.
+Editing a corner used to take effect for the depth probe reading `a0` and be
+silently ignored by the solver reading a separately-written `positions`.
+
+## Config fields that are switched on but never read
+
+Some values in `config.py` are read by code the shipped configuration never
+reaches. They are not dead - each has a live consumer - but under the default
+mode the branch that reads them does not run, so **editing them changes
+nothing about the output**.
+
+This has cost real debugging time: a value gets tuned, the render is
+unchanged, and the conclusion drawn is "that parameter does not matter" when
+the truth is "that parameter was never read".
+
+Such fields are marked with `inert(reason, default=...)`, which behaves exactly
+like a normal default but records why it is unreachable. To list them:
+
+```
+python -m background.pipelines.tools.verify_modes --reachability
+```
+
+Currently 24 fields across four causes:
+
+| fields | why it never runs |
+| --- | --- |
+| 12 `contact_static_lock_*` | the gate's speed/accel/omega thresholds are not met during a stroke |
+| 8 guard / bias / cap | `shape_mode` returns early at `eskf.py:306` and skips drag and the cap at `eskf.py:363` |
+| 3 `turn_*` | `turn_jerk_threshold=1200` vs a measured max jerk of 481.8 |
+| 1 `innov_recovery_n` | the innovation reject streak never gets that long |
+
+They are marked rather than deleted because each becomes live again under a
+different mode (`POLYCAST_MODE=fused`) or on data that trips its gate.
+
+## Selecting a pipeline mode
+
+The pipeline has shipped several fusion / post-processing designs. Each is a set
+of flags, so any of them can be run against today's code without checking out an
+old commit. `background/pipelines/modes.py` is the registry.
+
+PowerShell:
+
+```
+$env:POLYCAST_MODE="fused"; python -m background.pipelines.visualizer
+$env:POLYCAST_MODE=$null            # back to the config.py default
+```
+
+Bash / Git Bash:
+
+```
+POLYCAST_MODE=fused python -m background.pipelines.visualizer
+```
+
+Or set it once in `.env` at the project root:
+
+```
+POLYCAST_MODE=imu-shape+pp2
+```
+
+A variable set in the shell beats `.env`, so a one-off run can always override
+the checked-in default without editing the file. `.env` needs `python-dotenv`
+installed; without it the file is ignored and only the shell form works.
+
+| key | reproduces | fusion | pen-up stages |
+| --- | --- | --- | --- |
+| `fused` | `8883b96` | UWB corrects during ink | none |
+| `imu-shape` | `5e6acae` | UWB places at pen-down, IMU draws | trace filter (display only) |
+| `imu-shape+pp` | `b7b6aec` | same | two-point anchor |
+| `imu-shape+pp2` | `30ad840` | same | velocity detrend + trace filter |
+| `imu-only` | - | UWB never corrects (diagnostic) | none |
+
+`imu-shape+pp2` is what `config.py` ships. Leaving `POLYCAST_MODE` unset uses the
+file's own values and changes nothing.
+
+An unknown key is a hard error listing the valid ones, rather than a silent
+fallback - a typo that quietly ran the wrong stage would invalidate whatever it
+was used to measure.
+
+The active configuration is printed at startup and shown in the visualizer
+window title, so a screenshot carries the configuration that produced it. That
+report is read from `cfg`, not from the requested mode, so a hand-edited config
+shows as `CUSTOM` instead of claiming a preset it no longer matches.
+
+Each mode's flags are checked against the commit it names:
+
+```
+python -m background.pipelines.tools.verify_modes
+```
+
+To compare stages side by side on one recording:
+
+```
+python -m background.pipelines.tools.stage_comparison abcdefgh_low --mode fused,imu-shape+pp2
+```
+
 ## Stage 0: `config.py`
 
 One `Config` dataclass tree (`cfg = Config()`), frozen, holding every tuned

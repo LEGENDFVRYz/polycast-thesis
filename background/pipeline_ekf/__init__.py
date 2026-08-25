@@ -37,6 +37,7 @@ from background.pipeline_ekf.imu_integrator import IMUIntegrator, quat_to_rotmat
 from background.pipeline_ekf.range_kf import PerAnchorRangeKFBank
 from background.pipeline_ekf.contact import ForceContactDetector
 from background.pipeline_ekf.preprocessor import UWBPreprocessor, IMUPreprocessor
+from background.pipeline_ekf.tracker import StrokeTracker, TrackerDiagnostics
 
 __all__ = [
     'AsyncEKFFusionEngine',
@@ -50,4 +51,6 @@ __all__ = [
     'ForceContactDetector',
     'UWBPreprocessor',
     'IMUPreprocessor',
+    'StrokeTracker',
+    'TrackerDiagnostics',
 ]

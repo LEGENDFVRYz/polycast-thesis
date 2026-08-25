@@ -400,6 +400,79 @@ def draw_segment(x0, y0, x1, y1, p, meter_segment=None, source="tracker", state=
     })
 
 
+def repaint_stroke(first_seq, points, p, source="postprocess", state="CONTACT_DRAWING"):
+    """Erase the segments drawn from ``first_seq`` onward, then draw ``points``.
+
+    The ESKF pipeline can only run its postprocess stages once a stroke ends,
+    so the live ink is already on the canvas by the time the corrected shape
+    exists.  This repaints that one stroke in place: the segments recorded from
+    ``first_seq`` are painted over in white and dropped from the coordinate
+    cache, and the corrected polyline is drawn in their place.
+
+    Erasing works because the canvas is an "L" image on a white ground, so
+    white is a true background fill rather than a colour.  Any earlier stroke
+    that shares pixels with this one would be nicked by the erase; strokes are
+    repainted the moment they close, so the exposure is one stroke deep and
+    only where they actually overlap.
+
+    ``points`` are master-canvas coordinates, matching ``draw_segment``.
+    Callers MUST already hold image_lock (non-reentrant).
+
+    Returns the number of segments replaced.
+    """
+    global stroke_seq
+
+    width_px = max(1, int(p * AVG_SCALE * STROKE_FACTOR))
+
+    # Erase in reverse so overlapping segments of this same stroke lift cleanly.
+    stale = [s for s in stroke_segments if s["seq"] >= first_seq]
+    for seg in reversed(stale):
+        mj = seg["mjpeg"]
+        erase_px = max(1, int(seg["p"] * AVG_SCALE * STROKE_FACTOR))
+        # Erase one pixel wider than the original: the rasteriser antialiases
+        # nothing here, but an exactly-matched width can leave a fringe when
+        # successive segments meet at an angle.
+        draw.line([(mj["x0"], mj["y0"]), (mj["x1"], mj["y1"])],
+                  fill=255, width=erase_px + 1)
+    if stale:
+        del stroke_segments[-len(stale):]
+
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        px0, py0 = logical_to_pixel(x0, y0)
+        px1, py1 = logical_to_pixel(x1, y1)
+        draw.line([(px0, py0), (px1, py1)], fill=0, width=width_px)
+
+        stroke_seq += 1
+        stroke_segments.append({
+            "seq": stroke_seq,
+            "p": float(p),
+            "source": str(source) if source is not None else None,
+            "state": str(state) if state is not None else None,
+            "canvas": {
+                "x0": int(round(float(x0))), "y0": int(round(float(y0))),
+                "x1": int(round(float(x1))), "y1": int(round(float(y1))),
+            },
+            "mjpeg": {"x0": px0, "y0": py0, "x1": px1, "y1": py1},
+            "meters": None,
+        })
+
+    # Bump even when nothing was drawn so the MJPEG encoder still sees the
+    # erase as a canvas change.
+    if not points:
+        stroke_seq += 1
+
+    return len(stale)
+
+
+def next_stroke_seq():
+    """Return the seq the next ``draw_segment`` call will use.
+
+    Recorded at pen-down so ``repaint_stroke`` knows where the live stroke
+    begins.  Callers MUST already hold image_lock.
+    """
+    return stroke_seq + 1
+
+
 def generate_frames():
     """Yield the cached MJPEG frame only when the canvas is dirty.
     Sends a keepalive frame every 5 s when the canvas is idle to keep the

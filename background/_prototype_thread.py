@@ -7,7 +7,9 @@ from config import prototype_config, CONN_LOG, ERROR_LOG, CANVAS_WIDTH, CANVAS_H
 from app.utils.utils import log_message
 
 # --- GRAPHICS ENGINE ---
-from background.image_generator import draw_segment, image_lock, logical_to_pixel
+from background.image_generator import (
+    draw_segment, image_lock, logical_to_pixel, repaint_stroke, next_stroke_seq,
+)
 
 # --- LOGIC ENGINE: stroke-coordinate provider ---
 # Two pipelines ship side by side, each with its own tracker exposing the same
@@ -94,6 +96,14 @@ class PrototypeSerialThread(threading.Thread):
         self._last_draw_m = None        # last rendered output coordinate in metres
         self._last_coord_source = None
         self.xpressure = 8              # temporary
+
+        # Pen-up repaint (ESKF pipeline only).  The postprocess stages run when
+        # a stroke closes, so the corrected shape arrives after its live ink is
+        # already drawn.  _live_stroke_first_seq marks where the live stroke
+        # starts on the canvas so repaint_stroke can replace exactly that span.
+        # None when no stroke is open.
+        self._repaint_enabled = hasattr(self.tracker, 'drain_closed_strokes')
+        self._live_stroke_first_seq = None
 
         # Hardware Config
         self.port = prototype_config.SERIAL_PORT
@@ -244,6 +254,51 @@ class PrototypeSerialThread(threading.Thread):
         self._last_draw_m = None
         self.last_point = None
         self._last_coord_source = None
+
+    def _repaint_closed_strokes(self):
+        """Replace live ink with the postprocessed shape for closed strokes.
+
+        Only the ESKF pipeline queues these; the EKF tracker has no
+        drain_closed_strokes and never reaches here.
+        """
+        try:
+            closed = self.tracker.drain_closed_strokes()
+        except Exception as e:
+            print(f"[REPAINT] drain failed: {e}")
+            return
+        if not closed:
+            return
+
+        first_seq = self._live_stroke_first_seq
+        # Nothing of this stroke was drawn (too short, or all points gated),
+        # so there is no live ink to replace and no anchor to replace it at.
+        self._live_stroke_first_seq = None
+        if first_seq is None:
+            return
+
+        # Only the last stroke's ink is still identifiable on the canvas: the
+        # anchor tracks one stroke at a time.  In practice a drain yields one
+        # stroke, because it runs every packet.
+        stroke = closed[-1]
+        pts_m = [(p[0], p[1]) for p in stroke.get('points', ())]
+        if len(pts_m) < 2:
+            return
+
+        pts_px = [self._map_meters_to_pixels(mx, my) for mx, my in pts_m]
+        try:
+            with image_lock:
+                replaced = repaint_stroke(first_seq, pts_px, self.xpressure,
+                                          source='postprocess',
+                                          state='CONTACT_DRAWING')
+        except Exception as e:
+            print(f"[REPAINT] failed: {e}")
+            return
+
+        if not IS_PROD:
+            shift = (stroke.get('velocity_detrend') or {}).get('endpoint_shift_m')
+            print(f"[REPAINT] stroke {stroke.get('stroke_id')}: "
+                  f"{replaced} live segs -> {len(pts_px) - 1} corrected"
+                  + (f" | endpoint shift {shift} m" if shift is not None else ""))
 
     def run(self):
         while not self.stop_event.is_set():
@@ -440,6 +495,10 @@ class PrototypeSerialThread(threading.Thread):
         if draw_cmd is not None:
             x0, y0, x1, y1, pressure, meter_seg, src, state, prev_m, cx_m, cy_m = draw_cmd
             with image_lock:
+                # Remember where this stroke's ink begins before the first
+                # segment lands, so the pen-up repaint knows what to replace.
+                if self._repaint_enabled and self._live_stroke_first_seq is None:
+                    self._live_stroke_first_seq = next_stroke_seq()
                 draw_segment(x0, y0, x1, y1, pressure,
                              meter_segment=meter_seg,
                              source=src, state=state)
@@ -451,6 +510,14 @@ class PrototypeSerialThread(threading.Thread):
                     f"px({x0},{y0}) → ({x1},{y1}) "
                     f"[{state}]"
                 )
+
+        # --- STEP 3b: PEN-UP REPAINT (ESKF pipeline only) ---
+        # A stroke that just closed has been through the postprocess chain, so
+        # replace its live ink with the corrected polyline.  Drained every
+        # packet: the tracker queues closed strokes, and leaving them queued
+        # would let the correction go stale behind the next stroke's ink.
+        if self._repaint_enabled:
+            self._repaint_closed_strokes()
 
         # --- STEP 4: BROADCAST (Web) — rate-limited so the EKF never starves ---
         if self.ws_server and in_contact and px is not None and py is not None:

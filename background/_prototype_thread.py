@@ -9,9 +9,28 @@ from app.utils.utils import log_message
 # --- GRAPHICS ENGINE ---
 from background.image_generator import draw_segment, image_lock, logical_to_pixel
 
-# --- LOGIC ENGINE: EKF blue-trace stroke-coordinate provider ---
-# Drop tracker.py into background/pipelines/tracker.py.
-from background.pipelines.tracker import StrokeTracker
+# --- LOGIC ENGINE: stroke-coordinate provider ---
+# Two pipelines ship side by side, each with its own tracker exposing the same
+# get_bbox()/process_packet()/reset() interface:
+#
+#   background.pipeline_ekf.tracker  6-state EKF   (the blue-trace path this
+#                                                   thread has always used)
+#   background.pipelines.tracker     ESKF          (shape-mode + postprocess)
+#
+# Select with POLYCAST_PIPELINE=ekf|eskf.  Default stays on the EKF so the
+# app's behaviour is unchanged by the split.
+import os as _os
+
+_PIPELINE = _os.environ.get('POLYCAST_PIPELINE', 'ekf').strip().lower()
+if _PIPELINE == 'eskf':
+    from background.pipelines.tracker import StrokeTracker
+elif _PIPELINE == 'ekf':
+    from background.pipeline_ekf.tracker import StrokeTracker
+else:
+    raise ValueError(
+        f"POLYCAST_PIPELINE={_PIPELINE!r} is not a known pipeline; "
+        f"use 'ekf' or 'eskf'."
+    )
 
 # --- ONLINE TRAIL SMOOTHER (mirrors main_ekf.py's causal 5-point WMA) ---
 from kuru_method.asynchronous_stream.trail_smoother import TrailSmoother

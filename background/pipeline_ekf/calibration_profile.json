@@ -1,0 +1,22 @@
+{
+  "source": "derive_calibration.py",
+  "sigma_los_per_anchor": [
+    0.021446108687178445,
+    0.02732739875820664,
+    0.026386330191782603,
+    0.03292100020899598
+  ],
+  "sigma_los_n_samples": 3212,
+  "zupt_var_thresh": 0.18386186685789144,
+  "zupt_n_samples": 2678,
+  "sigma_bias_mps2_rt_s": 0.005,
+  "sigma_acc_mps2_diagnostic": 0.1641817132537153,
+  "fsr_thresh_enter": 970.5625,
+  "fsr_thresh_exit": 151.61357318548042,
+  "fsr_otsu_split": 970.5625,
+  "fsr_idle_median": 0.0,
+  "fsr_touch_median": 2145.0,
+  "sigma_idle": 65.80678659274021,
+  "sigma_touch": 164.19026667274716,
+  "n_samples": 15368
+}

@@ -21,6 +21,10 @@ __pycache__/
 
 # Generated Frames or Notes
 docs/
+!docs/media/
+docs/media/*
+!docs/media/prototype.webm
+!docs/media/setup.webp
 archive/
 instance/
 app/static/gallery_images/

@@ -48,7 +48,7 @@ there if you came for the sensor fusion work.
 
 ### Hardware
 
-![Prototype](docs/media/prototype.webm)
+![Prototype](docs/media/prototype.gif)
 
 The full live system needs the physical rig:
 

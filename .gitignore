@@ -24,6 +24,7 @@ docs/
 !docs/media/
 docs/media/*
 !docs/media/prototype.webm
+!docs/media/prototype.gif
 !docs/media/setup.webp
 archive/
 instance/

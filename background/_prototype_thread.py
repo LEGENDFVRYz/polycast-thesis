@@ -11,16 +11,9 @@ from background.image_generator import (
     draw_segment, image_lock, logical_to_pixel, repaint_stroke, next_stroke_seq,
 )
 
-# --- LOGIC ENGINE: stroke-coordinate provider ---
-# Two pipelines ship side by side, each with its own tracker exposing the same
-# get_bbox()/process_packet()/reset() interface:
-#
-#   background.pipeline_ekf.tracker  6-state EKF   (the blue-trace path this
-#                                                   thread has always used)
+# --- LOGIC ENGINE ---
+#   background.pipeline_ekf.tracker  6-state EKF   (the blue-trace path this thread has always used)
 #   background.pipelines.tracker     ESKF          (shape-mode + postprocess)
-#
-# Select with POLYCAST_PIPELINE=ekf|eskf.  Default stays on the EKF so the
-# app's behaviour is unchanged by the split.
 import os as _os
 
 _PIPELINE = _os.environ.get('POLYCAST_PIPELINE', 'ekf').strip().lower()
@@ -34,11 +27,8 @@ else:
         f"use 'ekf' or 'eskf'."
     )
 
-# --- ONLINE TRAIL SMOOTHER (mirrors main_ekf.py's causal 5-point WMA) ---
-from kuru_method.asynchronous_stream.trail_smoother import TrailSmoother
-
-# --- BENCHMARK (opt-in via BENCHMARK=1 env var) ---
-from benchmark import get_logger as _get_bm_logger
+# --- ONLINE TRAIL SMOOTHER (causal 5-point WMA, display only) ---
+from background.trail_smoother import TrailSmoother
 
 # Relocation break guard: matches AUTO_BREAK_RELOCATION / RELOC_SEGMENT_M in main_ekf.py.
 # Inserts a stroke break when the smoothed tip jumps > 4.5 cm in one IMU step
@@ -47,9 +37,7 @@ _RELOC_SEGMENT_M = 0.045
 
 # Bounded queue between the serial reader thread and the EKF consumer thread.
 # Sized to absorb a short EKF stall (~1 s of IMU traffic at 100 Hz) without
-# unbounded memory growth. When the consumer falls behind we drop the OLDEST
-# packet so the worker stays close to live data instead of replaying a stale
-# backlog — essential on the Raspberry Pi where the EKF can't always keep up.
+# unbounded memory growth.
 _PACKET_QUEUE_MAX = 256
 
 # Cap WebSocket broadcast frequency on the consumer hot path. The browser
@@ -91,17 +79,12 @@ class PrototypeSerialThread(threading.Thread):
         self.serial_conn = None
         self.tracker = StrokeTracker()  # EKF fusion + calibrated pen-tip XY
         self._bm = _get_bm_logger()     # Benchmark logger (no-op when BENCHMARK != 1)
-        self.smoother = TrailSmoother() # 5-point causal WMA, same kernel as main_ekf.py
+        self.smoother = TrailSmoother() # 5-point causal WMA, display smoothing only
         self.last_point = None
         self._last_draw_m = None        # last rendered output coordinate in metres
         self._last_coord_source = None
         self.xpressure = 8              # temporary
 
-        # Pen-up repaint (ESKF pipeline only).  The postprocess stages run when
-        # a stroke closes, so the corrected shape arrives after its live ink is
-        # already drawn.  _live_stroke_first_seq marks where the live stroke
-        # starts on the canvas so repaint_stroke can replace exactly that span.
-        # None when no stroke is open.
         self._repaint_enabled = hasattr(self.tracker, 'drain_closed_strokes')
         self._live_stroke_first_seq = None
 
@@ -110,8 +93,6 @@ class PrototypeSerialThread(threading.Thread):
         self.baud = prototype_config.BAUD_RATE
 
         # Physical board bounds supplied by the EKF tracker.
-        # Supports both the old square {b_min,b_max} shape and the new
-        # independent {x_min,x_max,y_min,y_max} shape.
         bounds = self.tracker.get_bbox()
         b_min = bounds.get('b_min', 0.0)
         b_max = bounds.get('b_max', 1.0)
@@ -136,15 +117,15 @@ class PrototypeSerialThread(threading.Thread):
         """
         Translates Physical World (Meters) -> Digital World (Master Canvas Pixels)
         """
-        # 1. Normalize to 0.0 - 1.0 based on Tracker Config
+        # Normalize to 0.0 - 1.0 based on Tracker Config
         norm_x = (float(mx) - self.p_min_x) / self.p_width
         norm_y = (float(my) - self.p_min_y) / self.p_height
 
-        # 2. Scale to Master Canvas Resolution (e.g., 4K)
+        # Scale to Master Canvas Resolution (e.g., 4K)
         px = int(norm_x * CANVAS_WIDTH)
         py = int((1.0 - norm_y) * CANVAS_HEIGHT)     # inverse, since image origin is at top-left
 
-        # 3. Clamp to screen edges
+        # Clamp to screen edges
         px = max(0, min(CANVAS_WIDTH - 1, px))
         py = max(0, min(CANVAS_HEIGHT - 1, py))
 
@@ -270,15 +251,11 @@ class PrototypeSerialThread(threading.Thread):
             return
 
         first_seq = self._live_stroke_first_seq
-        # Nothing of this stroke was drawn (too short, or all points gated),
-        # so there is no live ink to replace and no anchor to replace it at.
+
         self._live_stroke_first_seq = None
         if first_seq is None:
             return
 
-        # Only the last stroke's ink is still identifiable on the canvas: the
-        # anchor tracks one stroke at a time.  In practice a drain yields one
-        # stroke, because it runs every packet.
         stroke = closed[-1]
         pts_m = [(p[0], p[1]) for p in stroke.get('points', ())]
         if len(pts_m) < 2:
@@ -423,9 +400,6 @@ class PrototypeSerialThread(threading.Thread):
         self._bm.on_packet_recv(line, _t_recv)
 
         # --- STEP 1: EKF PIPELINE (Meters) ---
-        # UWB packets update the EKF and usually return None.
-        # IMU packets emit either the calibrated pen-tip XY or, when available,
-        # the extraction/line_norm XY that matches the black overlay in main_ekf.py.
         result = self.tracker.process_packet(line)
         self._bm.on_fusion_done(line, time.perf_counter(), result)
 
@@ -512,10 +486,6 @@ class PrototypeSerialThread(threading.Thread):
                 )
 
         # --- STEP 3b: PEN-UP REPAINT (ESKF pipeline only) ---
-        # A stroke that just closed has been through the postprocess chain, so
-        # replace its live ink with the corrected polyline.  Drained every
-        # packet: the tracker queues closed strokes, and leaving them queued
-        # would let the correction go stale behind the next stroke's ink.
         if self._repaint_enabled:
             self._repaint_closed_strokes()
 

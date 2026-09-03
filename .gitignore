@@ -34,7 +34,6 @@ test/tuning/results
 test/module_runs/*
 !test/module_runs/README.md
 
-
 # Generated logs
 tuning_results/
 logs/
@@ -44,3 +43,15 @@ logs/
 *.npy
 *.npz
 *.png
+
+# ...but the seeder's input manifest must ship with the repo.
+!seed/seed_data.csv
+
+# Editor / OS
+# Share the project settings, ignore per-developer editor state.
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+.DS_Store
+Thumbs.db

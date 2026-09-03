@@ -1,4 +1,5 @@
 import os
+import secrets
 import threading
 import sys
 import glob
@@ -43,6 +44,17 @@ def _env_bool(key, default):
     return val.strip().lower() in ("1", "true", "yes", "on")
 
 
+# The pinned numpy/scipy have no cp313 wheels, so a 3.13 interpreter either
+# fails to install or silently runs unpinned versions. Say so plainly rather
+# than surfacing it later as a confusing numeric or import error.
+if sys.version_info >= (3, 13):
+    print(
+        f"[config] WARNING: Python {sys.version_info.major}.{sys.version_info.minor} "
+        "is unsupported; this project pins numpy 1.26.4 / scipy 1.13.1, which "
+        "publish no 3.13 wheels. Use Python 3.11 or 3.12.",
+        file=sys.stderr,
+    )
+
 APP_ENV = _env_str("APP_ENV", "dev").lower()
 IS_PROD = APP_ENV in ("prod", "production")
 
@@ -75,7 +87,17 @@ MIN_FREE_DISK_MB         = _env_int  ("MIN_FREE_DISK_MB",         1024)
 SQLITE_BUSY_TIMEOUT_MS = _env_int("SQLITE_BUSY_TIMEOUT_MS", 5000)
 
 # Flask secret
-SECRET_KEY = _env_str("SECRET_KEY", "polycast-creator_BatsiKuruSyaniOmit")
+# In prod we refuse to boot without one; in dev we generate
+# an ephemeral key (sessions simply reset on restart).
+SECRET_KEY = _env_str("SECRET_KEY", "")
+if not SECRET_KEY:
+    if IS_PROD:
+        raise RuntimeError(
+            "SECRET_KEY is required when APP_ENV=prod. "
+            "Generate one with:  python -c \"import secrets; print(secrets.token_hex(32))\"  "
+            "and set it in your .env file."
+        )
+    SECRET_KEY = secrets.token_hex(32)
 
 # Ports
 BROWSER_WS_PORT = _env_int("BROWSER_WS_PORT", 5051)

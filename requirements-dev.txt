@@ -1,0 +1,21 @@
+# ----------------------------------------------------
+# DEVELOPMENT REQUIREMENTS
+#
+#   pip install -r requirements.txt -r requirements-dev.txt
+#
+# The web server does NOT need anything in this file.
+# These are imported lazily inside the `if __name__ ==
+# '__main__':` self-test blocks of the pipeline modules
+# (see background/pipelines/README.md) and by the live
+# PyQtGraph dashboard.
+# ----------------------------------------------------
+
+# Plots for per-module self-tests
+matplotlib==3.9.2
+
+# Live debug dashboard (background/pipelines/visualizer.py)
+pyqtgraph==0.13.7
+PyQt5==5.15.11
+
+# Test runner
+pytest==8.3.3

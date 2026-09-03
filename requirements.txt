@@ -1,11 +1,14 @@
 # ----------------------------------------------------
-# PRODUCTION REQUIREMENTS — Raspberry Pi 4B (ARM64)
-# Python 3.11+ (system python3 or venv)
+# PRODUCTION REQUIREMENTS - Raspberry Pi 4B (ARM64)
+#
+# Python 3.11 or 3.12 ONLY.  numpy 1.26.4 / scipy 1.13.1
+# publish no cp313 wheels, so Python 3.13 tries to build
+# them from source and fails without a C/Fortran chain.
 #
 # Usage:
 #   python3 -m venv .venv
 #   source .venv/bin/activate
-#   pip install -r prod.txt
+#   pip install -r requirements.txt
 #
 # Intentionally minimal — only packages actually
 # imported at runtime. Dev tools (Jupyter, Spyder,
@@ -29,6 +32,7 @@ websocket-server==0.6.4
 Pillow==11.1.0
 
 # --- Pipeline / Sensor Fusion Math ---
+# NOTE: no cp313 wheels exist for these pins (see header).
 numpy==1.26.4
 scipy==1.13.1
 

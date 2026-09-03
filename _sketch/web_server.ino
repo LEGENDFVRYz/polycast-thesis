@@ -3,8 +3,9 @@
 #include <ESPAsyncWebServer.h>
 
 // --- Wi-Fi Credentials ---
-const char* ssid = "MABAGAL PLDT";
-const char* password = "CRX4ce_122021";
+// Set these to your own network before flashing.
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 
 // Create Async Web Server and WebSocket
 AsyncWebServer server(80);
